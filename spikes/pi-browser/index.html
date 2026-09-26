@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pi Browser Spike</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; color: #172033; }
+      h1 { line-height: 1.15; }
+      textarea { width: 100%; min-height: 5rem; box-sizing: border-box; font: inherit; padding: .65rem; }
+      button { font: inherit; padding: .55rem .9rem; margin: .8rem .5rem .8rem 0; cursor: pointer; }
+      button:disabled { cursor: not-allowed; opacity: .55; }
+      pre, #answer { white-space: pre-wrap; overflow-wrap: anywhere; background: #f3f5f8; padding: .8rem; border-radius: .35rem; }
+      #timeline { padding-left: 1.4rem; }
+      #status { font-weight: 600; }
+      .hint { color: #526174; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Pi Browser Spike</h1>
+      <p id="configuration"></p>
+      <p class="hint">The mock run exercises Pi's real agent loop and a browser-held data tool without an API key.</p>
+      <h2>Sample rows</h2>
+      <pre id="dataset"></pre>
+      <label for="prompt">Question</label>
+      <textarea id="prompt">What is the total sales?</textarea>
+      <div>
+        <button id="run-mock" type="button">Run mock tool cycle</button>
+        <button id="run-live" type="button">Run live OpenAI</button>
+      </div>
+      <p class="hint">Live mode requires <code>npm run dev</code> and a local key in <code>.env.local</code>. This page never logs the key.</p>
+      <p id="status" role="status">Ready.</p>
+      <h2>Agent timeline</h2>
+      <ol id="timeline" aria-live="polite"></ol>
+      <h2>Answer</h2>
+      <div id="answer" aria-live="polite"></div>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

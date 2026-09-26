@@ -1,0 +1,19 @@
+{
+  "name": "csv-agent-pi-browser-spike",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "node scripts/check-no-key.mjs && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test tests/agent.test.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.87.1",
+    "@earendil-works/pi-ai": "0.87.1"
+  },
+  "devDependencies": {
+    "vite": "6.4.3"
+  }
+}
