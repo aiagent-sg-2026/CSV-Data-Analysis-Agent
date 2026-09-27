@@ -19,8 +19,16 @@ function mockStream(model, context) {
   // A fixed provider response makes the real Pi tool loop testable without a key.
   const stream = createAssistantMessageEventStream();
   const results = context.messages.filter((message) => message.role === 'toolResult');
+  const question = context.messages
+    .filter((message) => message.role === 'user')
+    .flatMap((message) => message.content.filter((part) => part.type === 'text').map((part) => part.text))
+    .join(' ')
+    .toLowerCase();
+  const numericColumns = results.length > 0
+    ? JSON.parse(results[0].content[0].text).numericColumns
+    : [];
   const numericColumn = results.length > 0
-    ? JSON.parse(results[0].content[0].text).numericColumns[0]
+    ? numericColumns.find((column) => question.includes(column.toLowerCase())) || numericColumns[0]
     : undefined;
   const content = results.length === 0
     ? [{ type: 'toolCall', id: 'mock-inspect', name: 'inspect_dataset', arguments: {} }]
@@ -44,7 +52,7 @@ function mockStream(model, context) {
   return stream;
 }
 
-function createDatasetTools(dataset) {
+function createDatasetTools(dataset, onScanProgress) {
   const inspectTool = {
     name: 'inspect_dataset',
     label: 'Inspect dataset',
@@ -68,18 +76,18 @@ function createDatasetTools(dataset) {
       groupBy: Type.Optional(Type.String({ description: 'Column to group matching rows by.' })),
     }),
     executionMode: 'sequential',
-    execute: async (_toolCallId, args) => ({ content: [{ type: 'text', text: JSON.stringify(aggregateDataset(dataset, args)) }] }),
+    execute: async (_toolCallId, args) => ({ content: [{ type: 'text', text: JSON.stringify(await aggregateDataset(dataset, args, onScanProgress)) }] }),
   };
 
   return [inspectTool, aggregateTool];
 }
 
-export function createSpikeAgent({ mode, dataset, apiKey, modelId = 'gpt-5.4-mini', thinkingLevel = 'medium', onEvent }) {
+export function createSpikeAgent({ mode, dataset, apiKey, modelId = 'gpt-5.4-mini', thinkingLevel = 'medium', onEvent, onScanProgress }) {
   const model = models.getModel('openai', modelId);
   if (!model) throw new Error(`The installed Pi catalog does not contain OpenAI model ${modelId}.`);
   if (mode === 'live' && !apiKey) throw new Error('Add a local OpenAI API key before running live mode.');
   if (!['mock', 'live'].includes(mode)) throw new Error(`Unknown mode: ${mode}`);
-  if (!dataset?.rows?.length) throw new Error('Load a CSV file before running the agent.');
+  if (!dataset?.rowCount) throw new Error('Load a CSV file before running the agent.');
 
   const streamFn = mode === 'mock'
     ? mockStream
@@ -90,7 +98,7 @@ export function createSpikeAgent({ mode, dataset, apiKey, modelId = 'gpt-5.4-min
       systemPrompt: 'You are testing a browser CSV assistant. Inspect the dataset first. Use aggregate_rows for every numeric claim; compare relevant subsets with separate calls when needed. Never invent values. Raw CSV rows stay in the browser; only tool summaries are available to you. Keep answers concise and include counts.',
       model,
       thinkingLevel,
-      tools: createDatasetTools(dataset),
+      tools: createDatasetTools(dataset, onScanProgress),
     },
     streamFn,
     toolExecution: 'sequential',

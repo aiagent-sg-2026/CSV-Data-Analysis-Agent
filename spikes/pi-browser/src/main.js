@@ -31,8 +31,10 @@ fileInput.addEventListener('change', async () => {
   status.textContent = 'Loading CSV...';
 
   try {
-    dataset = await parseCsvFile(fileInput.files[0]);
-    datasetInfo.textContent = `${dataset.name}: ${dataset.rows.length.toLocaleString()} rows; columns: ${dataset.columns.join(', ')}`;
+    dataset = await parseCsvFile(fileInput.files[0], (count) => {
+      status.textContent = `Loading CSV... ${count.toLocaleString()} rows scanned.`;
+    });
+    datasetInfo.textContent = `${dataset.name}: ${dataset.rowCount.toLocaleString()} rows; columns: ${dataset.columns.join(', ')}`;
     status.textContent = 'CSV loaded. Ask a question.';
     mockButton.disabled = false;
     liveButton.disabled = !apiKey;
@@ -71,7 +73,15 @@ async function run(mode) {
   status.textContent = `Running ${mode} mode...`;
 
   try {
-    const agent = createSpikeAgent({ mode, dataset, apiKey, modelId, thinkingLevel, onEvent: recordEvent });
+    const agent = createSpikeAgent({
+      mode,
+      dataset,
+      apiKey,
+      modelId,
+      thinkingLevel,
+      onEvent: recordEvent,
+      onScanProgress: (count) => { status.textContent = `Running ${mode} mode... ${count.toLocaleString()} rows scanned.`; },
+    });
     await agent.prompt(promptInput.value.trim() || 'Inspect the uploaded dataset and report its columns.');
     if (agent.state.errorMessage) throw new Error(agent.state.errorMessage);
     answer.textContent = getFinalText(agent) || 'No text answer was returned.';
