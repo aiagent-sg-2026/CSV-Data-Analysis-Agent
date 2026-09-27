@@ -1,6 +1,7 @@
 import { Agent } from '@earendil-works/pi-agent-core';
 import { createAssistantMessageEventStream, createModels, Type } from '@earendil-works/pi-ai';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
+import { aggregateDataset, inspectDataset } from './analysis.js';
 
 const models = createModels();
 models.setProvider(openaiProvider());
@@ -17,11 +18,16 @@ const emptyUsage = {
 function mockStream(model, context) {
   // A fixed provider response makes the real Pi tool loop testable without a key.
   const stream = createAssistantMessageEventStream();
-  const toolResult = context.messages.findLast((message) => message.role === 'toolResult');
-  const content = toolResult
-    ? [{ type: 'text', text: `Mock provider received the browser tool result: ${toolResult.content.map((part) => part.text || '').join(' ')}` }]
-    : [{ type: 'toolCall', id: 'mock-sales-summary', name: 'summarize_rows', arguments: { column: 'sales' } }];
-  const reason = toolResult ? 'stop' : 'toolUse';
+  const results = context.messages.filter((message) => message.role === 'toolResult');
+  const numericColumn = results.length > 0
+    ? JSON.parse(results[0].content[0].text).numericColumns[0]
+    : undefined;
+  const content = results.length === 0
+    ? [{ type: 'toolCall', id: 'mock-inspect', name: 'inspect_dataset', arguments: {} }]
+    : results.length === 1
+      ? [{ type: 'toolCall', id: 'mock-aggregate', name: 'aggregate_rows', arguments: numericColumn ? { metric: numericColumn } : {} }]
+      : [{ type: 'text', text: `Mock provider received the browser aggregation: ${results.at(-1).content.map((part) => part.text || '').join(' ')}` }];
+  const reason = results.length < 2 ? 'toolUse' : 'stop';
   const message = {
     role: 'assistant',
     content,
@@ -38,38 +44,42 @@ function mockStream(model, context) {
   return stream;
 }
 
-function createSummaryTool(rows) {
-  return {
-    name: 'summarize_rows',
-    label: 'Summarize rows',
-    description: 'Count non-empty numeric values and sum one column in the browser-held rows.',
-    parameters: Type.Object({ column: Type.String({ description: 'Numeric column name' }) }),
+function createDatasetTools(dataset) {
+  const inspectTool = {
+    name: 'inspect_dataset',
+    label: 'Inspect dataset',
+    description: 'Get CSV column names, likely numeric columns, and row count. Raw rows are not returned.',
+    parameters: Type.Object({}),
     executionMode: 'sequential',
-    execute: async (_toolCallId, { column }) => {
-      if (!rows.some((row) => Object.hasOwn(row, column))) {
-        throw new Error(`Unknown column: ${column}`);
-      }
-
-      const values = rows
-        .map((row) => row[column])
-        .filter((value) => value !== '' && value !== null && value !== undefined)
-        .map(Number)
-        .filter(Number.isFinite);
-      const sum = values.reduce((total, value) => total + value, 0);
-      const details = { column, count: values.length, sum };
-      return {
-        content: [{ type: 'text', text: JSON.stringify(details) }],
-        details,
-      };
-    },
+    execute: async () => ({ content: [{ type: 'text', text: JSON.stringify(inspectDataset(dataset)) }] }),
   };
+
+  const aggregateTool = {
+    name: 'aggregate_rows',
+    label: 'Aggregate rows',
+    description: 'Filter local CSV rows, optionally group by one column, then return counts and numeric sum/average. Use equals or starts_with filters. Raw rows are not returned.',
+    parameters: Type.Object({
+      metric: Type.Optional(Type.String({ description: 'Numeric column for sum and average; omit for counts only.' })),
+      filters: Type.Optional(Type.Array(Type.Object({
+        column: Type.String(),
+        operator: Type.String({ description: 'equals or starts_with' }),
+        value: Type.String(),
+      }))),
+      groupBy: Type.Optional(Type.String({ description: 'Column to group matching rows by.' })),
+    }),
+    executionMode: 'sequential',
+    execute: async (_toolCallId, args) => ({ content: [{ type: 'text', text: JSON.stringify(aggregateDataset(dataset, args)) }] }),
+  };
+
+  return [inspectTool, aggregateTool];
 }
 
-export function createSpikeAgent({ mode, rows, apiKey, modelId = 'gpt-5.4-mini', thinkingLevel = 'medium', onEvent }) {
+export function createSpikeAgent({ mode, dataset, apiKey, modelId = 'gpt-5.4-mini', thinkingLevel = 'medium', onEvent }) {
   const model = models.getModel('openai', modelId);
   if (!model) throw new Error(`The installed Pi catalog does not contain OpenAI model ${modelId}.`);
   if (mode === 'live' && !apiKey) throw new Error('Add a local OpenAI API key before running live mode.');
   if (!['mock', 'live'].includes(mode)) throw new Error(`Unknown mode: ${mode}`);
+  if (!dataset?.rows?.length) throw new Error('Load a CSV file before running the agent.');
 
   const streamFn = mode === 'mock'
     ? mockStream
@@ -77,10 +87,10 @@ export function createSpikeAgent({ mode, rows, apiKey, modelId = 'gpt-5.4-mini',
 
   const agent = new Agent({
     initialState: {
-      systemPrompt: 'You are testing a browser CSV assistant. For numeric questions about the loaded rows, use summarize_rows before answering. Keep answers brief.',
+      systemPrompt: 'You are testing a browser CSV assistant. Inspect the dataset first. Use aggregate_rows for every numeric claim; compare relevant subsets with separate calls when needed. Never invent values. Raw CSV rows stay in the browser; only tool summaries are available to you. Keep answers concise and include counts.',
       model,
       thinkingLevel,
-      tools: [createSummaryTool(rows)],
+      tools: createDatasetTools(dataset),
     },
     streamFn,
     toolExecution: 'sequential',

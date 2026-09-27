@@ -8,6 +8,7 @@
       body { font: 16px/1.5 system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; color: #172033; }
       h1 { line-height: 1.15; }
       textarea { width: 100%; min-height: 5rem; box-sizing: border-box; font: inherit; padding: .65rem; }
+      input[type="file"] { display: block; margin: .5rem 0 1rem; font: inherit; }
       button { font: inherit; padding: .55rem .9rem; margin: .8rem .5rem .8rem 0; cursor: pointer; }
       button:disabled { cursor: not-allowed; opacity: .55; }
       pre, #answer { white-space: pre-wrap; overflow-wrap: anywhere; background: #f3f5f8; padding: .8rem; border-radius: .35rem; }
@@ -20,16 +21,17 @@
     <main>
       <h1>Pi Browser Spike</h1>
       <p id="configuration"></p>
-      <p class="hint">The mock run exercises Pi's real agent loop and a browser-held data tool without an API key.</p>
-      <h2>Sample rows</h2>
-      <pre id="dataset"></pre>
+      <p class="hint">Choose a local CSV. The file stays in this browser; Pi receives column names and bounded aggregate results from browser tools.</p>
+      <label for="csv-file">CSV file</label>
+      <input id="csv-file" type="file" accept=".csv,text/csv" />
+      <p id="dataset">No CSV loaded.</p>
       <label for="prompt">Question</label>
-      <textarea id="prompt">What is the total sales?</textarea>
+      <textarea id="prompt">Compare average resale_price for 3 ROOM and 4 ROOM flats in ANG MO KIO in 2023 and 2024. Include counts and year-over-year changes.</textarea>
       <div>
         <button id="run-mock" type="button">Run mock tool cycle</button>
         <button id="run-live" type="button">Run live OpenAI</button>
       </div>
-      <p class="hint">Live mode requires <code>npm run dev</code> and a local key in <code>.env.local</code>. This page never logs the key.</p>
+      <p class="hint">Live mode requires <code>npm run dev</code> and a local key in <code>.env.local</code>. The question and tool summaries go to OpenAI; the CSV file and raw rows stay local. This page never logs the key.</p>
       <p id="status" role="status">Ready.</p>
       <h2>Agent timeline</h2>
       <ol id="timeline" aria-live="polite"></ol>

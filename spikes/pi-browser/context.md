@@ -19,3 +19,12 @@
 
 - This is a harness feasibility spike. It does not connect Pi to the React application's CSV state, history, or existing tool registry.
 - Browser-direct API use exposes a user-supplied key to that browser. Never deploy a client bundle with a key; a product-owned hidden key would require a proxy.
+
+## 2026-09-27 CSV follow-up
+
+- The user chose option B: load a real CSV in the browser spike and test a more complex task. The current React source package lives under `frontend/` in the main checkout and is being changed by another agent; this spike remains on its isolated branch.
+- Added Papa Parse file intake with a header row, malformed-row rejection, a 10 MB file limit, and browser-held rows. Pi now has `inspect_dataset` and `aggregate_rows` tools. Inspection returns only schema and counts; aggregation returns at most 30 groups. The CSV file and raw rows are not sent to OpenAI.
+- Used a 3,767-row public subset of `demo-data/singapore-hdb-resale-prices.csv` (2023–2024, ANG MO KIO and BEDOK, 3 ROOM and 4 ROOM). The full 83 MB / 982,589-row demo file is intentionally outside the in-memory spike limit.
+- Browser mock mode completed three model turns with inspection and aggregation. Live Pi used one inspection and four aggregate calls to compare ANG MO KIO resale prices by year and flat type. Its counts and averages matched an independent Python CSV calculation: 2023 3 ROOM 539 / 400821.96; 2023 4 ROOM 344 / 648895.54; 2024 3 ROOM 571 / 427025.01; 2024 4 ROOM 308 / 652776.02.
+- Four focused tests pass, including quoted CSV fields, malformed and duplicate headers, file limit, grouped filters, and the Pi mock loop. The production build passed with the local key file temporarily withheld and restored afterward; an exact-key scan found the key absent from the bundle. The dependency audit reported no vulnerabilities.
+- A local development module was accidentally printed in a task tool result during verification and included the configured API key. The key was not committed or added to documentation. The user was told to revoke and replace it after this test.
