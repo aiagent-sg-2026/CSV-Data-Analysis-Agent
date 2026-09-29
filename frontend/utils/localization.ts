@@ -3512,6 +3512,18 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'CSV bersih lengkap telah dimuat turun',
         'Japanese': '完全な cleaned CSV をダウンロードしました',
     },
+    'cleaned_csv_download_failed': {
+        'English': 'Could not download the cleaned CSV. Retry or re-import the original CSV.',
+        'Mandarin': '无法下载清理后的 CSV。请重试，或重新导入原始 CSV。',
+        'Malay': 'CSV yang dibersihkan tidak dapat dimuat turun. Cuba lagi atau import semula CSV asal.',
+        'Japanese': 'クリーニング済み CSV をダウンロードできませんでした。再試行するか、元の CSV を再インポートしてください。',
+    },
+    'workflow_action_failed': {
+        'English': 'Action failed',
+        'Mandarin': '操作失败',
+        'Malay': 'Tindakan gagal',
+        'Japanese': '操作に失敗しました',
+    },
     'download_sanitized_support_bundle': {
         'English': 'Download sanitized support bundle',
         'Mandarin': '下载脱敏支持包',

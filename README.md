@@ -28,6 +28,7 @@ In Explore, each analysis card's More actions menu includes Data Provenance and 
 The Export menu's Full card PNG includes the card's complete current result table even when that table is collapsed in Explore; chart-only PNG leaves it out.
 Card CSV, HTML, and Full card PNG exports keep fields that first appear in later result rows and align values under their named columns.
 Card and cleaned-dataset CSV downloads also keep later-only columns and prefix spreadsheet formula-like text with an apostrophe. Values stored as numbers, including negative numbers, remain numeric; text beginning with `-` receives the same spreadsheet safeguard. The dataset bundle keeps its source table values for machine-readable replay.
+If a large backed CSV cannot be read for download, the Data Preparation Workflow shows an error and lets the user retry or re-import the source file.
 
 Dashboard cards distinguish additive measures (`sum`, `count`) from averages and other non-additive measures. Top N on an average card shows only the selected groups; it does not invent an `Others` average, sum group averages, or display each average as a share of that sum. Dense average comparisons default to a horizontal bar chart, and the full chart scrolls vertically so labels remain readable. The table exposes the full grouped values. Temporal average trends can still use line or area charts.
 

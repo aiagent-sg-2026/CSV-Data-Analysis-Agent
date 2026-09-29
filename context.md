@@ -610,3 +610,9 @@
 - **Finding and fix**: Cleaned-dataset CSV export used the first row's keys, dropping fields introduced later; it and card CSV exported formula-like text unchanged. Two red tests reproduced the lost field and unsafe text. Both spreadsheet-facing CSV exports now preserve all observed columns and use Papa Parse formula escaping. Numerically typed negative values retain their numeric form; raw dataset-bundle CSV remains unchanged for machine replay.
 - **Checks**: Focused export tests passed 9/9, typecheck and lint passed, and the full frontend suite passed 342 files / 2,871 tests. The production build and bundle budget also passed; Vite retained its existing static/dynamic import overlap warnings.
 - **Browser/release status**: The Mac is locked, so the generated CSV Blobs were checked in tests but the actual browser download has not been rechecked. Root deployment and public Pages remain unchanged.
+
+## 2026-09-29 Backed CSV Download Recovery QA
+
+- **Finding and fix**: The Workflow's cleaned CSV action discarded a rejection from its OPFS read, leaving no feedback and an unhandled promise. A red UI test reproduced it. The action now catches read/download failures, shows a localized retry or re-import message, and preserves a retry path. Blob URLs are revoked even if link activation throws. A failed attempt followed by a successful download is covered.
+- **Checks**: Focused Workflow tests passed 3/3, localization tests 12/12, typecheck and lint passed. The full suite passed 342 files / 2,872 tests; production build and bundle budget passed with existing Vite import overlap warnings.
+- **Browser/release status**: The Mac remains locked, so the error layout and actual backed-file download need browser E2E. Root deployment and public Pages remain unchanged.

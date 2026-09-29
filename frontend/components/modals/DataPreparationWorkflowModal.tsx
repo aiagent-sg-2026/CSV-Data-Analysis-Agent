@@ -80,10 +80,12 @@ const OpenDataPreparationWorkflowModal: React.FC = () => {
     const exportMenuRef = useRef<HTMLDetailsElement>(null);
     const workflow = useMemo(() => buildDataPreparationWorkflowBundle(workflowState as AppStore), [workflowState]);
     const [copyStatus, setCopyStatus] = useState<'idle' | 'workflow' | 'failure' | 'download' | 'bundle' | 'support' | 'error'>('idle');
+    const [downloadError, setDownloadError] = useState(false);
     const [boundarySaveError, setBoundarySaveError] = useState<'invalid' | 'failed' | null>(null);
     const boundarySaveInFlight = useRef(false);
     const closeExportMenu = () => {
         if (exportMenuRef.current) exportMenuRef.current.open = false;
+        setDownloadError(false);
     };
     const dialogRef = useDialogAccessibility<HTMLDivElement>(
         true,
@@ -147,26 +149,37 @@ const OpenDataPreparationWorkflowModal: React.FC = () => {
         const dataset = canonicalCsvData ?? csvData;
         if (!dataset) {
             setCopyStatus('error');
+            setDownloadError(true);
             return;
         }
 
         let result: ExportResult = { success: false, error: 'Dataset export failed.' };
-        if (dataset.backing?.opfsPath) {
-            const sourceFile = await readDatasetFileFromOpfs(dataset.backing.opfsPath);
-            if (sourceFile) {
-                const url = URL.createObjectURL(sourceFile);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `cleaned_${dataset.fileName}`;
-                link.click();
-                URL.revokeObjectURL(url);
-                result = { success: true };
+        try {
+            if (dataset.backing?.opfsPath) {
+                const sourceFile = await readDatasetFileFromOpfs(dataset.backing.opfsPath);
+                if (sourceFile) {
+                    const url = URL.createObjectURL(sourceFile);
+                    try {
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = `cleaned_${dataset.fileName}`;
+                        link.click();
+                        result = { success: true };
+                    } finally {
+                        URL.revokeObjectURL(url);
+                    }
+                }
+            } else {
+                result = exportDatasetToCsv(dataset.data, `cleaned_${dataset.fileName}`);
             }
-        } else {
-            result = exportDatasetToCsv(dataset.data, `cleaned_${dataset.fileName}`);
+        } catch {
+            setCopyStatus('error');
+            setDownloadError(true);
+            return;
         }
         if (!result.success) {
             setCopyStatus('error');
+            setDownloadError(true);
             return;
         }
         setCopyStatus('download');
@@ -318,7 +331,7 @@ const OpenDataPreparationWorkflowModal: React.FC = () => {
                                         : copyStatus === 'bundle'
                                             ? 'Dataset bundle downloaded'
                                         : copyStatus === 'error'
-                                            ? 'Copy failed'
+                                            ? getTranslation('workflow_action_failed', language)
                                             : 'Copy ready'}
                             </span>
                             <details ref={exportMenuRef} className="relative">
@@ -384,6 +397,11 @@ const OpenDataPreparationWorkflowModal: React.FC = () => {
                 {boundarySaveError && (
                     <p role="alert" className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 lg:mx-5 xl:mx-6">
                         {getTranslation(boundarySaveError === 'invalid' ? 'boundary_confirm_invalid_boundary' : 'boundary_confirm_save_failed', language)}
+                    </p>
+                )}
+                {downloadError && (
+                    <p role="alert" className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 lg:mx-5 xl:mx-6">
+                        {getTranslation('cleaned_csv_download_failed', language)}
                     </p>
                 )}
 
