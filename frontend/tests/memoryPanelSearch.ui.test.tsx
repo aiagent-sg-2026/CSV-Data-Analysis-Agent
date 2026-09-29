@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryPanel } from '../components/modals/MemoryPanel';
+import { resolveReportMemoryScope } from '../services/agent/memory/memoryScope';
 
 const mocks = vi.hoisted(() => ({
     getDocumentsForScope: vi.fn(async () => [] as Array<{ id: string; text: string }>),
@@ -157,6 +158,33 @@ describe('MemoryPanel search availability and feedback', () => {
         const result = await screen.findByRole('button', { name: /Match.*90\.0%.*Town prices/ });
         fireEvent.click(result);
         expect(document.getElementById('memory-doc-Town prices')).toHaveClass('ring-2');
+    });
+
+    it('keeps exact scope and item provenance available without repeating IDs in the default view', async () => {
+        state.csvData = { fileName: 'sample.csv', data: [{ Town: 'North' }] };
+        const scope = resolveReportMemoryScope(state as never)!;
+        mocks.getDocumentsForScope.mockResolvedValue([{
+            id: 'memory-1',
+            text: 'Town prices',
+            metadata: {
+                scope,
+                origin: { kind: 'analysis_card', label: 'Saved analysis', createdAt: '2026-09-29T00:00:00.000Z' },
+            },
+        }] as never);
+        render(<MemoryPanel />);
+
+        expect(await screen.findByText('Town prices')).toBeInTheDocument();
+        const scopeToggle = screen.getByRole('button', { name: 'View scope IDs' });
+        expect(scopeToggle).toHaveAttribute('aria-expanded', 'false');
+        expect(screen.getByText(new RegExp(scope.reportId))).not.toBeVisible();
+
+        fireEvent.click(scopeToggle);
+        expect(screen.getByRole('button', { name: 'Hide scope IDs' })).toHaveAttribute('aria-expanded', 'true');
+        expect(screen.getByText(/Active scope: Report/)).toBeVisible();
+
+        const provenance = screen.getByText('Exact provenance').closest('details');
+        expect(provenance).not.toHaveAttribute('open');
+        expect(provenance).toHaveTextContent(scope.datasetVersion);
     });
 
     it('requires an inline second action before deleting one memory item', async () => {

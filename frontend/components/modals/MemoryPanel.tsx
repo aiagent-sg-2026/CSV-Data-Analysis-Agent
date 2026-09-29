@@ -40,6 +40,7 @@ export const MemoryPanel: React.FC = () => {
     const [pendingDeletion, setPendingDeletion] = useState<PendingMemoryDeletion | null>(null);
     const [deletionError, setDeletionError] = useState<string | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [showScopeIds, setShowScopeIds] = useState(false);
     const deletionTriggerRef = useRef<HTMLButtonElement>(null);
     const cancelDeletionRef = useRef<HTMLButtonElement>(null);
     const confirmDeletionRef = useRef<HTMLButtonElement>(null);
@@ -128,6 +129,7 @@ export const MemoryPanel: React.FC = () => {
             setDocuments([]);
             setDocumentsError(false);
             setIsLoadingDocuments(false);
+            setShowScopeIds(false);
             setSearchQuery('');
             setSearchResults([]);
             setSearchFeedback('none');
@@ -235,14 +237,22 @@ export const MemoryPanel: React.FC = () => {
                             </span>
                             <h2 id="memory-dialog-title" className="text-2xl font-bold text-slate-900">AI Long-Term Memory</h2>
                         </div>
-                        <div className="mt-2 pl-12">
-                            <div className="flex items-baseline gap-2 text-sm text-slate-500">
-                                <span>{documents.length} items</span>
-                                <span className="text-slate-300">|</span>
-                                <span>Using ~{memoryUsage.toFixed(2)} KB</span>
-                             </div>
-                            {activeMemoryScope && (
-                                <p className="mt-1 max-w-2xl break-words text-[11px] text-slate-500">
+                        <div className="mt-1 pl-12">
+                            <div className="flex flex-wrap items-center gap-x-3 text-sm text-slate-500">
+                                <span>{documents.length} items · Using ~{memoryUsage.toFixed(2)} KB</span>
+                                {activeMemoryScope && (
+                                    <button
+                                        type="button"
+                                        aria-expanded={showScopeIds}
+                                        onClick={() => setShowScopeIds(value => !value)}
+                                        className="min-h-[44px] rounded-md px-1 text-xs font-medium text-blue-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+                                    >
+                                        {showScopeIds ? 'Hide scope IDs' : 'View scope IDs'}
+                                    </button>
+                                )}
+                            </div>
+                            {activeMemoryScope && showScopeIds && (
+                                <p className="mt-1 max-w-2xl break-all rounded-md bg-slate-50 p-2 text-[11px] text-slate-600">
                                     Active scope: Report {activeMemoryScope.reportId} · Dataset {activeMemoryScope.datasetId} · Version {activeMemoryScope.datasetVersion}
                                 </p>
                             )}
@@ -412,9 +422,16 @@ export const MemoryPanel: React.FC = () => {
                                                     Origin: {doc.metadata?.origin?.label ?? 'Legacy memory (unverified origin)'}
                                                 </p>
                                                 {doc.metadata?.scope && (
-                                                    <p className="mt-0.5 text-[11px] text-slate-400">
-                                                        Report {doc.metadata.scope.reportId} · Dataset {doc.metadata.scope.datasetId} · Version {doc.metadata.scope.datasetVersion}
-                                                    </p>
+                                                    <details className="group mt-2 text-[11px] text-slate-500">
+                                                        <summary className="flex min-h-[44px] w-full cursor-pointer items-center justify-between rounded-md border border-slate-200 bg-white px-3 font-medium text-blue-700 hover:border-blue-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600">
+                                                            Exact provenance
+                                                            <span className="ml-2 text-base transition-transform group-open:rotate-180" aria-hidden="true">⌄</span>
+                                                        </summary>
+                                                        <p className="mt-1 break-all rounded-md bg-white p-2 leading-relaxed">
+                                                            Origin: {doc.metadata?.origin?.label ?? 'Legacy memory (unverified origin)'}<br />
+                                                            Report {doc.metadata.scope.reportId} · Dataset {doc.metadata.scope.datasetId} · Version {doc.metadata.scope.datasetVersion}
+                                                        </p>
+                                                    </details>
                                                 )}
                                             </div>
                                             <button
