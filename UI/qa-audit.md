@@ -313,3 +313,7 @@ The public support bundle reported the in-memory preview length as the dataset r
 ## 2026-09-29 Sparse support-bundle column QA
 
 The support bundle also counted only the first row's keys for an in-memory CSV. A two-row sparse fixture reproduced one reported column where the dataset contains two. It now counts the union of column names across in-memory rows; backed datasets continue to use their backing schema. The bundle still reveals only the count. Focused support-bundle tests passed 3/3 after the fix; typecheck and lint passed. The previous full suite and build preceded this small follow-up. The public Pages build remains unchanged.
+
+## 2026-09-29 Main localization integration
+
+The QA branch now includes the main branch's localization coverage guard and Malay/Japanese completion. The merge kept all 40 QA-only translation keys and the QA PWA copy. Twelve newly introduced Malay gaps were filled, producing 1,179 keys with zero English, Mandarin, Japanese, Malay, or placeholder gaps. An AST field comparison checked both parents. Targeted localization tests passed 16/16, typecheck and lint passed, full tests passed 343 files / 2,878 tests, and the production build and bundle budget passed. The app has not been published from this QA branch; the new recovery screens still need in-app browser E2E.

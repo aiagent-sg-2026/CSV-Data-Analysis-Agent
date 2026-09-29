@@ -628,3 +628,20 @@
 - **Finding and fix**: The sanitized support bundle still inferred in-memory column count from the first row. A sparse two-row test failed with one reported column instead of two. It now counts the union of in-memory keys; backed datasets use their backing schema. The output contains only counts, not field names.
 - **Checks**: Focused support-bundle tests passed 3/3; typecheck and lint passed. The previous full suite (342 files / 2,873 tests) and production build covered the earlier backing-count change, before this small sparse-column follow-up.
 - **Browser/release status**: Mac lock prevents browser verification. Root deployment and public Pages remain unchanged.
+
+## 2026-09-29 Localization coverage guard
+
+- Added a read-only snapshot helper for the 1,139-key translation dictionary without changing `getTranslation` fallback behavior. `frontend/tests/localizationCoverage.test.ts` requires non-empty English/Mandarin entries, compares Japanese/Malay gaps with a generated baseline, and checks English placeholder tokens in present translations. Baseline shrinkage and new gaps both fail.
+- Current missing entries: English 0, Mandarin 0, Japanese 114, Malay 901. Six existing placeholder omissions are also baselined so CI passes while new omissions fail. `frontend/docs/localization-coverage.md` lists missing keys and English text by key prefix, plus the six placeholder gaps. No translations or language visibility changed.
+- Verification: targeted Vitest 1 file / 4 tests passed; `npm run typecheck && npm run lint` passed; full `npm test` passed 368 files / 3,450 tests. A temporary key without Malay failed with `Malay newly missing: localization_guard_probe`, then was removed. The supplied prior count was 361 files / 3,403 tests; this change adds 1 file / 4 tests to the current suite.
+
+## 2026-09-29 Localization completion follow-up
+
+- The user selected all four follow-ups: keep the guard, fill Malay and Japanese, and repair placeholders. All 901 missing Malay and 114 missing Japanese entries were added to the existing dictionary; the six placeholder omissions were corrected. `getTranslation` fallback and language visibility were not changed.
+- Regenerated `frontend/tests/fixtures/localization-coverage-baseline.json` and `frontend/docs/localization-coverage.md`. The current 1,139-key catalog has zero missing entries in English, Mandarin, Japanese, and Malay, and zero English-placeholder omissions. The earlier 901/114/6 counts above describe the state before this follow-up.
+- Verification after translations: `npm run typecheck && npm run lint` passed; targeted localization tests passed 2 files / 16 tests; full `npm test` passed 368 files / 3,450 tests; `npm run build` and `npm run bundle:check` passed. An AST comparison against `HEAD` confirmed that all 1,139 keys remain, exactly 901 Malay and 114 Japanese entries were added, and only the six intended existing strings changed. Technical identifiers and placeholders were checked separately. The translated wording is AI-assisted and should receive native-speaker review before public release.
+
+## 2026-09-29 QA worktree localization integration
+
+- Merged `origin/main` localization coverage and completed Malay/Japanese translations into the ongoing full-site QA branch. The merge retained 40 QA-only keys and both PWA copy updates; 12 QA-only Malay gaps were filled. An AST comparison confirmed all keys and nonconflicting language-field changes from both parents survived. The combined dictionary has 1,179 keys and zero English, Mandarin, Japanese, Malay, or placeholder gaps; the generated coverage report was refreshed.
+- Verification on the merged source: targeted localization tests 2 files / 16 tests, typecheck, lint, full frontend suite 343 files / 2,878 tests, production build, bundle budget, and `git diff --check` passed. Existing Vite static/dynamic import overlap warnings remain. Root generated output and public Pages were not updated by this integration.
