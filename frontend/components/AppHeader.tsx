@@ -40,7 +40,6 @@ export const AppHeader: React.FC = () => {
         (state: AppStore) => ({
             onNewSession: state.handleNewSession,
             onOpenHistory: () => {
-                state.loadReportsListIfNeeded();
                 state.setIsHistoryPanelOpen(true);
             },
             onOpenDatabase: () => state.setIsDatabaseModalOpen(true),

@@ -3005,6 +3005,18 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'history_storage_loading': { 'English': 'Reading storage…', 'Mandarin': '正在读取存储…', 'Japanese': 'ストレージを読み込み中…' },
     'history_storage_unavailable': { 'English': 'Storage is temporarily unavailable.', 'Mandarin': '暂时无法读取存储。', 'Japanese': 'ストレージを一時的に読み取れません。' },
     'history_storage_retry': { 'English': 'Retry', 'Mandarin': '重试', 'Japanese': '再試行' },
+    'history_list_unavailable': {
+        'English': 'Could not load analysis history. Saved reports may still be available; retry the list.',
+        'Mandarin': '无法加载分析历史。已保存的报告可能仍在，请重试读取列表。',
+        'Malay': 'Sejarah analisis tidak dapat dimuatkan. Laporan yang disimpan mungkin masih ada; cuba semula senarai.',
+        'Spanish': 'No se pudo cargar el historial de análisis. Los informes guardados pueden seguir disponibles; reintente cargar la lista.',
+        'Japanese': '分析履歴を読み込めませんでした。保存済みレポートは残っている可能性があります。リストを再読み込みしてください。',
+        'French': 'Impossible de charger l’historique des analyses. Les rapports enregistrés sont peut-être encore disponibles ; réessayez de charger la liste.',
+    },
+    'history_list_retry': {
+        'English': 'Retry history list', 'Mandarin': '重试历史列表', 'Malay': 'Cuba semula senarai sejarah',
+        'Spanish': 'Reintentar lista del historial', 'Japanese': '履歴リストを再読み込み', 'French': 'Réessayer de charger la liste',
+    },
     'history_storage_label': { 'English': 'Local data', 'Mandarin': '本地数据', 'Malay': 'Data setempat', 'Japanese': 'ローカルデータ' },
     'history_storage_inspect_title': { 'English': 'Local browser data uses {size}. View details.', 'Mandarin': '浏览器本地数据占用 {size}。查看详情。', 'Malay': 'Data pelayar setempat menggunakan {size}. Lihat butiran.', 'Japanese': 'ブラウザのローカルデータは {size} を使用しています。詳細を表示。' },
     'history_search_placeholder': { 'English': 'Search by title or file name...', 'Mandarin': '按标题或文件名搜索…', 'Japanese': 'タイトルまたはファイル名で検索…' },

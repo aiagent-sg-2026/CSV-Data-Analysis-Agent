@@ -452,6 +452,63 @@ describe('report artifact action surfaces', () => {
         expect(screen.queryByText('0 B')).not.toBeInTheDocument();
     });
 
+    it('shows a retry instead of an empty history when the saved-report list fails to load', async () => {
+        const loadReportsListIfNeeded = vi.fn().mockRejectedValueOnce(new Error('IndexedDB unavailable'));
+        const loadReportsList = vi.fn().mockResolvedValueOnce(undefined);
+        const state = {
+            isHistoryPanelOpen: true,
+            setIsHistoryPanelOpen: vi.fn(),
+            reportsList: [],
+            loadReportsListIfNeeded,
+            loadReportsList,
+            handleLoadReport: vi.fn(async () => undefined),
+            handleDeleteReport: vi.fn(async () => undefined),
+            handlePurgeStorage: vi.fn(async () => ({ deletedReports: 0, freedMB: 0 })),
+            openPersistedReportArtifact: vi.fn(async () => true),
+            exportPersistedReportPdf: vi.fn(async () => true),
+            sessionId: 'session-2',
+            settings: { language: 'English' },
+            csvData: null,
+        };
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+
+        render(<HistoryPanel />);
+        expect(await screen.findByRole('alert')).toHaveTextContent('Could not load analysis history');
+        expect(screen.queryByText('No past reports found. Upload a CSV to start.')).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Retry history list' }));
+        await waitFor(() => expect(loadReportsList).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(screen.queryByText(/Could not load analysis history/)).not.toBeInTheDocument());
+    });
+
+    it('keeps already listed reports visible when refreshing History fails', async () => {
+        const state = {
+            isHistoryPanelOpen: true,
+            setIsHistoryPanelOpen: vi.fn(),
+            reportsList: [{
+                id: 'report-1', filename: 'sample.csv',
+                createdAt: new Date('2026-03-14T09:00:00.000Z'),
+                updatedAt: new Date('2026-03-14T09:10:00.000Z'),
+            }],
+            loadReportsListIfNeeded: vi.fn().mockRejectedValueOnce(new Error('IndexedDB unavailable')),
+            loadReportsList: vi.fn(async () => undefined),
+            handleLoadReport: vi.fn(async () => undefined),
+            handleDeleteReport: vi.fn(async () => undefined),
+            handlePurgeStorage: vi.fn(async () => ({ deletedReports: 0, freedMB: 0 })),
+            openPersistedReportArtifact: vi.fn(async () => true),
+            exportPersistedReportPdf: vi.fn(async () => true),
+            sessionId: 'session-2',
+            settings: { language: 'English' },
+            csvData: null,
+        };
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+
+        render(<HistoryPanel />);
+        expect(await screen.findByRole('alert')).toHaveTextContent('Could not load analysis history');
+        expect(screen.getByText('sample.csv')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Resume analysis' })).toBeEnabled();
+    });
+
     it('labels local storage without implying a fixed capacity limit', async () => {
         getStorageBreakdownMock.mockResolvedValueOnce({
             stores: [],

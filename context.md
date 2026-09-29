@@ -574,3 +574,9 @@
 - **Finding and fix**: History waited for saved HTML before calling `window.open`, risking loss of transient user activation. It now reserves one opener-isolated tab synchronously on click and navigates after the read. Missing artifacts or read failures close the blank tab; a blocked reservation avoids storage reads.
 - **Checks**: A deferred-read regression failed on the previous ordering. Viewer/store/UI focused tests passed 25/25; typecheck, lint, full suite 342 files / 2,859 tests, and production build passed. Existing Vite import warnings remain.
 - **Browser/release status**: The Mac remains locked, so report popup and print rendering need in-app browser E2E verification. Root generated deployment and public Pages remain unchanged.
+
+## 2026-09-29 History List Failure Recovery QA
+
+- **Finding and fix**: AppHeader previously fired the History list read without catching errors, and the panel could present a failed read as empty history. The panel now owns first load, shows loading/failure states, and retries with a forced refresh while retaining already listed reports.
+- **Checks**: A list failure test first found no alert and the wrong empty message. Focused History/header tests passed 37/37; typecheck, lint, full suite 342 files / 2,862 tests, and production build passed.
+- **Browser/release status**: The Mac remains locked; the new list states and earlier pending UI still need in-app browser visual/E2E verification. Root output and public Pages remain unchanged.

@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect, useId, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useId, useMemo, useCallback } from 'react';
 import { shallow } from 'zustand/shallow';
 import { useAppStore, AppStore } from '../../store/useAppStore';
 import { CURRENT_SESSION_KEY, getStorageBreakdown } from '../../services/storageService';
@@ -76,11 +76,13 @@ function groupReportsByFilename(
 export const HistoryPanel: React.FC = () => {
     const {
         isOpen, onClose, reports, onLoadReport, onDeleteReport, onPurgeStorage, onOpenReport, onExportPdf,
-        currentSessionId, language, hasCsvData,
+        onLoadReportsIfNeeded, onReloadReports, currentSessionId, language, hasCsvData,
     } = useAppStore((state: AppStore) => ({
         isOpen: state.isHistoryPanelOpen,
         onClose: () => state.setIsHistoryPanelOpen(false),
         reports: state.reportsList,
+        onLoadReportsIfNeeded: state.loadReportsListIfNeeded,
+        onReloadReports: state.loadReportsList,
         onLoadReport: state.handleLoadReport,
         onDeleteReport: state.handleDeleteReport,
         onPurgeStorage: state.handlePurgeStorage,
@@ -99,6 +101,7 @@ export const HistoryPanel: React.FC = () => {
     const [loadErrorId, setLoadErrorId] = useState<string | null>(null);
     const [reportActionError, setReportActionError] = useState<{ id: string; action: ReportAction } | null>(null);
     const [reportActionBusy, setReportActionBusy] = useState(false);
+    const [reportsLoadState, setReportsLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
     const [confirmLoadId, setConfirmLoadId] = useState<string | null>(null);
     const [sortField, setSortField] = useState<SortField>('updatedAt');
     const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -113,6 +116,7 @@ export const HistoryPanel: React.FC = () => {
     const purgeTriggerRef = useRef<HTMLButtonElement>(null);
     const cancelDeletionRef = useRef<HTMLButtonElement>(null);
     const confirmDeletionRef = useRef<HTMLButtonElement>(null);
+    const reportsRequestIdRef = useRef(0);
     const deletionTitleId = useId();
     const deletionDescriptionId = useId();
     const dialogRef = useDialogAccessibility<HTMLDivElement>(
@@ -120,6 +124,30 @@ export const HistoryPanel: React.FC = () => {
         onClose,
         { restoreFocusSelector: '[data-history-trigger="true"]' },
     );
+
+    const refreshReportsList = useCallback(async (force = false) => {
+        const load = force ? onReloadReports : onLoadReportsIfNeeded;
+        const requestId = ++reportsRequestIdRef.current;
+        if (!load) {
+            setReportsLoadState('ready');
+            return;
+        }
+        setReportsLoadState('loading');
+        try {
+            await load();
+            if (requestId === reportsRequestIdRef.current) setReportsLoadState('ready');
+        } catch {
+            if (requestId === reportsRequestIdRef.current) setReportsLoadState('error');
+        }
+    }, [onLoadReportsIfNeeded, onReloadReports]);
+
+    useEffect(() => {
+        if (isOpen) void refreshReportsList();
+        else {
+            reportsRequestIdRef.current += 1;
+            setReportsLoadState('idle');
+        }
+    }, [isOpen, refreshReportsList]);
 
     useEffect(() => {
         if (pendingDeletion) cancelDeletionRef.current?.focus();
@@ -418,6 +446,19 @@ export const HistoryPanel: React.FC = () => {
                     </div>
                 )}
 
+                {reportsLoadState === 'error' && (
+                    <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">
+                        <span>{getTranslation('history_list_unavailable', language)}</span>
+                        <button
+                            type="button"
+                            onClick={() => void refreshReportsList(true)}
+                            className="min-h-[44px] rounded-lg px-3 font-semibold text-blue-700 hover:bg-amber-100"
+                        >
+                            {getTranslation('history_list_retry', language)}
+                        </button>
+                    </div>
+                )}
+
                 {reportActionError && (
                     <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-red-100 bg-red-50 px-5 py-2 text-sm text-red-800">
                         <span>{getTranslation(reportActionError.action === 'open' ? 'history_open_failed' : 'history_pdf_failed', language)}</span>
@@ -447,9 +488,11 @@ export const HistoryPanel: React.FC = () => {
                     {filteredGroups.length === 0 ? (
                         <div className="flex min-h-[180px] items-center justify-center px-5">
                             <p className="text-sm text-slate-500">
-                                {search
-                                    ? getTranslation('history_no_results', language)
-                                    : getTranslation('history_empty', language)}
+                                {reportsLoadState === 'idle' || reportsLoadState === 'loading'
+                                    ? getTranslation('history_loading', language)
+                                    : reportsLoadState === 'error'
+                                        ? getTranslation('history_list_unavailable', language)
+                                        : getTranslation(search ? 'history_no_results' : 'history_empty', language)}
                             </p>
                         </div>
                     ) : (

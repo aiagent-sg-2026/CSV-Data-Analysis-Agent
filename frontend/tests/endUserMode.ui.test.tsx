@@ -64,6 +64,33 @@ describe('end user mode UI surfaces', () => {
         expect(screen.queryByText('Change Goal')).not.toBeInTheDocument();
     });
 
+    it('opens History and leaves report-list loading to the panel', () => {
+        setRuntimeUiConfig({ endUserMode: true });
+        const loadReportsListIfNeeded = vi.fn();
+        const setIsHistoryPanelOpen = vi.fn();
+        const state = {
+            handleNewSession: vi.fn(),
+            loadReportsListIfNeeded,
+            setIsHistoryPanelOpen,
+            setIsDatabaseModalOpen: vi.fn(),
+            setIsDataPreparationModalOpen: vi.fn(),
+            setIsDebugLogsModalOpen: vi.fn(),
+            isAsideVisible: false,
+            setIsAsideVisible: vi.fn(),
+            confirmedAnalysisGoal: null,
+            reproposeAnalysisGoals: vi.fn(),
+            csvData: { fileName: 'sales.csv' },
+            settings: { language: 'English' as const },
+        };
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+
+        render(<AppHeader />);
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+
+        expect(setIsHistoryPanelOpen).toHaveBeenCalledWith(true);
+        expect(loadReportsListIfNeeded).not.toHaveBeenCalled();
+    });
+
     it('shows the new session button when explicitly re-enabled in runtime config', () => {
         setRuntimeUiConfig({ endUserMode: true, showNewSessionButton: true });
         const state = {
