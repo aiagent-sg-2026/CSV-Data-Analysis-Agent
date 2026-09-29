@@ -29,24 +29,26 @@ export const SpreadsheetControls: React.FC<SpreadsheetControlsProps> = ({
     };
 
     return (
-        <div className="flex items-center gap-2">
-            <div className="relative flex-grow">
+        <div className="flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+            <div className="relative min-w-0 flex-grow">
                 <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                     <IconSearch />
                 </div>
                 <input
                     type="text"
+                    aria-label={getTranslation('spreadsheet_search_placeholder', language)}
                     placeholder={getTranslation('spreadsheet_search_placeholder', language)}
                     value={filterText}
                     onChange={(e) => onFilterTextChange(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    className="bg-white border border-slate-300 rounded-md py-1.5 pl-10 pr-4 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 w-full"
+                    className="min-h-[44px] w-full rounded-md border border-slate-300 bg-white py-2 pl-10 pr-4 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
             </div>
             <button
+                type="button"
                 onClick={onQuerySubmit}
                 disabled={!aiEnabled || isAiFiltering || !filterText.trim()}
-                className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                className="flex min-h-[44px] shrink-0 items-center self-end gap-2 rounded-md bg-blue-600 px-3 py-2 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300 sm:self-auto"
                 title={getTranslation('spreadsheet_ask_ai', language)}
             >
                 {isAiFiltering ? <IconLoadingSpinner /> : <IconAi />}

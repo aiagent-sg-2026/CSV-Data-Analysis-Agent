@@ -123,6 +123,18 @@ describe('SpreadsheetPanel', () => {
         expect(screen.getByTestId('tabulator-table')).toBeInTheDocument();
     });
 
+    it('announces the selected data view and keeps all three views operable', () => {
+        const logic = { ...createLogic('schema_only'), viewMode: 'semantic_all' as const };
+        useSpreadsheetLogicMock.mockReturnValue(logic);
+
+        render(<SpreadsheetPanel isVisible />);
+
+        expect(screen.getByRole('button', { name: 'All Prepared', pressed: true })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Original CSV' }));
+        expect(logic.setViewMode).toHaveBeenCalledWith('raw');
+        expect(screen.getByRole('textbox', { name: /Search table or ask AI/ })).toBeInTheDocument();
+    });
+
     it('shows Cleaning Blocked badge for inconsistent prepared runs', () => {
         useSpreadsheetLogicMock.mockReturnValue(createLogic('inconsistent'));
 

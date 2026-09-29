@@ -475,8 +475,9 @@ export const ViewModeToggle: React.FC<{
     isGroupBy: boolean;
     onToggle: (v: boolean) => void;
     language: string;
-}> = ({ isGroupBy, onToggle, language }) => (
-    <div className="inline-flex gap-1 rounded-lg bg-slate-100 p-0.5">
+    className?: string;
+}> = ({ isGroupBy, onToggle, language, className }) => (
+    <div className={className ?? 'inline-flex gap-1 rounded-lg bg-slate-100 p-0.5'}>
         <button
             type="button"
             onClick={() => onToggle(false)}

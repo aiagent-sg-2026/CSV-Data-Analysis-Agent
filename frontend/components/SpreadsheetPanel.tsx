@@ -139,30 +139,41 @@ export const SpreadsheetPanel: React.FC<SpreadsheetPanelProps> = ({ isVisible })
             {isVisible && (
                 <div className="flex h-full min-h-0 flex-col space-y-4 px-4 pb-4 pt-0">
                     <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="inline-flex gap-1 rounded-md bg-slate-100 p-1">
+                        <div className="grid w-full min-w-0 grid-cols-3 gap-1 rounded-md bg-slate-100 p-1 sm:inline-flex sm:w-auto">
                             <button
+                                type="button"
                                 onClick={() => setViewMode('semantic_default')}
-                                className={`rounded px-3 py-1.5 text-sm font-medium ${viewMode === 'semantic_default' ? 'bg-white text-slate-900 shadow' : 'text-slate-500 hover:text-slate-800'}`}
+                                aria-pressed={viewMode === 'semantic_default'}
+                                className={`min-h-[44px] min-w-0 rounded px-2 py-2 text-center text-sm leading-tight font-medium sm:px-3 ${viewMode === 'semantic_default' ? 'bg-white text-slate-900 shadow' : 'text-slate-500 hover:text-slate-800'}`}
                             >
                                 {getTranslation('prepared_data', language)}
                             </button>
                             <button
+                                type="button"
                                 onClick={() => setViewMode('semantic_all')}
-                                className={`rounded px-3 py-1.5 text-sm font-medium ${viewMode === 'semantic_all' ? 'bg-white text-slate-900 shadow' : 'text-slate-500 hover:text-slate-800'}`}
+                                aria-pressed={viewMode === 'semantic_all'}
+                                className={`min-h-[44px] min-w-0 rounded px-2 py-2 text-center text-sm leading-tight font-medium sm:px-3 ${viewMode === 'semantic_all' ? 'bg-white text-slate-900 shadow' : 'text-slate-500 hover:text-slate-800'}`}
                             >
                                 {getTranslation('all_prepared_data', language)}
                             </button>
                             <button
+                                type="button"
                                 onClick={() => rawCsvData && setViewMode('raw')}
                                 disabled={!rawCsvData}
-                                className={`rounded px-3 py-1.5 text-sm font-medium ${viewMode === 'raw' ? 'bg-white text-slate-900 shadow' : 'text-slate-500 hover:text-slate-800'} ${!rawCsvData ? 'cursor-not-allowed opacity-50' : ''}`}
+                                aria-pressed={viewMode === 'raw'}
+                                className={`min-h-[44px] min-w-0 rounded px-2 py-2 text-center text-sm leading-tight font-medium sm:px-3 ${viewMode === 'raw' ? 'bg-white text-slate-900 shadow' : 'text-slate-500 hover:text-slate-800'} ${!rawCsvData ? 'cursor-not-allowed opacity-50' : ''}`}
                             >
                                 {getTranslation('original_csv', language)}
                             </button>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
                             {!largeDatasetBacking && (
-                                <ViewModeToggle isGroupBy={isGroupByMode} onToggle={setIsGroupByMode} language={language} />
+                                <ViewModeToggle
+                                    isGroupBy={isGroupByMode}
+                                    onToggle={setIsGroupByMode}
+                                    language={language}
+                                    className="grid w-full grid-cols-2 gap-1 rounded-lg bg-slate-100 p-0.5 sm:inline-flex sm:w-auto"
+                                />
                             )}
                             <span className="text-xs text-slate-500">{helperText}</span>
                             {semanticStatus === 'running' && viewMode === 'semantic_default' && !activeDataQuery && !semanticDefaultReady && (
