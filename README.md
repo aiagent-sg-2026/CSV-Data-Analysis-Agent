@@ -47,6 +47,7 @@ The Assistant activity panel labels an empty session without implying that analy
 AI Long-Term Memory search is available only when the current report has saved memory items. The panel explains missing data or memory, and shows an explicit empty or retry message after a search returns no matches or fails.
 
 The Data Preparation Workflow's GitHub support action opens the public issues page for this repository.
+Its Advanced exports menu scrolls within short viewports so every download and copy action remains reachable.
 
 Modal background controls unlock after the last overlapping dialog closes, including when dialogs close in a different order from opening.
 

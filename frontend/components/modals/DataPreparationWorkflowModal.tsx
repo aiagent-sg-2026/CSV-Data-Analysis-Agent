@@ -309,7 +309,7 @@ const OpenDataPreparationWorkflowModal: React.FC = () => {
                                 <summary className="flex min-h-[44px] cursor-pointer items-center rounded-card border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
                                     Advanced exports
                                 </summary>
-                                <div className="absolute right-0 z-30 mt-2 grid w-[min(22rem,calc(100vw-2rem))] gap-2 rounded-card border border-slate-200 bg-white p-3 shadow-xl">
+                                <div className="absolute right-0 z-30 mt-2 grid max-h-[calc(100dvh-180px)] w-[min(22rem,calc(100vw-2rem))] gap-2 overflow-y-auto overscroll-contain rounded-card border border-slate-200 bg-white p-3 shadow-xl">
                                     <p className="text-xs text-slate-600">Download the complete prepared dataset or copy a technical handoff bundle.</p>
                                     <button
                                         onClick={() => void handleDownloadCleanedCsv()}
