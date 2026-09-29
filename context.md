@@ -448,6 +448,12 @@
 - **Browser verification**: The restored synthetic 90-row report showed 30 TAMPINES rows after raw search, preserved the 90-row COUNT pivot, and switched through all three source views. Document width matched viewport width at 320, 390, 667, and 1280px; browser errors were zero. Typecheck, lint, production build, bundle budget, and full suite (341 files / 2,820 tests) passed. `UI/qa-audit.md` links real before/after screenshots and the separately labeled Codex CLI proposal.
 - **Release state**: This QA worktree remains local; root deployment and public Pages are unchanged.
 
+## 2026-09-29 Wide pivot scope QA
+
+- **Finding and fix**: A 336-row local-only browser fixture with 21 street-name groups and 16 town pivots showed correct full COUNT 336, but the truncation note scrolled offscreen when the wide pivot reached its grand-total column. The table now owns horizontal scrolling while the note remains outside that scroll region.
+- **Browser verification**: At 390px, the table reached horizontal scroll offset 814px and displayed both 336 and the 20/21-row, 15/16-pivot scope note; the document width remained 390px. The note fitted 667px landscape and the full table fitted 1280px. No browser errors; the isolated tab and server were closed. Typecheck, lint, production build, bundle budget, and full suite (341 files / 2,820 tests) passed. Real before/after screenshots are linked from `UI/qa-audit.md`.
+- **Release state**: This remains local source work, with no root publication or Pages deployment.
+
 ## 2026-09-29 Data Provenance mobile and aggregate QA
 
 - **Finding**: At 390px, the Data Provenance search field and footer actions were 29–32px high, mode controls were 38px, and the search copy suggested an AI prompt though it only filters rows. Group By selectors were 27px. A custom AVG by Town incorrectly summed three group averages into a `Total` of 1,216,875 instead of the 90-row overall average of 405,625; its `AVGIF` hint was also not a valid overall check.

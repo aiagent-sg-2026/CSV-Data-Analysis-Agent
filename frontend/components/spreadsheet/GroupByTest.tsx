@@ -283,40 +283,42 @@ const PivotTableView: React.FC<{ pivot: PivotResult; language: string; agg: 'sum
     const totalLabel = getTranslation(agg === 'avg' ? 'provenance_step3_average_label' : 'provenance_step3_total_label', language);
 
     return (
-        <div className="overflow-x-auto rounded-lg border border-slate-200">
-            <table className="w-full text-xs">
-                <thead>
-                    <tr className="bg-slate-50">
-                        <th className="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-left font-semibold text-violet-700 bg-violet-50">{pivot.rowCol}</th>
-                        {pivot.pivotColumns.map(pc => (
-                            <th key={pc} className="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-600">
-                                {pc.length > 16 ? `${pc.slice(0, 14)}…` : pc}
-                            </th>
-                        ))}
-                        <th className="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-right font-bold text-emerald-700 bg-emerald-50">{totalLabel}</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {pivot.rows.map((row, i) => (
-                        <tr key={i} className={`${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-blue-50/40`}>
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-1.5 font-medium text-violet-800">{formatCell(row[pivot.rowCol])}</td>
+        <div className="min-w-0 max-w-full rounded-lg border border-slate-200">
+            <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                    <thead>
+                        <tr className="bg-slate-50">
+                            <th className="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-left font-semibold text-violet-700 bg-violet-50">{pivot.rowCol}</th>
                             {pivot.pivotColumns.map(pc => (
-                                <td key={pc} className="whitespace-nowrap border-b border-slate-100 px-3 py-1.5 text-right text-slate-700">{formatAggregateValue(row[pc])}</td>
+                                <th key={pc} className="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-600">
+                                    {pc.length > 16 ? `${pc.slice(0, 14)}…` : pc}
+                                </th>
                             ))}
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-1.5 text-right font-semibold text-emerald-800 bg-emerald-50/50">{formatAggregateValue(row['Total'])}</td>
+                            <th className="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-right font-bold text-emerald-700 bg-emerald-50">{totalLabel}</th>
                         </tr>
-                    ))}
-                </tbody>
-                <tfoot>
-                    <tr className="bg-emerald-50 font-semibold">
-                        <td className="border-t-2 border-emerald-200 px-3 py-2 text-right text-emerald-800">{totalLabel}</td>
-                        {pivot.pivotColumns.map(pc => (
-                            <td key={pc} className="border-t-2 border-emerald-200 px-3 py-2 text-right text-emerald-800">{formatAggregateValue(pivot.columnTotals[pc])}</td>
+                    </thead>
+                    <tbody>
+                        {pivot.rows.map((row, i) => (
+                            <tr key={i} className={`${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-blue-50/40`}>
+                                <td className="whitespace-nowrap border-b border-slate-100 px-3 py-1.5 font-medium text-violet-800">{formatCell(row[pivot.rowCol])}</td>
+                                {pivot.pivotColumns.map(pc => (
+                                    <td key={pc} className="whitespace-nowrap border-b border-slate-100 px-3 py-1.5 text-right text-slate-700">{formatAggregateValue(row[pc])}</td>
+                                ))}
+                                <td className="whitespace-nowrap border-b border-slate-100 px-3 py-1.5 text-right font-semibold text-emerald-800 bg-emerald-50/50">{formatAggregateValue(row['Total'])}</td>
+                            </tr>
                         ))}
-                        <td className="border-t-2 border-emerald-300 px-3 py-2 text-right font-bold text-emerald-900 bg-emerald-100">{formatAggregateValue(pivot.grandTotal)}</td>
-                    </tr>
-                </tfoot>
-            </table>
+                    </tbody>
+                    <tfoot>
+                        <tr className="bg-emerald-50 font-semibold">
+                            <td className="border-t-2 border-emerald-200 px-3 py-2 text-right text-emerald-800">{totalLabel}</td>
+                            {pivot.pivotColumns.map(pc => (
+                                <td key={pc} className="border-t-2 border-emerald-200 px-3 py-2 text-right text-emerald-800">{formatAggregateValue(pivot.columnTotals[pc])}</td>
+                            ))}
+                            <td className="border-t-2 border-emerald-300 px-3 py-2 text-right font-bold text-emerald-900 bg-emerald-100">{formatAggregateValue(pivot.grandTotal)}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
             {(pivot.rowGroupCount > pivot.rows.length || pivot.pivotGroupCount > pivot.pivotColumns.length) && (
                 <p className="px-3 py-2 text-xs text-slate-600">
                     {getTranslation('provenance_pivot_truncated', language, {
