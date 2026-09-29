@@ -141,6 +141,30 @@ describe('useSpreadsheetLogic', () => {
         expect(result.current.filterText).toBe('query');
     });
 
+    it('keeps dataset rows visible and returns a query error after AI filtering fails', async () => {
+        mockStore.handleNaturalLanguageQuery.mockResolvedValue('Provider unavailable.');
+        const { result } = renderHook(() => useSpreadsheetLogic(true));
+
+        act(() => result.current.setFilterText('Show rows where value > 1000'));
+        expect(result.current.processedData).toHaveLength(0);
+
+        await act(async () => result.current.handleQuerySubmit());
+
+        expect(result.current.aiQueryError).toBe('Provider unavailable.');
+        expect(result.current.filterText).toBe('Show rows where value > 1000');
+        expect(result.current.processedData).toHaveLength(100);
+    });
+
+    it('does not submit an AI filter before cleaning completes', () => {
+        mockStore.cleaningRun = { status: 'paused' };
+        const { result } = renderHook(() => useSpreadsheetLogic(true));
+
+        act(() => result.current.setFilterText('Show rows where value > 1000'));
+        act(() => result.current.handleQuerySubmit());
+
+        expect(mockStore.handleNaturalLanguageQuery).not.toHaveBeenCalled();
+    });
+
     it('should apply deterministic spreadsheet filter operations', () => {
         mockStore.datasetSemanticSnapshot = {
             ...mockStore.datasetSemanticSnapshot,

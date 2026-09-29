@@ -29,7 +29,7 @@ export interface IChatSlice {
     clearStreamingMessage: () => void;
     handleChatMessage: (message: string, options?: { source?: 'composer' | 'action'; displayText?: string }) => Promise<void>;
     handleClarificationResponse: (userChoice: ClarificationOption) => Promise<void>;
-    handleNaturalLanguageQuery: (query: string) => Promise<void>;
+    handleNaturalLanguageQuery: (query: string) => Promise<string | null>;
     clearAiFilter: () => void;
     clearActiveDataQuery: () => void;
     confirmGoal: (goalTitle: string) => Promise<void>;
@@ -165,10 +165,11 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
         origin: 'chat' | 'spreadsheet_panel',
     ) => {
         const query = rawQuery.trim();
-        if (!query) return;
+        if (!query) return null;
 
         const action: AiAction = {
             type: 'tool_call',
+            thought: 'Apply the user request as a governed temporary spreadsheet filter.',
             toolName: 'spreadsheet.filter',
             args: { query },
         };
@@ -184,17 +185,17 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
                 if (observedReply) {
                     appendAiMessage(observedReply);
                 }
-                return;
+                return null;
             }
 
-            appendAiMessage(result.observation?.summary ?? result.message, 'ai_message', { isError: true });
+            const errorMessage = result.observation?.summary ?? result.message;
+            appendAiMessage(errorMessage, 'ai_message', { isError: true });
+            return errorMessage;
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            appendAiMessage(
-                getTranslation('chat_temporary_filter_failed', get().settings.language, { message: errorMessage }),
-                'ai_message',
-                { isError: true },
-            );
+            const reply = getTranslation('chat_temporary_filter_failed', get().settings.language, { message: errorMessage });
+            appendAiMessage(reply, 'ai_message', { isError: true });
+            return errorMessage;
         } finally {
             set({ isBusy: false, chatLifecycleState: 'idle' as const });
         }
@@ -492,8 +493,9 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
         },
 
         handleNaturalLanguageQuery: async (query) => {
-            await executeControlledSpreadsheetFilter(query, 'spreadsheet_panel');
+            const error = await executeControlledSpreadsheetFilter(query, 'spreadsheet_panel');
             fireContextRefresh();
+            return error;
         },
 
         clearAiFilter: () => {

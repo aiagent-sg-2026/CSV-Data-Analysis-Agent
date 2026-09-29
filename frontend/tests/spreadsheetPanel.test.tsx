@@ -135,6 +135,46 @@ describe('SpreadsheetPanel', () => {
         expect(screen.getByRole('textbox', { name: /Search table or ask AI/ })).toBeInTheDocument();
     });
 
+    it('clears the submitted prompt when dismissing an AI filter', () => {
+        const logic = {
+            ...createLogic('schema_only'),
+            filterText: 'Show rows where Revenue > 1000',
+            activeSpreadsheetFilter: { finalReply: 'Filtered to one row.' },
+        };
+        useSpreadsheetLogicMock.mockReturnValue(logic);
+
+        render(<SpreadsheetPanel isVisible />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }));
+        expect(logic.clearAiFilter).toHaveBeenCalledTimes(1);
+        expect(logic.setFilterText).toHaveBeenCalledWith('');
+    });
+
+    it('shows a failed AI query beside the unchanged data', () => {
+        useSpreadsheetLogicMock.mockReturnValue({
+            ...createLogic('schema_only'),
+            aiQueryError: 'Provider unavailable.',
+        });
+
+        render(<SpreadsheetPanel isVisible />);
+
+        expect(screen.getByRole('alert')).toHaveTextContent('Temporary filter failed: Provider unavailable.');
+        expect(screen.getByTestId('tabulator-table')).toBeInTheDocument();
+    });
+
+    it('disables Ask AI until dataset cleaning completes', () => {
+        useSpreadsheetLogicMock.mockReturnValue({
+            ...createLogic('schema_only'),
+            filterText: 'Show rows where Revenue > 1000',
+        });
+
+        render(<SpreadsheetPanel isVisible />);
+
+        expect(screen.getByRole('button', { name: 'Ask AI' })).toBeDisabled();
+        fireEvent.keyDown(screen.getByRole('textbox', { name: /Search table or ask AI/ }), { key: 'Enter' });
+        expect(useSpreadsheetLogicMock.mock.results.at(-1)?.value.handleQuerySubmit).not.toHaveBeenCalled();
+    });
+
     it('shows Cleaning Blocked badge for inconsistent prepared runs', () => {
         useSpreadsheetLogicMock.mockReturnValue(createLogic('inconsistent'));
 

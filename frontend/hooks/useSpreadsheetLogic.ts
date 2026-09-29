@@ -75,6 +75,8 @@ export const useSpreadsheetLogic = (isVisible: boolean) => {
     );
 
     const [filterText, setFilterText] = useState('');
+    const [aiQueryError, setAiQueryError] = useState<string | null>(null);
+    const [isSubmittingAiQuery, setIsSubmittingAiQuery] = useState(false);
     const [viewMode, setViewMode] = useState<'semantic_default' | 'semantic_all' | 'raw'>('semantic_default');
     // PERF-312: Lazy read via getState() — was reading entire state on every setState.
     // dataPreparationPlan is the only dep that matters for workflow bundle.
@@ -172,16 +174,25 @@ export const useSpreadsheetLogic = (isVisible: boolean) => {
         [activeDataset, columnProfiles, columnRegistry, datasetSemanticSnapshot, userColumnAnnotations, viewMode],
     );
 
+    const updateFilterText = (text: string) => {
+        setFilterText(text);
+        setAiQueryError(null);
+    };
+
     const handleQuerySubmit = () => {
-        if (filterText.trim()) {
-            if (viewMode === 'raw') return;
-            handleNaturalLanguageQuery(filterText.trim());
-        }
+        const query = filterText.trim();
+        if (!query || viewMode === 'raw' || (cleaningRun && cleaningRun.status !== 'completed')) return;
+        setAiQueryError(null);
+        setIsSubmittingAiQuery(true);
+        void handleNaturalLanguageQuery(query)
+            .then(error => setAiQueryError(error ?? null))
+            .catch(error => setAiQueryError(error instanceof Error ? error.message : String(error)))
+            .finally(() => setIsSubmittingAiQuery(false));
     };
 
     const effectiveFilterFunction = viewMode !== 'raw' ? spreadsheetFilterFunction : null;
     const _pd0 = performance.now(); // PERF-309
-    const processedData = useSpreadsheetData(activeDataset, filterText, effectiveFilterFunction);
+    const processedData = useSpreadsheetData(activeDataset, isSubmittingAiQuery || aiQueryError ? '' : filterText, effectiveFilterFunction);
     const _pd1 = performance.now(); // PERF-309
     const displayColumns = useMemo(() => {
         if (isQueryResultView) {
@@ -221,14 +232,15 @@ export const useSpreadsheetLogic = (isVisible: boolean) => {
         displayColumns,
         displayColumnLabels,
         filterText,
-        setFilterText,
+        setFilterText: updateFilterText,
         handleQuerySubmit,
+        aiQueryError,
         viewMode,
         setViewMode,
         activeDataQuery,
         activeSpreadsheetFilter,
         aiFilterExplanation,
-        isAiFiltering,
+        isAiFiltering: isAiFiltering || isSubmittingAiQuery,
         clearAiFilter,
         clearActiveDataQuery,
         rawCsvData,

@@ -54,6 +54,7 @@ export const SpreadsheetPanel: React.FC<SpreadsheetPanelProps> = ({ isVisible })
         filterText,
         setFilterText,
         handleQuerySubmit,
+        aiQueryError,
         viewMode,
         setViewMode,
         activeDataQuery,
@@ -220,8 +221,14 @@ export const SpreadsheetPanel: React.FC<SpreadsheetPanelProps> = ({ isVisible })
                         onFilterTextChange={setFilterText}
                         onQuerySubmit={handleQuerySubmit}
                         isAiFiltering={isAiFiltering && viewMode !== 'raw'}
-                        aiEnabled={viewMode !== 'raw'}
+                        aiEnabled={viewMode !== 'raw' && (!cleaningRun || cleaningRun.status === 'completed')}
                     />
+
+                    {viewMode !== 'raw' && aiQueryError && (
+                        <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+                            {getTranslation('chat_temporary_filter_failed', language, { message: aiQueryError })}
+                        </p>
+                    )}
 
                     {viewMode !== 'raw' && activeDataQuery && (
                         <div className="flex items-center justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
@@ -247,8 +254,9 @@ export const SpreadsheetPanel: React.FC<SpreadsheetPanelProps> = ({ isVisible })
                                 )}
                             </div>
                             <button
+                                type="button"
                                 onClick={clearActiveDataQuery}
-                                className="p-1 rounded-full hover:bg-emerald-200"
+                                className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full hover:bg-emerald-200"
                                 title={getTranslation('spreadsheet_clear_result', language)}
                                 aria-label={getTranslation('spreadsheet_clear_result', language)}
                             >
@@ -263,8 +271,12 @@ export const SpreadsheetPanel: React.FC<SpreadsheetPanelProps> = ({ isVisible })
                                 <span className="font-semibold">{getTranslation('ai_filter', language)}</span> {activeSpreadsheetFilter?.finalReply ?? aiFilterExplanation}
                             </p>
                             <button
-                                onClick={clearAiFilter}
-                                className="p-1 rounded-full hover:bg-blue-200"
+                                type="button"
+                                onClick={() => {
+                                    clearAiFilter();
+                                    setFilterText('');
+                                }}
+                                className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full hover:bg-blue-200"
                                 title={getTranslation('spreadsheet_clear_filter', language)}
                                 aria-label={getTranslation('spreadsheet_clear_filter', language)}
                             >

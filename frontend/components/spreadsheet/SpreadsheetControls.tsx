@@ -23,7 +23,7 @@ export const SpreadsheetControls: React.FC<SpreadsheetControlsProps> = ({
     const language = useAppStore(state => state.settings.language);
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' && aiEnabled && !isAiFiltering && filterText.trim()) {
             onQuerySubmit();
         }
     };

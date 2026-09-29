@@ -180,11 +180,12 @@ describe('chatSlice runtime entry', () => {
             };
         });
 
-        await harness.getState().handleNaturalLanguageQuery('show me all record CONSTRUCTION CONTRACT REVENUE');
+        const error = await harness.getState().handleNaturalLanguageQuery('show me all record CONSTRUCTION CONTRACT REVENUE');
 
         expect(handleAiActionMock).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: 'tool_call',
+                thought: expect.stringMatching(/\S/),
                 toolName: 'spreadsheet.filter',
                 args: { query: 'show me all record CONSTRUCTION CONTRACT REVENUE' },
             }),
@@ -195,8 +196,27 @@ describe('chatSlice runtime entry', () => {
             expect.objectContaining({ spreadsheetFilterOrigin: 'spreadsheet_panel' }),
         );
         expect(harness.getState().isSpreadsheetVisible).toBe(true);
+        expect(error).toBeNull();
         expect(harness.getState().chatHistory).toHaveLength(2);
         expect(harness.getState().chatHistory[1]?.text).toContain('temporary data filter');
+    });
+
+    it('returns a blocked spreadsheet filter reason to its caller', async () => {
+        const harness = createHarness();
+        handleAiActionMock.mockResolvedValueOnce({
+            status: 'blocked',
+            toolName: 'spreadsheet.filter',
+            message: 'Provider unavailable.',
+            shouldStop: true,
+        });
+
+        const error = await harness.getState().handleNaturalLanguageQuery('show rows with Revenue > 1000');
+
+        expect(error).toBe('Provider unavailable.');
+        expect(harness.getState().chatHistory.at(-1)).toEqual(expect.objectContaining({
+            isError: true,
+            text: 'Provider unavailable.',
+        }));
     });
 
     it('queues composer messages while a runtime turn is already running and drains them in FIFO order', async () => {
