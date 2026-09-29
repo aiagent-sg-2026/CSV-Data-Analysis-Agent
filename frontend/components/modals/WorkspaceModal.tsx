@@ -173,7 +173,7 @@ export const WorkspaceModal: React.FC = () => {
                                     {bundle.primaryFiles.length} files
                                 </span>
                                 <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-600">
-                                    {bundle.editableFiles.length} editable
+                                    {bundle.editableFiles.length} agent write paths
                                 </span>
                             </div>
                         </div>
@@ -182,13 +182,13 @@ export const WorkspaceModal: React.FC = () => {
                                 <>
                                     <button
                                         onClick={openLatestAnalystReport}
-                                        className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+                                        className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
                                     >
                                         Open Report
                                     </button>
                                     <button
                                         onClick={exportLatestAnalystReportPdf}
-                                        className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+                                        className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
                                     >
                                         Export PDF
                                     </button>
@@ -196,7 +196,8 @@ export const WorkspaceModal: React.FC = () => {
                             ) : null}
                             <button
                                 onClick={() => setShowDebugFiles(current => !current)}
-                                className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+                                aria-pressed={showDebugFiles}
+                                className={`min-h-[44px] rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
                                     showDebugFiles
                                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                                         : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
@@ -216,9 +217,9 @@ export const WorkspaceModal: React.FC = () => {
                     </div>
                 </header>
 
-                <div className="flex-1 min-h-0 overflow-hidden p-4">
-                    <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden rounded-card border border-slate-200 bg-white shadow-2xl lg:grid-cols-[300px_minmax(0,1fr)]">
-                        <aside className="min-h-0 overflow-y-auto border-b border-slate-200 bg-slate-50 lg:border-b-0 lg:border-r">
+                <div className="flex-1 min-h-0 overflow-y-auto p-4 lg:overflow-hidden">
+                    <div className="grid min-h-full grid-cols-1 overflow-hidden rounded-card border border-slate-200 bg-white shadow-2xl lg:h-full lg:min-h-0 lg:grid-cols-[300px_minmax(0,1fr)]">
+                        <aside className="max-h-[45dvh] min-h-0 overflow-y-auto border-b border-slate-200 bg-slate-50 lg:max-h-none lg:border-b-0 lg:border-r">
                             <div className="border-b border-slate-200 px-4 py-3">
                                 <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Explorer</div>
                                 <label htmlFor="workspaceFileFilter" className="sr-only">
@@ -229,7 +230,7 @@ export const WorkspaceModal: React.FC = () => {
                                     value={fileFilter}
                                     onChange={event => setFileFilter(event.target.value)}
                                     placeholder="Filter files"
-                                    className="mt-3 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400"
+                                    className="mt-3 min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400"
                                 />
                             </div>
                             <div className="p-4">
@@ -239,7 +240,7 @@ export const WorkspaceModal: React.FC = () => {
                                         {bundle.primaryFiles.length} primary
                                     </span>
                                     <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-600">
-                                        {bundle.editableFiles.length} editable
+                                        {bundle.editableFiles.length} agent write paths
                                     </span>
                                     <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-600">
                                         {visibleFiles.length} visible
@@ -262,7 +263,7 @@ export const WorkspaceModal: React.FC = () => {
                                                     <button
                                                         key={file.path}
                                                         onClick={() => setSelectedPath(file.path)}
-                                                        className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${
+                                                        className={`flex min-h-[44px] w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${
                                                             selectedFile?.path === file.path
                                                                 ? 'bg-blue-50 text-blue-900 ring-1 ring-inset ring-blue-400/40'
                                                                 : 'text-slate-700 hover:bg-slate-100'
@@ -279,7 +280,7 @@ export const WorkspaceModal: React.FC = () => {
                                                                     ? 'bg-blue-100 text-blue-700'
                                                                     : 'bg-emerald-100 text-emerald-700'
                                                             }`}>
-                                                                edit
+                                                                agent write
                                                             </span>
                                                         ) : null}
                                                     </button>
@@ -292,7 +293,7 @@ export const WorkspaceModal: React.FC = () => {
                             </div>
                         </aside>
 
-                        <section className="min-h-0 flex flex-col bg-white">
+                        <section className="flex min-h-[360px] flex-col bg-white lg:min-h-0">
                             <div className="border-b border-slate-200 bg-slate-50">
                                 <div className="flex min-h-[44px] items-center justify-between gap-3 px-4">
                                     <div className="flex min-w-0 items-center gap-2">
@@ -305,7 +306,7 @@ export const WorkspaceModal: React.FC = () => {
                                         <span className={`inline-flex items-center rounded-full px-2.5 py-1 font-medium ${
                                             selectedFileWritable ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
                                         }`}>
-                                            {selectedFileWritable ? 'Writable' : 'Read only'}
+                                            {selectedFileWritable ? 'Agent write path' : 'Read-only path'}
                                         </span>
                                     </div>
                                 </div>
@@ -314,7 +315,7 @@ export const WorkspaceModal: React.FC = () => {
                             <div className="border-b border-slate-200 bg-white px-4 py-3">
                                 <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                                     <div className="min-w-0">
-                                        <p className="text-xs uppercase tracking-wide text-slate-500">Preview</p>
+                                        <p className="text-xs uppercase tracking-wide text-slate-500">Read-only preview</p>
                                         <p className="mt-1 break-all text-sm font-semibold text-slate-900">{selectedFile?.path ?? 'No file selected'}</p>
                                         <p className="mt-1 text-xs text-slate-500">
                                             {selectedFile?.language.toUpperCase() ?? 'TEXT'} · {selectedFileLineCount} line{selectedFileLineCount === 1 ? '' : 's'} · {selectedFileBytes.toLocaleString()} bytes

@@ -51,6 +51,8 @@ Its Advanced exports menu scrolls within short viewports so every download and c
 
 The Debug Logs export menu stays inside the viewport on mobile and short landscape screens. Its Workflow and Artifacts header actions have 44px touch targets.
 
+The Artifacts file preview remains visible by scrolling the modal on short landscape screens. File selection, filtering, and header actions use touch-sized controls. The preview is read-only; agent write path badges describe paths eligible for governed agent tools, not direct editing in the viewer.
+
 Modal background controls unlock after the last overlapping dialog closes, including when dialogs close in a different order from opening.
 
 If a saved analysis needs cloud-assisted preparation to reproduce its evidence version, selecting the original CSV while offline leaves that saved analysis intact and asks you to reconnect before trying the restore again.
