@@ -240,8 +240,8 @@ describe('end user mode UI surfaces', () => {
 
         const header = container.querySelector('[data-app-header-root="true"]');
         const navigation = screen.getByRole('navigation', { name: 'Analysis actions' });
-        expect(header).toHaveClass('flex-row', 'flex-nowrap', 'min-w-0', 'overflow-hidden');
-        expect(navigation).toHaveClass('flex-nowrap', 'min-w-0');
+        expect(header).toHaveClass('flex-col', 'sm:flex-row', 'min-w-0', 'overflow-hidden');
+        expect(navigation).toHaveClass('w-full', 'justify-between', 'sm:w-auto', 'sm:justify-end', 'min-w-0');
         expect(screen.getByRole('heading', { name: 'AI Analysis' })).toHaveClass('whitespace-nowrap');
         expect(screen.queryByRole('menuitem', { name: 'Change goal' })).not.toBeInTheDocument();
 

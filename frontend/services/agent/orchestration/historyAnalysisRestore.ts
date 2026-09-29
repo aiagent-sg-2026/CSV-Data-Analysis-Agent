@@ -22,6 +22,8 @@ type RestoredAnalysisFields = Pick<AppStore,
     | 'vectorStoreDocuments'
     | 'vectorMemoryState'
     | 'selectedMemoryRunId'
+    | 'initialAnalysisStatus'
+    | 'initialAnalysisFailureKind'
 >;
 
 export interface HistoryAnalysisSnapshot extends RestoredAnalysisFields {
@@ -33,7 +35,9 @@ export const captureHistoryAnalysisSnapshot = (state: AppStore): HistoryAnalysis
     if (
         state.csvData
         || !state.datasetBundle
-        || state.initialAnalysisStatus !== 'ready'
+        || (state.initialAnalysisStatus !== 'ready'
+            && state.initialAnalysisStatus !== 'degraded'
+            && !(state.initialAnalysisStatus === 'error' && state.analysisCards.length > 0))
         || state.cleaningRun?.status !== 'completed'
         || (state.analysisCards.length === 0 && !state.finalSummary)
     ) {
@@ -66,6 +70,8 @@ export const captureHistoryAnalysisSnapshot = (state: AppStore): HistoryAnalysis
         vectorStoreDocuments: state.vectorStoreDocuments,
         vectorMemoryState: state.vectorMemoryState,
         selectedMemoryRunId: state.selectedMemoryRunId,
+        initialAnalysisStatus: state.initialAnalysisStatus,
+        initialAnalysisFailureKind: state.initialAnalysisFailureKind,
     };
 };
 
@@ -104,6 +110,8 @@ export const getRestoredHistoryAnalysisState = (
     vectorStoreDocuments: snapshot.vectorStoreDocuments,
     vectorMemoryState: snapshot.vectorMemoryState,
     selectedMemoryRunId: snapshot.selectedMemoryRunId,
-    initialAnalysisStatus: 'ready',
-    initialAnalysisFailureKind: null,
+    initialAnalysisStatus: snapshot.initialAnalysisStatus === 'degraded'
+        || snapshot.initialAnalysisStatus === 'error'
+        ? snapshot.initialAnalysisStatus : 'ready',
+    initialAnalysisFailureKind: snapshot.initialAnalysisFailureKind ?? null,
 });

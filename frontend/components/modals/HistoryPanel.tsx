@@ -359,7 +359,7 @@ export const HistoryPanel: React.FC = () => {
                     <button
                         data-dialog-initial-focus
                         onClick={onClose}
-                        className="flex h-[44px] w-[44px] items-center justify-center rounded-full text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                        className="flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
                         title={getTranslation('history_close', language)}
                         aria-label={getTranslation('history_close', language)}
                     >

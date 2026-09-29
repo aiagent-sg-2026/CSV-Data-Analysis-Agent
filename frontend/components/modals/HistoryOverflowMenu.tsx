@@ -17,6 +17,7 @@ const MENU_GAP_PX = 4;
 interface HistoryOverflowMenuProps {
     reportId: string;
     reportFilename: string;
+    hasReportArtifact: boolean;
     isOpen: boolean;
     isProtected: boolean;
     language: string;
@@ -28,7 +29,7 @@ interface HistoryOverflowMenuProps {
 }
 
 export const HistoryOverflowMenu: React.FC<HistoryOverflowMenuProps> = ({
-    reportId, reportFilename, isOpen, isProtected, language,
+    reportId, reportFilename, hasReportArtifact, isOpen, isProtected, language,
     overflowRef, onToggle, onOpenReport, onExportPdf, onDelete,
 }) => {
     const [menuHost, setMenuHost] = useState<HTMLElement | null>(null);
@@ -56,7 +57,7 @@ export const HistoryOverflowMenu: React.FC<HistoryOverflowMenuProps> = ({
                     const buttonRect = e.currentTarget.getBoundingClientRect();
                     const hostRect = host.getBoundingClientRect();
                     const maxHeight = Math.max(44, hostRect.height - 2 * MENU_GAP_PX);
-                    const menuHeight = Math.min(MENU_CLEARANCE_PX, maxHeight);
+                    const menuHeight = Math.min(hasReportArtifact ? MENU_CLEARANCE_PX : 52, maxHeight);
                     const below = hostRect.bottom - buttonRect.bottom >= menuHeight + MENU_GAP_PX;
                     const top = below
                         ? buttonRect.bottom - hostRect.top + MENU_GAP_PX
@@ -79,18 +80,20 @@ export const HistoryOverflowMenu: React.FC<HistoryOverflowMenuProps> = ({
         </button>
         {isOpen && menuHost && menuPlacement && createPortal(
             <div data-history-menu className="absolute z-20 w-44 overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl" style={menuPlacement}>
-                <button
-                    onClick={() => { onOpenReport(reportId); onToggle(null); }}
-                    className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                >
-                    {getTranslation('history_open_report', language)}
-                </button>
-                <button
-                    onClick={() => { onExportPdf(reportId); onToggle(null); }}
-                    className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                >
-                    {getTranslation('history_export_pdf', language)}
-                </button>
+                {hasReportArtifact && <>
+                    <button
+                        onClick={() => { onOpenReport(reportId); onToggle(null); }}
+                        className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                        {getTranslation('history_open_report', language)}
+                    </button>
+                    <button
+                        onClick={() => { onExportPdf(reportId); onToggle(null); }}
+                        className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                        {getTranslation('history_export_pdf', language)}
+                    </button>
+                </>}
                 {!isProtected && (
                     <>
                         <div className="my-1 border-t border-slate-100" />

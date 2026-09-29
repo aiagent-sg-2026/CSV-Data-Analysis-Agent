@@ -96,14 +96,21 @@ export const FileUpload: React.FC<FileUploadProps> = ({ isWorkspaceRestoring = f
         : getTranslation('api_key_required_managed_message', language);
     const allowManualUpload = shouldShowNewSessionButton();
     const latestProgress = progressMessages[progressMessages.length - 1] ?? null;
+    // Progress is shared with History and report actions; only the upload
+    // boundary's terminal error belongs in the CSV import alert.
+    const fileImportError = latestProgress?.type === 'error'
+        && latestProgress.text.startsWith('File Processing Error:')
+        ? latestProgress : null;
+    const progressDetail = latestProgress?.type === 'error'
+        ? fileImportError?.text : latestProgress?.text;
     const canOpenLogs = shouldAllowLogsSurface();
     const isUploadUnavailable = isBusy || isWorkspaceRestoring;
 
     const resolveBusyCard = () => {
-        if (latestProgress?.type === 'error') {
+        if (fileImportError) {
             return {
                 title: getTranslation('upload_status_preparing_title', language),
-                detail: latestProgress.text,
+                detail: fileImportError.text,
                 tone: 'error' as const,
             };
         }
@@ -119,14 +126,14 @@ export const FileUpload: React.FC<FileUploadProps> = ({ isWorkspaceRestoring = f
         if (cleaningRunStatus === 'running') {
             return {
                 title: getTranslation('upload_status_preparing_title', language),
-                detail: latestProgress?.text || getTranslation('upload_status_preparing_detail', language),
+                detail: progressDetail || getTranslation('upload_status_preparing_detail', language),
                 tone: 'info' as const,
             };
         }
 
         return {
             title: getTranslation('upload_status_importing_title', language),
-            detail: latestProgress?.text || getTranslation('upload_status_importing_detail', language),
+            detail: progressDetail || getTranslation('upload_status_importing_detail', language),
             tone: 'info' as const,
         };
     };
@@ -231,7 +238,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ isWorkspaceRestoring = f
                     </div>
                 </div>
             )}
-            {!isWorkspaceRestoring && latestProgress?.type === 'error' && (
+            {!isWorkspaceRestoring && fileImportError && (
                 <div
                     role="alert"
                     className="mb-6 w-full max-w-xl rounded-card border border-red-200 bg-red-50 p-4 text-left"
@@ -240,7 +247,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ isWorkspaceRestoring = f
                         {getTranslation('file_upload_processing_error_title', language)}
                     </p>
                     <p className="mt-1 break-words text-sm leading-6 text-red-700">
-                        {latestProgress.text}
+                        {fileImportError.text}
                     </p>
                 </div>
             )}

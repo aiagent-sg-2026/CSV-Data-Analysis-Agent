@@ -85,6 +85,23 @@ describe('FileUpload demo data button', () => {
         );
     });
 
+    it('does not label an unrelated History report error as a CSV import failure', () => {
+        storeState.progressMessages = [{
+            text: 'No saved report artifact was found for this session.',
+            type: 'error',
+        }];
+
+        const { rerender } = render(<FileUpload />);
+
+        expect(screen.queryByText('This CSV could not be imported')).not.toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Upload a CSV to begin' })).toBeInTheDocument();
+
+        storeState.isBusy = true;
+        storeState.csvData = { fileName: 'new.csv' };
+        rerender(<FileUpload />);
+        expect(screen.queryByText('No saved report artifact was found for this session.')).not.toBeInTheDocument();
+    });
+
     it('keeps the upload flow visible but unavailable while the workspace is restoring', () => {
         render(<FileUpload isWorkspaceRestoring />);
 

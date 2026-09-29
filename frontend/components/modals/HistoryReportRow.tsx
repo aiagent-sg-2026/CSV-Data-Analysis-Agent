@@ -140,10 +140,11 @@ export const HistoryReportRow: React.FC<HistoryReportRowProps> = ({
                     )}
                 </div>
                 <div className="col-start-2 flex items-center gap-1.5 sm:mt-0.5 sm:flex-shrink-0">
-                    {renderActionButton(latest, isCurrent)}
-                    <HistoryOverflowMenu
+                    {(!isCurrent || latest.hasReportArtifact) && renderActionButton(latest, isCurrent)}
+                    {(latest.hasReportArtifact || !isProtectedReport(latest.id)) && <HistoryOverflowMenu
                         reportId={latest.id}
                         reportFilename={group.filename}
+                        hasReportArtifact={latest.hasReportArtifact}
                         isOpen={overflowMenuId === latest.id}
                         isProtected={isProtectedReport(latest.id)}
                         language={language}
@@ -152,7 +153,7 @@ export const HistoryReportRow: React.FC<HistoryReportRowProps> = ({
                         onOpenReport={onOpenReport}
                         onExportPdf={onExportPdf}
                         onDelete={onDelete}
-                    />
+                    />}
                 </div>
             </div>
 
@@ -188,9 +189,10 @@ export const HistoryReportRow: React.FC<HistoryReportRowProps> = ({
                             </div>
                             <div className="flex items-center gap-1.5 flex-shrink-0">
                                 {renderActionButton(entry, false, true)}
-                                <HistoryOverflowMenu
+                                {(entry.hasReportArtifact || !isProtectedReport(entry.id)) && <HistoryOverflowMenu
                                     reportId={entry.id}
                                     reportFilename={group.filename}
+                                    hasReportArtifact={entry.hasReportArtifact}
                                     isOpen={overflowMenuId === entry.id}
                                     isProtected={isProtectedReport(entry.id)}
                                     language={language}
@@ -199,7 +201,7 @@ export const HistoryReportRow: React.FC<HistoryReportRowProps> = ({
                                     onOpenReport={onOpenReport}
                                     onExportPdf={onExportPdf}
                                     onDelete={onDelete}
-                                />
+                                />}
                             </div>
                         </div>
                     ))}

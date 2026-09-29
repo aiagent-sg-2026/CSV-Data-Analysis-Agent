@@ -30,7 +30,38 @@ describe('history analysis restore', () => {
 
     it('does not reuse the saved analysis for an already loaded or incomplete session', () => {
         expect(captureHistoryAnalysisSnapshot({ ...savedState, csvData: {} } as AppStore)).toBeNull();
-        expect(captureHistoryAnalysisSnapshot({ ...savedState, initialAnalysisStatus: 'error' } as AppStore)).toBeNull();
+        expect(captureHistoryAnalysisSnapshot({ ...savedState, initialAnalysisStatus: 'running' } as AppStore)).toBeNull();
+        expect(captureHistoryAnalysisSnapshot({ ...savedState, cleaningRun: { status: 'paused' } } as AppStore)).toBeNull();
+        expect(captureHistoryAnalysisSnapshot({ ...savedState, initialAnalysisStatus: 'error', analysisCards: [] } as AppStore)).toBeNull();
+    });
+
+    it('restores completed analysis with review-only cards without marking it ready', () => {
+        const reviewState = {
+            ...savedState,
+            initialAnalysisStatus: 'degraded',
+            initialAnalysisFailureKind: null,
+            finalSummary: null,
+        } as AppStore;
+        const snapshot = captureHistoryAnalysisSnapshot(reviewState);
+
+        expect(snapshot?.analysisCards).toEqual(reviewState.analysisCards);
+        expect(getRestoredHistoryAnalysisState(snapshot!, {}).initialAnalysisStatus).toBe('degraded');
+    });
+
+    it('preserves completed review-only cards and error status without claiming trusted results', () => {
+        const reviewState = {
+            ...savedState,
+            initialAnalysisStatus: 'error',
+            initialAnalysisFailureKind: 'analysis',
+            finalSummary: null,
+        } as AppStore;
+        const snapshot = captureHistoryAnalysisSnapshot(reviewState);
+
+        expect(snapshot?.analysisCards).toEqual(reviewState.analysisCards);
+        expect(getRestoredHistoryAnalysisState(snapshot!, {})).toMatchObject({
+            initialAnalysisStatus: 'error',
+            initialAnalysisFailureKind: 'analysis',
+        });
     });
 
     it('preserves current workspace files while restoring saved cards', () => {

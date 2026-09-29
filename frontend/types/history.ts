@@ -21,4 +21,5 @@ export interface ReportListItem {
     updatedAt: Date;
     reportTitle?: string | null;
     reportDescription?: string | null;
+    hasReportArtifact: boolean;
 }

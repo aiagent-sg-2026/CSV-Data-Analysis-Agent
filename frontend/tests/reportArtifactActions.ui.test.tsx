@@ -149,6 +149,7 @@ describe('report artifact action surfaces', () => {
                 {
                     id: 'report-1',
                     filename: 'Executive Revenue Report Analyst Report',
+                    hasReportArtifact: true,
                     createdAt: new Date('2026-03-14T09:00:00.000Z'),
                     updatedAt: new Date('2026-03-14T09:10:00.000Z'),
                 },
@@ -173,6 +174,32 @@ describe('report artifact action surfaces', () => {
         expect(handleLoadReport).toHaveBeenCalledWith('report-1');
         expect(openPersistedReportArtifact).toHaveBeenCalledWith('report-1');
         expect(exportPersistedReportPdf).toHaveBeenCalledWith('report-1');
+    });
+
+    it('does not offer Open Report or PDF when the saved analysis has no report artifact', () => {
+        const state = {
+            isHistoryPanelOpen: true,
+            setIsHistoryPanelOpen: vi.fn(),
+            reportsList: [{
+                id: 'report-1', filename: 'sample.csv', hasReportArtifact: false,
+                createdAt: new Date('2026-03-14T09:00:00.000Z'),
+                updatedAt: new Date('2026-03-14T09:10:00.000Z'),
+            }],
+            handleLoadReport: vi.fn(async () => undefined),
+            handleDeleteReport: vi.fn(async () => undefined),
+            handlePurgeStorage: vi.fn(async () => ({ deletedReports: 0, freedMB: 0 })),
+            openPersistedReportArtifact: vi.fn(async () => false),
+            exportPersistedReportPdf: vi.fn(async () => false),
+            sessionId: 'report-1',
+            settings: { language: 'English' },
+            csvData: null,
+        };
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+
+        render(<HistoryPanel />);
+
+        expect(screen.queryByRole('button', { name: 'Open Report' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'More actions' })).not.toBeInTheDocument();
     });
 
     it('keeps History open with a retry when a saved report cannot be loaded', async () => {
@@ -215,7 +242,7 @@ describe('report artifact action surfaces', () => {
             isHistoryPanelOpen: true,
             setIsHistoryPanelOpen: vi.fn(),
             reportsList: [{
-                id: 'report-1', filename: 'sample.csv',
+                id: 'report-1', filename: 'sample.csv', hasReportArtifact: true,
                 createdAt: new Date('2026-03-14T09:00:00.000Z'),
                 updatedAt: new Date('2026-03-14T09:10:00.000Z'),
             }],
@@ -247,7 +274,7 @@ describe('report artifact action surfaces', () => {
             isHistoryPanelOpen: true,
             setIsHistoryPanelOpen: vi.fn(),
             reportsList: [{
-                id: 'report-1', filename: 'sample.csv',
+                id: 'report-1', filename: 'sample.csv', hasReportArtifact: true,
                 createdAt: new Date('2026-03-14T09:00:00.000Z'),
                 updatedAt: new Date('2026-03-14T09:10:00.000Z'),
             }],
@@ -319,7 +346,7 @@ describe('report artifact action surfaces', () => {
             isHistoryPanelOpen: true,
             setIsHistoryPanelOpen: vi.fn(),
             reportsList: [{
-                id: 'report-1', filename: 'sample.csv',
+                id: 'report-1', filename: 'sample.csv', hasReportArtifact: true,
                 createdAt: new Date('2026-03-14T09:00:00.000Z'),
                 updatedAt: new Date('2026-03-14T09:10:00.000Z'),
             }],
@@ -429,18 +456,21 @@ describe('report artifact action surfaces', () => {
                 {
                     id: 'session-2',
                     filename: 'Executive Revenue Report Analyst Report',
+                    hasReportArtifact: true,
                     createdAt: new Date('2026-03-14T09:00:00.000Z'),
                     updatedAt: new Date('2026-03-14T09:10:00.000Z'),
                 },
                 {
                     id: 'current_session',
                     filename: 'Executive Revenue Report Analyst Report',
+                    hasReportArtifact: true,
                     createdAt: new Date('2026-03-14T09:00:00.000Z'),
                     updatedAt: new Date('2026-03-14T09:09:00.000Z'),
                 },
                 {
                     id: 'report-1',
                     filename: 'Executive Revenue Report Analyst Report',
+                    hasReportArtifact: true,
                     createdAt: new Date('2026-03-14T08:00:00.000Z'),
                     updatedAt: new Date('2026-03-14T08:10:00.000Z'),
                 },

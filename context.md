@@ -645,3 +645,12 @@
 
 - Merged `origin/main` localization coverage and completed Malay/Japanese translations into the ongoing full-site QA branch. The merge retained 40 QA-only keys and both PWA copy updates; 12 QA-only Malay gaps were filled. An AST comparison confirmed all keys and nonconflicting language-field changes from both parents survived. The combined dictionary has 1,179 keys and zero English, Mandarin, Japanese, Malay, or placeholder gaps; the generated coverage report was refreshed.
 - Verification on the merged source: targeted localization tests 2 files / 16 tests, typecheck, lint, full frontend suite 343 files / 2,878 tests, production build, bundle budget, and `git diff --check` passed. Existing Vite static/dynamic import overlap warnings remain. Root generated output and public Pages were not updated by this integration.
+
+## 2026-09-29 full-site QA continuation: History and header
+
+- Fixed saved review-only analyses rerunning instead of restoring: the History snapshot accepts completed error/degraded card sets and preserves their status. A real 90-row synthetic CSV restore showed four saved cards and **Saved analysis restored** without a new 9/9 analysis run.
+- Indexed valid report-artifact references for History actions, hiding Open Report/PDF when the artifact is absent. CSV import now ignores unrelated shared progress errors. At 320px, a no-artifact saved report exposed only the valid Resume/Delete paths and no page overflow.
+- Resolved the 320px header overlap with a second action row, retained a one-row header at 1280px, and made the History close target 44px. Browser screenshots and the Codex CLI visual anchor are in `UI/`.
+- Browser checked 390px History Clear all and per-report Delete confirmation surfaces, Cancel-first focus, non-destructive cancellation, and zero console warnings/errors. No history was deleted.
+- Local build, typecheck, lint, bundle budget, and full frontend suite (343 files / 2,883 tests) passed. The full-site goal remains active: previously identified browser recovery/export paths and the public Pages release are not yet completely verified.
+- A fresh final-build browser restore reselected the matching synthetic CSV, restored four review-only cards without rerunning analysis, and showed 0 verified / 4 need review. Restored-card CSV export produced a completed 440-byte browser download event; in-app browser download-file capture still did not yield the file path. The deterministic CSV boundary was retained after a non-improving AI boundary warning.

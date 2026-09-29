@@ -25,6 +25,7 @@ import {
     buildReportLineageBundle,
 } from './persistence/datasetLineage';
 import { buildDatasetId, buildDatasetVersionId } from '../utils/datasetId';
+import { hasSavedReportArtifactReference } from './reporting/reportArtifactManifest';
 
 const DB_NAME = 'csv-ai-assistant-db';
 export const STORAGE_DB_VERSION = 11;
@@ -1250,6 +1251,7 @@ const updateReportsIndexEntry = (report: Report) => {
         updatedAt: report.updatedAt,
         reportTitle: eff?.reportTitle ?? null,
         reportDescription: eff?.reportDescription ?? null,
+        hasReportArtifact: hasSavedReportArtifactReference(report.appState?.workspaceFiles),
     };
     if (idx >= 0) {
         cached[idx] = entry;
@@ -1304,6 +1306,7 @@ const persistReportsIndex = (items: ReportListItem[]) => {
             updatedAt: r.updatedAt instanceof Date ? r.updatedAt.toISOString() : r.updatedAt,
             reportTitle: r.reportTitle ?? null,
             reportDescription: r.reportDescription ?? null,
+            hasReportArtifact: r.hasReportArtifact,
         }));
         localStorage.setItem(REPORTS_INDEX_CACHE_KEY, JSON.stringify(serialized));
     } catch { /* quota exceeded or private mode — non-fatal */ }
@@ -1317,9 +1320,10 @@ const readCachedReportsIndex = (): ReportListItem[] | null => {
         const parsed = JSON.parse(raw) as Array<{
             id: string; filename: string; createdAt: string; updatedAt: string;
             reportTitle?: string | null; reportDescription?: string | null;
+            hasReportArtifact?: boolean;
         }>;
         // One-time cache invalidation: force IDB rescan to populate new fields.
-        if (parsed.length > 0 && !('reportTitle' in parsed[0])) return null;
+        if (parsed.some(r => !('reportTitle' in r) || typeof r.hasReportArtifact !== 'boolean')) return null;
         return parsed.map(r => ({
             id: r.id,
             filename: r.filename,
@@ -1327,6 +1331,7 @@ const readCachedReportsIndex = (): ReportListItem[] | null => {
             updatedAt: new Date(r.updatedAt),
             reportTitle: r.reportTitle ?? null,
             reportDescription: r.reportDescription ?? null,
+            hasReportArtifact: r.hasReportArtifact === true,
         }));
     } catch {
         return null;
@@ -1370,6 +1375,7 @@ const _scanReportsFromIdb = async (): Promise<ReportListItem[]> => {
                 id, filename, createdAt, updatedAt,
                 reportTitle: eff?.reportTitle ?? null,
                 reportDescription: eff?.reportDescription ?? null,
+                hasReportArtifact: hasSavedReportArtifactReference(appState?.workspaceFiles),
             });
             cursor = await cursor.continue();
         }

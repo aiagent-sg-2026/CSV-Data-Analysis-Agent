@@ -149,14 +149,14 @@ export const AppHeader: React.FC = () => {
         <>
         <header
             data-app-header-root="true"
-            className="flex min-w-0 flex-row flex-nowrap items-center gap-2 overflow-hidden px-0 py-2"
+            className="flex min-w-0 flex-col items-stretch gap-1.5 overflow-hidden px-0 py-2 sm:flex-row sm:items-center sm:gap-2"
         >
             <div className="shrink-0">
                 <h1 className="whitespace-nowrap text-xl font-extrabold leading-tight text-slate-900">AI Analysis</h1>
             </div>
             <nav
                 aria-label={getTranslation('header_analysis_actions', language)}
-                className="ml-auto flex min-w-0 flex-nowrap items-center justify-end gap-1.5 overflow-visible"
+                className="flex w-full min-w-0 flex-nowrap items-center justify-between gap-1.5 overflow-visible sm:ml-auto sm:w-auto sm:justify-end"
             >
                 {showNewSessionButton && (showAnalysisTools || hasPendingRestore) && (
                     <button

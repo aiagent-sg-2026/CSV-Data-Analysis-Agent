@@ -5,6 +5,7 @@ import {
     parseReportArtifactManifest,
     resolveLatestReportArtifactStatus,
     hasOpenableLatestReport,
+    hasSavedReportArtifactReference,
 } from '../services/reporting/reportArtifactManifest';
 
 describe('parseReportArtifactManifest', () => {
@@ -43,6 +44,26 @@ describe('parseReportArtifactManifest', () => {
         const raw = JSON.stringify({ reportId: 'r2', reportTemplate: 'custom', artifactStatus: 'partial' });
         const result = parseReportArtifactManifest(raw);
         expect(result?.reportTemplate).toBe('custom');
+    });
+});
+
+describe('hasSavedReportArtifactReference', () => {
+    const manifestPath = '/workspace/reports/latest-analyst-report.manifest.json';
+    const withManifest = (manifest: Record<string, unknown>) => ({
+        [manifestPath]: JSON.stringify(manifest),
+    });
+
+    it('shows report actions only for a viewable saved HTML reference', () => {
+        expect(hasSavedReportArtifactReference({})).toBe(false);
+        expect(hasSavedReportArtifactReference(withManifest({
+            reportId: 'report-1', artifactStatus: 'blocked', latestFiles: { html: 'report.html' },
+        }))).toBe(false);
+        expect(hasSavedReportArtifactReference(withManifest({
+            reportId: 'report-1', artifactStatus: 'ready', latestFiles: {},
+        }))).toBe(false);
+        expect(hasSavedReportArtifactReference(withManifest({
+            reportId: 'report-1', artifactStatus: 'ready', latestFiles: { html: 'report.html' },
+        }))).toBe(true);
     });
 });
 

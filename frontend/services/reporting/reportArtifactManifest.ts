@@ -77,3 +77,16 @@ export const hasOpenableLatestReport = (
 
     return Boolean(workspaceFiles?.[LATEST_REPORT_HTML_PATH]);
 };
+
+export const hasSavedReportArtifactReference = (
+    workspaceFiles: Record<string, string> | null | undefined,
+): boolean => {
+    const manifest = parseReportArtifactManifest(workspaceFiles?.[LATEST_REPORT_MANIFEST_PATH]);
+    return Boolean(
+        manifest
+        && manifest.artifactStatus !== 'blocked'
+        && typeof manifest.reportId === 'string'
+        && manifest.reportId
+        && (manifest.archiveFiles?.html || manifest.latestFiles?.html),
+    );
+};

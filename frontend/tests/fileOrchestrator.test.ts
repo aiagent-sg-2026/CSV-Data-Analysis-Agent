@@ -340,6 +340,8 @@ describe('orchestrateFileUpload post-import pipeline timing', () => {
                 restoreSnapshot: {
                     datasetVersion: bundle.datasetVersion,
                     analysisDatasetVersion: getCsvDatasetVersion(cleanedData),
+                    initialAnalysisStatus: 'error',
+                    initialAnalysisFailureKind: 'analysis',
                     analysisCards: [savedCard],
                     workspaceFiles: {},
                     vectorStoreDocuments: [],
@@ -352,7 +354,8 @@ describe('orchestrateFileUpload post-import pipeline timing', () => {
         expect(state.csvData).toEqual(cleanedData);
         expect(state.canonicalCsvData).toEqual(cleanedData);
         expect(state.analysisCards).toEqual([savedCard]);
-        expect(state.initialAnalysisStatus).toBe('ready');
+        expect(state.initialAnalysisStatus).toBe('error');
+        expect(state.initialAnalysisFailureKind).toBe('analysis');
         expect(state.handleInitialAnalysis).not.toHaveBeenCalled();
         expect(state.proposeAnalysisGoals).not.toHaveBeenCalled();
     });
