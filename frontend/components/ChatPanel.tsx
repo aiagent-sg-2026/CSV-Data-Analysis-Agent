@@ -152,6 +152,8 @@ export const ChatPanel: React.FC = React.memo(() => {
         pendingClarification,
         pendingMutationConfirmation,
         goalState,
+        isChangingGoal,
+        cancelGoalChange,
         isGeneratingReport,
         isSummaryGenerating,
         reportGenerationProgress,
@@ -178,6 +180,8 @@ export const ChatPanel: React.FC = React.memo(() => {
         pendingClarification: state.pendingClarification,
         pendingMutationConfirmation: state.pendingMutationConfirmation,
         goalState: state.goalState,
+        isChangingGoal: state.isChangingGoal,
+        cancelGoalChange: state.cancelGoalChange,
         isGeneratingReport: state.isGeneratingReport,
         isSummaryGenerating: state.isSummaryGenerating,
         reportGenerationProgress: state.reportGenerationProgress,
@@ -545,12 +549,14 @@ export const ChatPanel: React.FC = React.memo(() => {
                 reportProgressLabel={reportProgressLabel}
                 canCancelActiveTurn={canCancelActiveTurn}
                 isCancellationPending={isCancellationPending}
+                isChangingGoal={isChangingGoal}
                 effectivePendingClarification={effectivePendingClarification}
                 pendingMutationConfirmation={pendingMutationConfirmation}
                 placeholder={getPlaceholder()}
                 onSend={(msg) => { handleChatMessage(msg, { source: 'composer' }); }}
                 onSuggestedAction={handleSuggestedAction}
                 onCancelActiveTurn={requestActiveTurnCancellation}
+                onCancelGoalChange={cancelGoalChange}
                 onScrollNeeded={handleComposerScrollNeeded}
             />
         </div>

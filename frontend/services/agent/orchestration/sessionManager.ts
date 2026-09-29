@@ -11,6 +11,7 @@ type StoreApi = {
 };
 
 const LOG_PREFIX = '[SessionManager]';
+const activeGoalChangeControllers = new WeakMap<StoreApi, AbortController>();
 
 export const confirmAnalysisGoal = async (goalTitle: string, store: StoreApi) => {
     const { getState, setState } = store;
@@ -80,6 +81,9 @@ export const regenerateAnalysesWithNewData = async (newData: CsvData, store: Sto
 
 export const reproposeAnalysisGoals = (store: StoreApi) => {
     const { getState, setState } = store;
+    activeGoalChangeControllers.get(store)?.abort();
+    const controller = new AbortController();
+    activeGoalChangeControllers.set(store, controller);
     setState({
         isChangingGoal: true,
         isBusy: true,
@@ -90,8 +94,25 @@ export const reproposeAnalysisGoals = (store: StoreApi) => {
 
     const dataset = getPreferredAnalysisDataset(getState());
     if (dataset) {
-        void proposeAnalysisGoals(dataset, store, { mode: 'change_goal' });
+        void proposeAnalysisGoals(dataset, store, { mode: 'change_goal', signal: controller.signal });
         return;
     }
+    controller.abort();
+    activeGoalChangeControllers.delete(store);
     setState({ isChangingGoal: false, isBusy: false, goalState: 'confirmed' });
+};
+
+export const cancelAnalysisGoalChange = (store: StoreApi) => {
+    const { getState, setState } = store;
+    if (!getState().isChangingGoal) return;
+
+    activeGoalChangeControllers.get(store)?.abort();
+    activeGoalChangeControllers.delete(store);
+    setState(prev => ({
+        isChangingGoal: false,
+        isBusy: false,
+        goalState: 'confirmed',
+        chatHistory: prev.chatHistory.filter(message => message.type !== 'ai_goal_clarification'),
+    }));
+    getState().addProgress('Kept the current analysis goal and results.');
 };

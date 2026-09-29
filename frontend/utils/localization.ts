@@ -3454,6 +3454,8 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'goal_confirm_recommended': { 'English': 'Recommended', 'Mandarin': '推荐', 'Japanese': 'おすすめ', 'Malay': 'Disyorkan' },
     'goal_confirm_button': { 'English': 'Confirm', 'Mandarin': '确认', 'Japanese': '確認', 'Malay': 'Sahkan' },
     'goal_confirm_use_recommended': { 'English': 'Use recommended goal and start analysis', 'Mandarin': '使用推荐目标并开始分析', 'Japanese': '推奨目標を使用して分析を開始', 'Malay': 'Gunakan matlamat yang disyorkan dan mulakan analisis' },
+    'goal_confirm_keep_current': { 'English': 'Keep current goal', 'Mandarin': '保留当前目标', 'Japanese': '現在の目標を維持', 'Malay': 'Kekalkan matlamat semasa' },
+    'goal_confirm_change_hint': { 'English': 'Current results stay unchanged until you select a new goal.', 'Mandarin': '选择新目标前，当前结果不会改变。', 'Japanese': '新しい目標を選ぶまで、現在の結果は変わりません。', 'Malay': 'Hasil semasa tidak berubah sehingga anda memilih matlamat baharu.' },
     'goal_confirm_auto_start': { 'English': 'Starting automatically in {count} seconds…', 'Mandarin': '{count} 秒后自动开始…', 'Japanese': '{count} 秒後に自動開始します…', 'Malay': 'Bermula secara automatik dalam {count} saat…' },
     'goal_confirm_other_options': { 'English': 'Other options', 'Mandarin': '其他选项', 'Japanese': 'その他の選択肢', 'Malay': 'Pilihan lain' },
     'goal_confirm_custom': { 'English': 'Or specify your own goal', 'Mandarin': '或自行指定目标', 'Japanese': 'または独自の目標を指定', 'Malay': 'Atau nyatakan matlamat anda sendiri' },

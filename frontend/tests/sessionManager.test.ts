@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { confirmAnalysisGoal, regenerateAnalysesWithNewData, reproposeAnalysisGoals } from '../services/agent/orchestration/sessionManager';
+import { cancelAnalysisGoalChange, confirmAnalysisGoal, regenerateAnalysesWithNewData, reproposeAnalysisGoals } from '../services/agent/orchestration/sessionManager';
 
 const { handleInitialAnalysisMock, proposeAnalysisGoalsMock } = vi.hoisted(() => ({
     handleInitialAnalysisMock: vi.fn(),
@@ -154,7 +154,55 @@ describe('sessionManager regenerateAnalysesWithNewData', () => {
         expect(proposeAnalysisGoalsMock).toHaveBeenCalledWith(
             expect.objectContaining({ fileName: 'cleaned.csv' }),
             store,
-            { mode: 'change_goal' },
+            { mode: 'change_goal', signal: expect.any(AbortSignal) },
         );
+    });
+
+    it('keeps the current goal and results when a goal change is cancelled', () => {
+        const existingCard = { plan: { title: 'Existing card' } };
+        const existingMessage = { type: 'ai_message', text: 'Existing analysis' };
+        const pendingMessage = { type: 'ai_goal_clarification', text: 'Choose another goal' };
+        let state = {
+            addProgress: vi.fn(),
+            analysisCards: [existingCard],
+            confirmedAnalysisGoal: 'Current goal',
+            finalSummary: 'Current summary',
+            aiCoreAnalysisSummary: 'Current evidence',
+            chatHistory: [existingMessage, pendingMessage],
+            isChangingGoal: false,
+            isBusy: false,
+            isAsideVisible: true,
+            goalState: 'confirmed',
+            csvData: { fileName: 'cleaned.csv', data: [{ Town: 'North' }] },
+        } as any;
+        const store = {
+            getState: () => state,
+            setState: (partial: any) => {
+                const next = typeof partial === 'function' ? partial(state) : partial;
+                state = { ...state, ...next };
+            },
+        };
+
+        reproposeAnalysisGoals(store as never);
+        const firstSignal = proposeAnalysisGoalsMock.mock.lastCall?.[2].signal as AbortSignal;
+        expect(firstSignal.aborted).toBe(false);
+
+        cancelAnalysisGoalChange(store as never);
+        expect(firstSignal.aborted).toBe(true);
+        expect(state).toMatchObject({
+            confirmedAnalysisGoal: 'Current goal',
+            analysisCards: [existingCard],
+            finalSummary: 'Current summary',
+            aiCoreAnalysisSummary: 'Current evidence',
+            chatHistory: [existingMessage],
+            isChangingGoal: false,
+            isBusy: false,
+            goalState: 'confirmed',
+        });
+
+        reproposeAnalysisGoals(store as never);
+        const secondSignal = proposeAnalysisGoalsMock.mock.lastCall?.[2].signal as AbortSignal;
+        expect(secondSignal).not.toBe(firstSignal);
+        expect(secondSignal.aborted).toBe(false);
     });
 });

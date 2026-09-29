@@ -28,6 +28,7 @@ const formatTemplateHints = (matches: TemplateMatch[]): Array<{ label: string; a
 
 interface ProposeAnalysisGoalsOptions {
     mode?: 'follow_up' | 'change_goal';
+    signal?: AbortSignal;
 }
 
 export const proposeAnalysisGoals = async (
@@ -37,8 +38,9 @@ export const proposeAnalysisGoals = async (
 ) => {
     const { getState, setState } = store;
     const mode = options.mode ?? 'follow_up';
+    const cancelled = () => mode === 'change_goal' && (options.signal?.aborted || !getState().isChangingGoal);
 
-    if (!dataForAnalysis) {
+    if (!dataForAnalysis || cancelled()) {
         return;
     }
 
@@ -84,9 +86,11 @@ export const proposeAnalysisGoals = async (
             getState().settings,
             getState(),
         );
+        if (cancelled()) return;
         console.log(`${LOG_PREFIX} AI suggested follow-up goals:`, goals);
 
         const [templateMatches, patternMatches] = await Promise.all([templateMatchesPromise, patternMatchesPromise]);
+        if (cancelled()) return;
         if (templateMatches.length > 0) {
             console.log(`${LOG_PREFIX} Found ${templateMatches.length} template hints from prior analyses.`);
         }
@@ -134,6 +138,7 @@ export const proposeAnalysisGoals = async (
         }));
         getState().addProgress('Follow-up analysis suggestions are ready.');
     } catch (error) {
+        if (cancelled()) return;
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`${LOG_PREFIX} Failed to suggest follow-up goals:`, error);
         getState().addProgress(`Could not prepare follow-up suggestions: ${errorMessage}`, 'warning');

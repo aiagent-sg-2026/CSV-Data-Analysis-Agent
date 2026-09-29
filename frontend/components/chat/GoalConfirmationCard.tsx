@@ -71,6 +71,7 @@ export const GoalConfirmationCard: React.FC<{ msg: ChatMessage }> = ({ msg }) =>
                 <div>
                     <h4 className="font-semibold text-base">{getTranslation('goal_confirm_title', settings.language)}</h4>
                     <p className="text-sm text-slate-600">{getTranslation('goal_confirm_description', settings.language)}</p>
+                    {isChangingGoal && <p className="mt-1 text-sm text-slate-600">{getTranslation('goal_confirm_change_hint', settings.language)}</p>}
                 </div>
             </div>
 
@@ -82,7 +83,7 @@ export const GoalConfirmationCard: React.FC<{ msg: ChatMessage }> = ({ msg }) =>
                     <button
                         onClick={() => handleConfirm(recommendedGoal.title)}
                         disabled={isBusy}
-                        className="mt-3 w-full rounded-md bg-blue-600 px-3 py-1.5 text-center text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="mt-3 min-h-[44px] w-full rounded-md bg-blue-600 px-3 py-1.5 text-center text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         {getTranslation('goal_confirm_use_recommended', settings.language)}
                     </button>
@@ -117,21 +118,22 @@ export const GoalConfirmationCard: React.FC<{ msg: ChatMessage }> = ({ msg }) =>
             )}
             
             <div className="mt-4">
-                <p className="text-xs font-medium text-slate-500 mb-1">{getTranslation('goal_confirm_custom', settings.language)}</p>
+                <label htmlFor="custom-analysis-goal" className="mb-1 block text-xs font-medium text-slate-500">{getTranslation('goal_confirm_custom', settings.language)}</label>
                 <div className="flex gap-2">
                     <input
+                        id="custom-analysis-goal"
                         type="text"
                         name="custom-analysis-goal"
                         value={customGoal}
                         onChange={handleCustomGoalChange}
                         placeholder={getTranslation('goal_confirm_custom_placeholder', settings.language)}
                         disabled={isBusy}
-                        className="flex-grow bg-white border border-slate-300 rounded-md py-1.5 px-3 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+                        className="min-h-[44px] min-w-0 flex-grow bg-white border border-slate-300 rounded-md py-1.5 px-3 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
                     />
                     <button
                         onClick={() => handleConfirm(customGoal)}
                         disabled={isBusy || !customGoal.trim()}
-                        className="rounded-md bg-slate-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-slate-700 disabled:bg-slate-300"
+                        className="min-h-[44px] min-w-[44px] rounded-md bg-slate-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-slate-700 disabled:bg-slate-300"
                     >
                         {getTranslation('goal_confirm_use', settings.language)}
                     </button>

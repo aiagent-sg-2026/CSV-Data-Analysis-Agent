@@ -27,12 +27,14 @@ describe('ChatComposer — no infinite scroll notification loop', () => {
         reportProgressLabel: null,
         canCancelActiveTurn: false,
         isCancellationPending: false,
+        isChangingGoal: false,
         effectivePendingClarification: null,
         pendingMutationConfirmation: null,
         placeholder: 'Type a message',
         onSend: vi.fn(),
         onSuggestedAction: vi.fn(),
         onCancelActiveTurn: vi.fn(),
+        onCancelGoalChange: vi.fn(),
     };
 
     afterEach(() => {
@@ -117,5 +119,22 @@ describe('ChatComposer — no infinite scroll notification loop', () => {
         // Neither callback should have been called — no multiline transition occurred
         expect(onScrollNeeded).not.toHaveBeenCalled();
         expect(onScrollNeeded2).not.toHaveBeenCalled();
+    });
+
+    it('offers a reachable keep-current-goal action while the goal proposal is pending', () => {
+        const onCancelGoalChange = vi.fn();
+        render(
+            <ChatComposer
+                {...baseProps}
+                isChangingGoal={true}
+                isComposerDisabled={true}
+                onCancelGoalChange={onCancelGoalChange}
+            />,
+        );
+
+        const keepGoal = screen.getByRole('button', { name: 'Keep current goal' });
+        expect(keepGoal).toBeEnabled();
+        fireEvent.click(keepGoal);
+        expect(onCancelGoalChange).toHaveBeenCalledOnce();
     });
 });

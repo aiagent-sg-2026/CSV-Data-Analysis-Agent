@@ -24,6 +24,8 @@ The active React source was recovered from `React-CSV-Data-Analysis-Agent-Backup
 
 When the user explicitly asks the main assistant to create a dashboard card, Pi can call the governed `analysis.create_plan` action. The turn succeeds only after the new card exists in app state; the dashboard switches to Explore so the card is visible, and chat links to it. Other follow-up requests retain the bounded read-only tool set. A query table in chat alone does not count as a created card.
 
+In the Assistant's Advanced menu, **Change goal** prepares alternative analysis goals while keeping the current results. **Keep current goal** cancels that change, including while suggestions are loading, without replacing the confirmed goal or cards. A cancelled provider response cannot reopen the goal picker.
+
 In Explore, each analysis card's More actions menu includes Data Provenance and Delete card. Deleting a card requires an explicit confirmation because there is no card-level Undo action.
 The Export menu's Full card PNG includes the card's complete current result table even when that table is collapsed in Explore; chart-only PNG leaves it out.
 Card CSV, HTML, and Full card PNG exports keep fields that first appear in later result rows and align values under their named columns.

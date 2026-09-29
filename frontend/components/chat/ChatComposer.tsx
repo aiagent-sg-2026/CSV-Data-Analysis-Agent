@@ -118,12 +118,14 @@ interface ChatComposerProps {
     reportProgressLabel: string | null;
     canCancelActiveTurn: boolean;
     isCancellationPending: boolean;
+    isChangingGoal: boolean;
     effectivePendingClarification: { allowFreeText?: boolean; question?: string } | null;
     pendingMutationConfirmation: unknown;
     placeholder: string;
     onSend: (message: string) => void;
     onSuggestedAction: (prompt: string, label?: string) => void;
     onCancelActiveTurn: () => void;
+    onCancelGoalChange: () => void;
     onScrollNeeded?: () => void;
 }
 
@@ -141,12 +143,14 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
     reportProgressLabel,
     canCancelActiveTurn,
     isCancellationPending,
+    isChangingGoal,
     effectivePendingClarification,
     pendingMutationConfirmation,
     placeholder,
     onSend,
     onSuggestedAction,
     onCancelActiveTurn,
+    onCancelGoalChange,
     onScrollNeeded,
 }) => {
     const [input, setInput] = useState('');
@@ -421,6 +425,15 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
                             </span>
                         )}
                     </div>
+                )}
+                {isChangingGoal && (
+                    <button
+                        type="button"
+                        onClick={onCancelGoalChange}
+                        className="mb-2 min-h-[44px] w-full rounded-card border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+                    >
+                        {getTranslation('goal_confirm_keep_current', language)}
+                    </button>
                 )}
                 <div className="relative">
                     {mentionState?.isOpen && mentionCards.length > 0 && (
