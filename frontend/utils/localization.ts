@@ -3988,6 +3988,18 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Pilih lajur kumpulan dan nilai untuk pratonton hasil.',
         'Japanese': 'グループ列と数値列を選択して結果をプレビューしてください。',
     },
+    'provenance_step3_select_group': {
+        'English': 'Select a group column to preview row counts.',
+        'Mandarin': '请选择分组列以预览行数。',
+        'Malay': 'Pilih lajur kumpulan untuk pratonton bilangan baris.',
+        'Japanese': 'グループ列を選択して行数をプレビューしてください。',
+    },
+    'provenance_count_rows_note': {
+        'English': 'COUNT counts rows; no value column is needed.',
+        'Mandarin': 'COUNT 计算行数，无需数值列。',
+        'Malay': 'COUNT mengira baris; lajur nilai tidak diperlukan.',
+        'Japanese': 'COUNT は行数を数えるため、数値列は不要です。',
+    },
     'provenance_step3_total_label': {
         'English': 'Total',
         'Mandarin': '合计',
@@ -4038,6 +4050,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'English': 'Excel: create Pivot Table — Rows={group}, Columns={pivot}, Values={agg}({value})',
         'Mandarin': 'Excel 验证：建立数据透视表 — 行={group}，列={pivot}，值={agg}({value})',
         'Japanese': 'Excel: ピボットテーブル作成 — 行={group}、列={pivot}、値={agg}({value})',
+    },
+    'provenance_pivot_count_hint': {
+        'English': 'Excel: create Pivot Table — Rows={group}, Columns={pivot}, Values=Count of rows',
+        'Mandarin': 'Excel 验证：建立数据透视表 — 行={group}，列={pivot}，值=行数',
+        'Malay': 'Excel: cipta Jadual Pangsi — Baris={group}, Lajur={pivot}, Nilai=Bilangan baris',
+        'Japanese': 'Excel: ピボットテーブル作成 — 行={group}、列={pivot}、値=行数',
     },
     'provenance_pivot_truncated': {
         'English': 'Showing {shownRows} of {rowGroups} row groups and {shownPivots} of {pivotGroups} pivot values. Totals include all grouped rows and pivot values.',

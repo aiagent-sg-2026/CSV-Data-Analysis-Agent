@@ -348,16 +348,18 @@ export const GroupByTest: React.FC<GroupByTestProps> = ({ rows, language, accent
     const [agg, setAgg] = useState<'sum' | 'count' | 'avg'>('sum');
 
     const { numeric, categorical } = useMemo(() => detectColumns(rows), [rows]);
+    const needsValueColumn = agg !== 'count';
+    const resultColumn = needsValueColumn ? valueCol : 'row_count';
 
     const flatResult = useMemo(() => {
-        if (pivotBy || !groupBy || !valueCol) return null;
-        return computeAggregation(rows, groupBy, valueCol, agg);
-    }, [rows, groupBy, valueCol, agg, pivotBy]);
+        if (pivotBy || !groupBy || !resultColumn) return null;
+        return computeAggregation(rows, groupBy, resultColumn, agg);
+    }, [rows, groupBy, resultColumn, agg, pivotBy]);
 
     const pivotResult = useMemo(() => {
-        if (!pivotBy || !groupBy || !valueCol) return null;
-        return computePivotAggregation(rows, groupBy, pivotBy, valueCol, agg);
-    }, [rows, groupBy, pivotBy, valueCol, agg]);
+        if (!pivotBy || !groupBy || !resultColumn) return null;
+        return computePivotAggregation(rows, groupBy, pivotBy, resultColumn, agg);
+    }, [rows, groupBy, pivotBy, resultColumn, agg]);
 
     const pivotOptions = useMemo(
         () => categorical.filter(col => col !== groupBy),
@@ -367,6 +369,7 @@ export const GroupByTest: React.FC<GroupByTestProps> = ({ rows, language, accent
     const t = (key: string, params?: Record<string, string | number>) => getTranslation(key, language, params);
     const totalValue = pivotResult ? pivotResult.grandTotal : flatResult ? flatResult.total : null;
     const totalLabel = t(agg === 'avg' ? 'provenance_step3_average_label' : 'provenance_step3_total_label');
+    const aggregateExpression = agg === 'count' ? 'COUNT(*)' : `${agg.toUpperCase()}(${valueCol})`;
     const excelHint = agg === 'sum'
         ? `SUMIFS(${valueCol}, ${groupBy}, "<>") = ${formatAggregateValue(totalValue)}`
         : agg === 'count'
@@ -398,13 +401,17 @@ export const GroupByTest: React.FC<GroupByTestProps> = ({ rows, language, accent
                         <option value="avg">AVG</option>
                     </select>
                 </div>
-                <div className="flex flex-col gap-1">
-                    <label htmlFor={`${fieldId}-value`} className="text-xs font-semibold text-slate-600">{t('provenance_step3_value_label')}</label>
-                    <select id={`${fieldId}-value`} value={valueCol} onChange={e => setValueCol(e.target.value)} className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800">
-                        <option value="">—</option>
-                        {numeric.map(col => <option key={col} value={col}>{col}</option>)}
-                    </select>
-                </div>
+                {needsValueColumn ? (
+                    <div className="flex flex-col gap-1">
+                        <label htmlFor={`${fieldId}-value`} className="text-xs font-semibold text-slate-600">{t('provenance_step3_value_label')}</label>
+                        <select id={`${fieldId}-value`} value={valueCol} onChange={e => setValueCol(e.target.value)} className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800">
+                            <option value="">—</option>
+                            {numeric.map(col => <option key={col} value={col}>{col}</option>)}
+                        </select>
+                    </div>
+                ) : (
+                    <p className="self-center text-xs text-slate-600">{t('provenance_count_rows_note')}</p>
+                )}
             </div>
             <div className="min-h-0 flex-1 overflow-auto">
                 {pivotResult ? (
@@ -413,16 +420,16 @@ export const GroupByTest: React.FC<GroupByTestProps> = ({ rows, language, accent
                     <DataTable
                         rows={flatResult.rows}
                         maxRows={30}
-                        highlightCols={[groupBy, valueCol]}
+                        highlightCols={[groupBy, resultColumn]}
                         totalRow={{ label: totalLabel, value: formatAggregateValue(flatResult.total), colSpan: 1 }}
                     />
                 ) : (
                     <div className="flex h-32 items-center justify-center text-sm text-slate-400">
-                        {t(numeric.length === 0 ? 'provenance_step3_no_numeric_cols' : 'provenance_step3_select_columns')}
+                        {t(agg === 'count' ? 'provenance_step3_select_group' : numeric.length === 0 ? 'provenance_step3_no_numeric_cols' : 'provenance_step3_select_columns')}
                     </div>
                 )}
             </div>
-            {(flatResult || pivotResult) && groupBy && valueCol && (
+            {(flatResult || pivotResult) && groupBy && (
                 <div className="flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
                     <IconInsights className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                     <div className="flex flex-1 items-center justify-between gap-3">
@@ -430,7 +437,9 @@ export const GroupByTest: React.FC<GroupByTestProps> = ({ rows, language, accent
                             {totalValue === null
                                 ? t('provenance_step3_no_numeric_values')
                                 : pivotBy
-                                ? t('provenance_pivot_excel_hint', { group: groupBy, pivot: pivotBy, agg: agg.toUpperCase(), value: valueCol })
+                                ? agg === 'count'
+                                    ? t('provenance_pivot_count_hint', { group: groupBy, pivot: pivotBy })
+                                    : t('provenance_pivot_excel_hint', { group: groupBy, pivot: pivotBy, agg: agg.toUpperCase(), value: valueCol })
                                 : t('provenance_step3_try_excel', { hint: excelHint })
                             }
                         </span>
@@ -440,12 +449,12 @@ export const GroupByTest: React.FC<GroupByTestProps> = ({ rows, language, accent
                                 onClick={() => {
                                     const dataRows = flatResult?.rows ?? pivotResult?.rows ?? [];
                                     const previewLines = dataRows.slice(0, 5).map(r =>
-                                        `${String(r[groupBy] ?? '?')}: ${formatAggregateValue(r[pivotBy ? 'Total' : valueCol])}`
+                                        `${String(r[groupBy] ?? '?')}: ${formatAggregateValue(r[pivotBy ? 'Total' : resultColumn])}`
                                     ).join(', ');
                                     const filterNote = `Use these precomputed results for the selected rows; do not re-query a wider dataset. Aggregation=${agg.toUpperCase()}, ${dataRows.length} groups, overall=${formatAggregateValue(totalValue)}. Breakdown: ${previewLines}.`;
                                     const cardDesc = pivotBy
-                                        ? `Create a new analysis card: pivot table with rows=${groupBy}, columns=${pivotBy}, values=${agg.toUpperCase()}(${valueCol}). ${filterNote}`
-                                        : `Create a new analysis card: ${agg.toUpperCase()}(${valueCol}) grouped by ${groupBy}. ${filterNote}`;
+                                        ? `Create a new analysis card: pivot table with rows=${groupBy}, columns=${pivotBy}, values=${aggregateExpression}. ${filterNote}`
+                                        : `Create a new analysis card: ${aggregateExpression} grouped by ${groupBy}. ${filterNote}`;
                                     onRequestCard(cardDesc, dataRows);
                                 }}
                                 className="min-h-[44px] shrink-0 rounded-md border border-blue-300 bg-white px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors"

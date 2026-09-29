@@ -100,4 +100,31 @@ describe('GroupByTest', () => {
         expect(screen.getByText('Showing 20 of 21 row groups and 15 of 16 pivot values. Totals include all grouped rows and pivot values.')).toBeTruthy();
         expect(within(screen.getAllByRole('row').at(-1)!).getAllByRole('cell').at(-1)?.textContent).toBe('21');
     });
+
+    it('counts rows without requiring or naming an unrelated numeric column', () => {
+        const onRequestCard = vi.fn();
+        render(
+            <GroupByTest
+                rows={[{ group: 'A', label: 'foo' }, { group: 'A', label: 'bar' }, { group: 'B', label: 'baz' }]}
+                language="English"
+                accentColor="blue"
+                onRequestCard={onRequestCard}
+            />,
+        );
+
+        fireEvent.change(screen.getByRole('combobox', { name: 'Aggregation' }), { target: { value: 'count' } });
+        expect(screen.getByText('Select a group column to preview row counts.')).toBeTruthy();
+        fireEvent.change(screen.getByRole('combobox', { name: 'Group By' }), { target: { value: 'group' } });
+
+        expect(screen.queryByRole('combobox', { name: 'Value Column' })).toBeNull();
+        expect(within(screen.getAllByRole('row').at(-1)!).getAllByRole('cell').map(cell => cell.textContent)).toEqual(['Total', '3']);
+        fireEvent.click(screen.getByRole('button', { name: 'Create Card' }));
+        expect(onRequestCard).toHaveBeenCalledWith(expect.stringContaining('COUNT(*) grouped by group'), expect.any(Array));
+
+        fireEvent.change(screen.getByRole('combobox', { name: 'Pivot By (optional)' }), { target: { value: 'label' } });
+        expect(screen.getByText('Excel: create Pivot Table — Rows=group, Columns=label, Values=Count of rows')).toBeTruthy();
+        expect(within(screen.getAllByRole('row').at(-1)!).getAllByRole('cell').at(-1)?.textContent).toBe('3');
+        fireEvent.click(screen.getByRole('button', { name: 'Create Card' }));
+        expect(onRequestCard).toHaveBeenLastCalledWith(expect.stringContaining('values=COUNT(*)'), expect.any(Array));
+    });
 });
