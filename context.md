@@ -592,3 +592,9 @@
 - **Finding and fix**: A saved-report action could finish after History closed and write an error into its retained component state. The next opening then showed an unrelated old failure. A deferred report-open test reproduced this. History now invalidates old async UI results on close, clears pending action state, and ignores late storage, load, deletion, and artifact-action completions. Store operations already started still complete.
 - **Checks**: The deferred report-open test failed before the fix. Final focused History/header tests passed 39/39, including a late saved-analysis load rejection. Typecheck, lint, the full suite (342 files / 2,865 tests), production build, and bundle budget passed. Existing static/dynamic import overlap warnings remain.
 - **Browser/release status**: The Mac is locked, so close/reopen behavior still needs an in-app browser check. Root output and public Pages remain unchanged.
+
+## 2026-09-29 PWA Update Failure QA
+
+- **Finding and fix**: The update button left a rejected `applyPwaUpdate` promise unhandled with no visible error. The service-worker manager also propagated failed `registration.update()` and `SKIP_WAITING` calls; the latter could leave update state stuck. Failure-injection tests reproduced all three paths. The manager now returns a retryable failure and resets the pending reload flag, while the banner contains unexpected rejections and shows a localized retry message.
+- **Checks**: Focused PWA/localization tests passed 21/21 after the fix; a retry after failure is covered at both manager and button levels. Typecheck, lint, the full suite (342 files / 2,868 tests), production build, and bundle budget passed. Existing Vite import overlap warnings remain.
+- **Browser/release status**: The Mac remains locked, so an actual service-worker update and retry are still browser-unverified. Root output and public Pages remain unchanged.

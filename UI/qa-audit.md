@@ -289,3 +289,7 @@ The full suite passed 342 files / 2,863 tests before the final localized warning
 ## 2026-09-29 History late-action result QA
 
 A delayed Open Report failure could settle after History closed and display an old error on the next opening. The deferred-operation UI test reproduced this before the fix. History now clears action state on close and ignores late UI results from report opening, saved-analysis loading, deletion, and storage scans; already started store operations continue. Focused History/header tests passed 39/39, including a delayed load failure. Typecheck, lint, full suite (342 files / 2,865 tests), production build, and bundle budget passed. Browser close/reopen verification remains pending while the Mac is locked.
+
+## 2026-09-29 PWA update failure QA
+
+The **Refresh to update** button could produce an unhandled Promise rejection without telling the user that the service-worker update failed. Failure injection covered a rejected update check, a failed `SKIP_WAITING` message, and an unexpected button-level rejection. The update state now remains retryable and the banner shows a localized error; a second click can succeed. Focused PWA/localization tests passed 21/21; typecheck, lint, full suite (342 files / 2,868 tests), production build, and bundle budget passed. Live service-worker retry remains unverified while the Mac is locked.

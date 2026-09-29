@@ -2126,10 +2126,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Japanese': '更新中…',
     },
     'pwa_update_error': {
-        'English': 'The update is not ready yet. Please try again shortly.',
-        'Mandarin': '更新尚未准备完成，请稍后再试。',
-        'Malay': 'Kemas kini belum bersedia. Sila cuba lagi sebentar lagi.',
-        'Japanese': '更新の準備がまだできていません。しばらくしてから再試行してください。',
+        'English': 'Could not apply the update. Please try again shortly.',
+        'Mandarin': '无法应用更新，请稍后重试。',
+        'Malay': 'Kemas kini tidak dapat digunakan. Sila cuba lagi sebentar lagi.',
+        'Spanish': 'No se pudo aplicar la actualización. Vuelva a intentarlo en breve.',
+        'Japanese': '更新を適用できませんでした。しばらくしてから再試行してください。',
+        'French': 'Impossible d’appliquer la mise à jour. Réessayez dans un instant.',
     },
     'settings_clear_local_data': {
         'English': 'Clear all local data',

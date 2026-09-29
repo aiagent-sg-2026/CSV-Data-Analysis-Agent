@@ -63,6 +63,7 @@ Closing History clears pending action feedback; a report load, deletion, or arti
 History's Storage Inspector adds its scanned IndexedDB and Cache Storage category estimates for the stacked bar and scanned total. The two primary totals have labeled summary fields, while the browser's separate origin usage estimate has its own explanatory line because the measurement methods can differ. Cache Storage includes app assets and models. Clearing a storage category or cache requires a second action in the inspector; Cancel or Escape leaves the data untouched. Scan or clear failures show an error and a storage-scan retry action.
 
 PWA update and offline notices occupy space above the app header, so they do not cover navigation controls on narrow screens. While a modal is open, its title and controls stay above those notices; close the modal to use the update action.
+If an update check or service-worker message fails, the update notice shows an error and keeps **Refresh to update** available for retry.
 
 In Settings, the Smart Auto-Confirm Goal row has a full-width touch target; Cancel discards any unsaved change.
 

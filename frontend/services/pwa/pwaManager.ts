@@ -109,13 +109,20 @@ export const registerPwa = async (): Promise<void> => {
 };
 
 export const applyPwaUpdate = async (): Promise<boolean> => {
-    if (!registration) return false;
-    if (!registration.waiting) await registration.update();
-    if (!registration.waiting) return false;
-    reloadOnControllerChange = true;
-    emit({ status: 'applying_update' });
-    registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-    return true;
+    const currentRegistration = registration;
+    if (!currentRegistration) return false;
+    try {
+        if (!currentRegistration.waiting) await currentRegistration.update();
+        if (!currentRegistration.waiting) return false;
+        reloadOnControllerChange = true;
+        currentRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
+        emit({ status: 'applying_update' });
+        return true;
+    } catch {
+        reloadOnControllerChange = false;
+        emit({ status: state.isOnline ? 'update_available' : 'offline' });
+        return false;
+    }
 };
 
 export const __resetPwaManagerForTests = (): void => {

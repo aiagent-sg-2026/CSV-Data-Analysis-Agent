@@ -12,7 +12,7 @@ describe('PWA lifecycle manager', () => {
     const waitingWorker = { postMessage: vi.fn() };
     const activeWorker = { postMessage: vi.fn() };
     const registration = {
-        waiting: waitingWorker,
+        waiting: waitingWorker as typeof waitingWorker | null,
         active: activeWorker,
         installing: null,
         addEventListener: vi.fn(),
@@ -27,6 +27,7 @@ describe('PWA lifecycle manager', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        registration.waiting = waitingWorker;
         Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
         Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: serviceWorker });
         Object.defineProperty(navigator, 'storage', {
@@ -60,6 +61,29 @@ describe('PWA lifecycle manager', () => {
 
         expect(waitingWorker.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
         expect(getPwaLifecycleState().status).toBe('applying_update');
+    });
+
+    it('returns a retryable failure when the service-worker update check rejects', async () => {
+        await registerPwa();
+        registration.waiting = null;
+        registration.update.mockRejectedValueOnce(new Error('Update check failed'));
+
+        await expect(applyPwaUpdate()).resolves.toBe(false);
+        expect(getPwaLifecycleState().status).toBe('update_available');
+
+        registration.waiting = waitingWorker;
+        await expect(applyPwaUpdate()).resolves.toBe(true);
+        expect(getPwaLifecycleState().status).toBe('applying_update');
+    });
+
+    it('does not leave the app applying an update when the waiting worker rejects the message', async () => {
+        await registerPwa();
+        waitingWorker.postMessage.mockImplementationOnce(() => {
+            throw new Error('Worker no longer available');
+        });
+
+        await expect(applyPwaUpdate()).resolves.toBe(false);
+        expect(getPwaLifecycleState().status).toBe('update_available');
     });
 
     it('shows offline state while preserving the registered shell', async () => {

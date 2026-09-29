@@ -30,7 +30,11 @@ export const PwaStatusBanner: React.FC = () => {
 
     const handleApply = async () => {
         setApplyFailed(false);
-        if (!await applyPwaUpdate()) setApplyFailed(true);
+        try {
+            if (!await applyPwaUpdate()) setApplyFailed(true);
+        } catch {
+            setApplyFailed(true);
+        }
     };
 
     return (

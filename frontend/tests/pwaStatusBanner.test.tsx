@@ -65,6 +65,20 @@ describe('PwaStatusBanner', () => {
         await waitFor(() => expect(applyPwaUpdateMock).toHaveBeenCalledOnce());
     });
 
+    it('shows a retryable error when applying an update rejects', async () => {
+        applyPwaUpdateMock.mockRejectedValueOnce(new Error('Service worker update failed'));
+        render(<PwaStatusBanner />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh to update' }));
+
+        expect(await screen.findByRole('alert')).toHaveTextContent('Could not apply the update');
+        expect(screen.getByRole('button', { name: 'Refresh to update' })).toBeEnabled();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh to update' }));
+        await waitFor(() => expect(applyPwaUpdateMock).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    });
+
     it('does not allow an update to interrupt an active analysis', () => {
         appState.initialAnalysisStatus = 'running';
         render(<PwaStatusBanner />);
