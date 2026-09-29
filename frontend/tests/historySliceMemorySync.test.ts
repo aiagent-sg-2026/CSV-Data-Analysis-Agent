@@ -46,6 +46,13 @@ vi.mock('../services/agent/memory/vectorMemorySync', () => ({
     rebuildVectorMemoryFromState: vectorMemoryMocks.rebuildVectorMemoryFromState,
 }));
 
+const piCheckpointMocks = vi.hoisted(() => ({
+    discardPiInitialAnalysisCheckpoint: vi.fn(),
+    purgePiInitialAnalysisCheckpoints: vi.fn(),
+}));
+
+vi.mock('../services/agent/runtime/pi/piInitialAnalysisRuntimeService', () => piCheckpointMocks);
+
 vi.mock('../services/agent/execution/dataOperationRunner', () => ({
     normalizeDataPreparationPlan: (plan: unknown) => plan,
 }));
@@ -176,6 +183,7 @@ describe('history slice load guards', () => {
             addProgress: vi.fn(),
             refreshDuckDbSession: vi.fn(async () => undefined),
             loadReportsList: vi.fn(async () => undefined),
+            sessionId: 'current-session',
             activeTurn: null,
             isHistoryPanelOpen: true,
             isWorkspaceModalOpen: false,
@@ -194,6 +202,7 @@ describe('history slice load guards', () => {
         await slice.handleLoadReport('report-ok');
 
         expect(storageMocks.getReport).toHaveBeenCalledWith('report-ok');
+        expect(piCheckpointMocks.discardPiInitialAnalysisCheckpoint).toHaveBeenCalledWith('current-session');
     });
 
     it('allows load when activeTurn exists but is not running', async () => {

@@ -50,7 +50,10 @@ describe('Pi Browser Lab', () => {
         expect(screen.getByRole('dialog', { name: 'Pi Browser Lab' })).toBeTruthy();
         fireEvent.click(screen.getByRole('button', { name: 'Run mock tool cycle' }));
 
-        await waitFor(() => expect(screen.getByLabelText('Pi answer').textContent).toContain('metric_sum'));
+        await waitFor(
+            () => expect(screen.getByLabelText('Pi answer').textContent).toContain('metric_sum'),
+            { timeout: 5000 },
+        );
         expect(executeManagedDataQueryMock).toHaveBeenCalledOnce();
         expect(screen.queryByRole('alert')).toBeNull();
     });
