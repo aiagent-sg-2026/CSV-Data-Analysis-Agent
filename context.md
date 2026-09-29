@@ -513,3 +513,8 @@
 - **Finding and fix**: Per-category and Cache Storage trash controls previously deleted on the first click. The inspector now shows an inline confirmation with a record/cache count and consequences; Cancel or Escape does not call a deletion handler, and Clear now is a distinct second action. Cancel receives initial keyboard focus.
 - **Verification**: The regression first failed against direct clear, then passed 8/8 with the final inline UI. Typecheck, lint, production build, and bundle budget passed after the final change. The full suite passed 341 files / 2,832 tests on the intermediate native-confirmation candidate; it was not rerun after the inline UI change.
 - **Browser limit**: The in-app browser controller timed out during the native-confirmation attempt; a subsequent environment inventory reported the Mac locked. The final inline UI was not browser-verified, and no browser deletion was intentionally accepted. Keep the final browser check open before claiming end-to-end completion. Root output and public Pages remain unchanged.
+
+## 2026-09-29 History Storage Failure Feedback QA
+
+- **Finding and fix**: A failed Storage Inspector scan could leave a blank panel and an unhandled rejection; a failed category clear offered no visible recovery. Both paths now show an error and Retry storage scan while retaining previously loaded category data where available.
+- **Checks**: The two failure-injection tests failed against the previous behavior and passed after the fix. Focused suite 10/10, typecheck, lint, production build, bundle budget, and full suite 341 files / 2,834 tests passed. The browser input issue still prevents final visual/E2E verification; no data deletion was confirmed. Root deployment and public Pages remain unchanged.

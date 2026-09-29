@@ -377,4 +377,40 @@ describe('report artifact action surfaces', () => {
         fireEvent.click(within(confirmation).getByRole('button', { name: 'Clear now' }));
         await waitFor(() => expect(clearAllCacheStorageMock).toHaveBeenCalledTimes(1));
     });
+
+    it('shows a retry path when the storage inspector scan fails', async () => {
+        getStorageBreakdownMock.mockRejectedValueOnce(new Error('IndexedDB unavailable'));
+        getStorageBreakdownMock.mockResolvedValueOnce({
+            stores: [],
+            cacheStorage: { cacheCount: 0, estimatedBytes: 0 },
+            totalIdbBytes: 0,
+            totalWithCacheBytes: 0,
+            rawOriginBytes: 0,
+        });
+
+        render(<StorageBreakdown activeSessionId={null} />);
+
+        expect(await screen.findByRole('alert')).toHaveTextContent('Could not read storage details');
+        fireEvent.click(screen.getByRole('button', { name: 'Retry storage scan' }));
+        expect(await screen.findByText('Scanned total: 0 B')).toBeInTheDocument();
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('reports a failed clear while keeping the category visible for review', async () => {
+        getStorageBreakdownMock.mockResolvedValue({
+            stores: [{ storeName: 'agent_memory_runs', label: 'Agent Memory Runs', recordCount: 1, estimatedBytes: 1024 }],
+            cacheStorage: { cacheCount: 0, estimatedBytes: 0 },
+            totalIdbBytes: 1024,
+            totalWithCacheBytes: 1024,
+            rawOriginBytes: 1024,
+        });
+        clearStoreMock.mockRejectedValueOnce(new Error('write failed'));
+
+        render(<StorageBreakdown activeSessionId={null} />);
+        fireEvent.click(await screen.findByRole('button', { name: 'Clear Agent Memory Runs' }));
+        fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Clear now' }));
+
+        expect(await screen.findByRole('alert')).toHaveTextContent('Could not clear this category');
+        expect(screen.getByRole('button', { name: 'Clear Agent Memory Runs' })).toBeInTheDocument();
+    });
 });

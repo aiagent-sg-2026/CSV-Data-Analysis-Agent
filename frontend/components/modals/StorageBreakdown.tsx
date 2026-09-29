@@ -68,6 +68,7 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
     const [data, setData] = useState<StorageBreakdownResult | null>(null);
     const [loading, setLoading] = useState(true);
     const [clearing, setClearing] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
     const [pendingClear, setPendingClear] = useState<{ key: string; label: string; count: number; isCache: boolean } | null>(null);
     const clearTriggerRef = useRef<HTMLButtonElement>(null);
     const cancelClearRef = useRef<HTMLButtonElement>(null);
@@ -80,9 +81,12 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
 
     const refresh = useCallback(async () => {
         setLoading(true);
+        setError(null);
         try {
             const result = await getStorageBreakdown();
             setData(result);
+        } catch {
+            setError('Could not read storage details. Retry the scan.');
         } finally {
             setLoading(false);
         }
@@ -106,10 +110,13 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
         }
 
         setClearing(storeName);
+        setError(null);
         try {
             await clearStore(storeName, protectKeys.size > 0 ? protectKeys : undefined);
             await refresh();
             onStorageChanged?.();
+        } catch {
+            setError('Could not clear this category. Refresh to check what remains.');
         } finally {
             setClearing(null);
         }
@@ -117,10 +124,13 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
 
     const handleClearCache = async () => {
         setClearing('cache');
+        setError(null);
         try {
             await clearAllCacheStorage();
             await refresh();
             onStorageChanged?.();
+        } catch {
+            setError('Could not clear browser caches. Refresh to check what remains.');
         } finally {
             setClearing(null);
         }
@@ -146,7 +156,21 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
         );
     }
 
-    if (!data) return null;
+    const errorNotice = error && (
+        <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            <p>{error}</p>
+            <button
+                type="button"
+                onClick={() => void refresh()}
+                disabled={loading}
+                className="mt-2 min-h-[44px] rounded-lg border border-amber-300 bg-white px-3 font-semibold text-amber-900 disabled:opacity-50"
+            >
+                Retry storage scan
+            </button>
+        </div>
+    );
+
+    if (!data) return errorNotice;
 
     // Build unified list for the bar chart
     const allSegments = [
@@ -177,6 +201,7 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
 
     return (
         <div className="space-y-2">
+            {errorNotice}
             {/* Header */}
             <div className="flex items-center justify-between">
                 <span className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
