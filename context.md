@@ -476,3 +476,10 @@
 - **Browser evidence**: A restored synthetic 90-row report retained its Verified Sum Resale Price by Street Name card after Keep card in the final rebuilt preview. At 390×844, the dialog fitted the viewport, the document width remained 390px, background inert state cleared after cancel, focus returned to More actions, and browser error logs were empty. `UI/qa-audit.md` links the before and confirmation screenshots. The destructive browser action was not taken; its callback is covered by the component test.
 - **Checks**: Targeted component tests 10/10, full suite 341 files / 2,827 tests, typecheck, lint, production build, bundle budget, and `git diff --check` passed.
 - **Release state**: Changes remain in the isolated QA worktree. Root generated deployment, GitHub Pages, and the separate Pi/OODAE Gate 1 worktree are unchanged.
+
+## 2026-09-29 Analysis Card Export Artifact QA
+
+- **Finding and fix**: The Full card PNG omitted its data table whenever Explore had the table collapsed, contradicting the export menu. The PNG capture now adds the current result table temporarily when the main table is absent, including when only selection details are mounted, and removes it after capture.
+- **Browser evidence**: A restored synthetic 90-row report exported a Verified five-street CSV and HTML snapshot; both contained totals summing to 36,506,250 and provenance. The collapsed-table Full PNG lacked rows before the fix (1232×1220) and included all five after the fix (1232×1688). The final build also exported exactly one five-row table when it was already expanded. No temporary DOM remained or browser errors appeared. Real exported images are in `UI/`; details are in `UI/qa-audit.md`.
+- **Checks**: Focused card/export tests 16/16, full suite 341 files / 2,828 tests, typecheck, lint, production build, and bundle budget passed.
+- **Release state**: Changes remain local to the QA worktree; root deployment and public Pages were not updated.

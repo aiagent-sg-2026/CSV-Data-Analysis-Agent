@@ -41,7 +41,7 @@ const AnalysisCardDataTablesComponent: React.FC<AnalysisCardDataTablesProps> = (
             )}
 
             {isDataVisible && (
-                <div className={`overflow-auto border border-slate-200 rounded-card bg-white ${maxHeightClass}`}>
+                <div data-analysis-data-table className={`overflow-auto border border-slate-200 rounded-card bg-white ${maxHeightClass}`}>
                     <DataTable data={dataForDisplay} plan={plan} sort={sort} onSortChange={onSortChange} />
                 </div>
             )}

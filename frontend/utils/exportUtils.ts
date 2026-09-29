@@ -82,6 +82,7 @@ export interface AnalysisExportMetadata {
 export interface ExportToPngOptions {
   /** When true, data tables are included in the PNG. Default: false (chart-only). */
   includeTable?: boolean;
+  tableData?: CsvRow[];
   metadata?: AnalysisExportMetadata;
 }
 
@@ -128,6 +129,50 @@ const appendExportMetadata = (
   return () => footer.remove();
 };
 
+const appendCollapsedExportTable = (root: HTMLElement, rows: CsvRow[]): (() => void) => {
+  if (root.querySelector('[data-analysis-data-table] table')) return () => undefined;
+
+  const section = document.createElement('section');
+  section.dataset.exportTable = 'true';
+  section.dataset.temporaryExportTable = 'true';
+  section.style.cssText = `margin-top:12px;padding:12px;border:1px solid ${EXPORT_THEME.border};border-radius:8px;`;
+
+  const heading = document.createElement('h4');
+  heading.textContent = 'Data table';
+  heading.style.cssText = `margin:0 0 8px;font:600 14px ${EXPORT_THEME.fontFamily};color:${EXPORT_THEME.textHeading};`;
+  section.appendChild(heading);
+
+  if (rows.length === 0) {
+    const empty = document.createElement('p');
+    empty.textContent = 'No data available.';
+    section.appendChild(empty);
+  } else {
+    const columns = Object.keys(rows[0]);
+    const table = document.createElement('table');
+    table.style.cssText = `width:100%;table-layout:fixed;border-collapse:collapse;font:12px ${EXPORT_THEME.fontFamily};color:${EXPORT_THEME.textBody};`;
+    const head = table.createTHead().insertRow();
+    columns.forEach(column => {
+      const cell = document.createElement('th');
+      cell.textContent = column;
+      cell.style.cssText = `padding:6px;border:1px solid ${EXPORT_THEME.border};background:${EXPORT_THEME.bgHeader};text-align:left;overflow-wrap:anywhere;`;
+      head.appendChild(cell);
+    });
+    const body = table.createTBody();
+    rows.forEach(row => {
+      const tableRow = body.insertRow();
+      columns.forEach(column => {
+        const cell = tableRow.insertCell();
+        cell.textContent = String(row[column] ?? '');
+        cell.style.cssText = `padding:6px;border:1px solid ${EXPORT_THEME.border};overflow-wrap:anywhere;`;
+      });
+    });
+    section.appendChild(table);
+  }
+
+  root.appendChild(section);
+  return () => section.remove();
+};
+
 const withExportMetadataColumns = (
   data: CsvRow[],
   metadata: AnalysisExportMetadata | undefined,
@@ -170,13 +215,14 @@ const expandOverflowContainers = (root: HTMLElement, selector: string): (() => v
 };
 
 export const exportToPng = async (element: HTMLElement, title: string, options?: ExportToPngOptions): Promise<ExportResult> => {
-  const { includeTable = false, metadata } = options ?? {};
+  const { includeTable = false, tableData = [], metadata } = options ?? {};
   let restoreCanvases: (() => void) | null = null;
   let restoreExcluded: (() => void) | null = null;
   let restoreTableContent: (() => void) | null = null;
   let restoreOverflow: (() => void) | null = null;
   let restoreChartOverflow: (() => void) | null = null;
   let restoreMetadata: (() => void) | null = null;
+  let restoreCollapsedTable: (() => void) | null = null;
   try {
     // 1. Hide interactive UI controls that should not appear in the screenshot
     restoreExcluded = hideExportExcluded(element);
@@ -187,6 +233,7 @@ export const exportToPng = async (element: HTMLElement, title: string, options?:
     } else {
       // When including table, expand overflow so full table is captured
       restoreOverflow = expandOverflowContainers(element, '[data-export-table] [class*="max-h-"], [data-export-table][class*="max-h-"]');
+      restoreCollapsedTable = appendCollapsedExportTable(element, tableData);
     }
     // 3. Replace <canvas> with <img> so html-to-image captures chart content
     restoreCanvases = swapCanvasesToImages(element);
@@ -208,6 +255,7 @@ export const exportToPng = async (element: HTMLElement, title: string, options?:
   } finally {
     // Always restore DOM regardless of success/failure
     restoreMetadata?.();
+    restoreCollapsedTable?.();
     restoreCanvases?.();
     restoreOverflow?.();
     restoreChartOverflow?.();

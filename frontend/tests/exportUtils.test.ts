@@ -111,6 +111,29 @@ describe('analysis exports', () => {
         expect(root.querySelector('[data-analysis-export-metadata]')).toBeNull();
     });
 
+    it('includes a collapsed card table in full PNG and removes the temporary table afterwards', async () => {
+        const root = document.createElement('div');
+        root.innerHTML = '<div data-export-table><table><tbody><tr><td>Selected row only</td></tr></tbody></table></div>';
+        toPngMock.mockImplementationOnce(async (captured: HTMLElement) => {
+            const table = captured.querySelector('[data-temporary-export-table] table');
+            expect(table?.querySelectorAll('tbody tr')).toHaveLength(2);
+            expect(table?.textContent).toContain('STREET 1');
+            expect(table?.textContent).toContain('36506250');
+            expect(captured.querySelector('script')).toBeNull();
+            return 'data:image/png;base64,export';
+        });
+
+        expect(await exportToPng(root, 'Street total', {
+            includeTable: true,
+            tableData: [
+                { street_name: 'STREET 1', sum_resale_price: 36506250 },
+                { street_name: '<script>unsafe</script>', sum_resale_price: 1 },
+            ],
+        })).toEqual({ success: true });
+        expect(root.querySelector('[data-temporary-export-table]')).toBeNull();
+        expect(root.querySelector('script')).toBeNull();
+    });
+
     it('captures every row of a vertically scrollable chart and restores its viewport', async () => {
         const root = document.createElement('div');
         const chartScroll = document.createElement('div');

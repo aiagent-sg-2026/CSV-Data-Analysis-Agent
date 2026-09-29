@@ -151,7 +151,7 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
             const title = cardData?.plan?.title ?? '';
             switch (format) {
                 case 'png': result = await exportToPng(cardRef.current, title, { metadata: exportMetadata }); break;
-                case 'png_full': result = await exportToPng(cardRef.current, title, { includeTable: true, metadata: exportMetadata }); break;
+                case 'png_full': result = await exportToPng(cardRef.current, title, { includeTable: true, tableData: tableDataForDisplay, metadata: exportMetadata }); break;
                 case 'csv': result = exportToCsv(tableDataForDisplay, title, exportMetadata); break;
                 case 'html': result = await exportToHtml(
                     cardRef.current,
