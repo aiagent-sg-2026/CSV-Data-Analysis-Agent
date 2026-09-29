@@ -175,6 +175,38 @@ describe('report artifact action surfaces', () => {
         expect(exportPersistedReportPdf).toHaveBeenCalledWith('report-1');
     });
 
+    it('keeps History open with a retry when a saved report cannot be loaded', async () => {
+        const handleLoadReport = vi.fn()
+            .mockRejectedValueOnce(new Error('IndexedDB unavailable'))
+            .mockResolvedValueOnce(undefined);
+        const state = {
+            isHistoryPanelOpen: true,
+            setIsHistoryPanelOpen: vi.fn(),
+            reportsList: [{
+                id: 'report-1', filename: 'sample.csv',
+                createdAt: new Date('2026-03-14T09:00:00.000Z'),
+                updatedAt: new Date('2026-03-14T09:10:00.000Z'),
+            }],
+            handleLoadReport,
+            handleDeleteReport: vi.fn(async () => undefined),
+            handlePurgeStorage: vi.fn(async () => ({ deletedReports: 0, freedMB: 0 })),
+            openPersistedReportArtifact: vi.fn(async () => undefined),
+            exportPersistedReportPdf: vi.fn(async () => undefined),
+            sessionId: 'session-2',
+            settings: { language: 'English' },
+            csvData: null,
+        };
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+
+        render(<HistoryPanel />);
+        fireEvent.click(screen.getByRole('button', { name: 'Resume analysis' }));
+
+        expect(await screen.findByRole('alert')).toHaveTextContent('Could not load the saved analysis');
+        fireEvent.click(screen.getByRole('button', { name: 'Retry loading report' }));
+        await waitFor(() => expect(handleLoadReport).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(screen.queryByText(/Could not load the saved analysis/)).not.toBeInTheDocument());
+    });
+
     it('confirms report deletion inside History before calling the store', async () => {
         const handleDeleteReport = vi.fn(async () => undefined);
         const state = {

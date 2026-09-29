@@ -3012,6 +3012,18 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'history_no_results': { 'English': 'No reports match your search.', 'Mandarin': '没有匹配的报告。', 'Japanese': '検索に一致するレポートがありません。' },
     'history_current_badge': { 'English': 'Current', 'Mandarin': '当前', 'Japanese': '現在' },
     'history_load_session': { 'English': 'Resume analysis', 'Mandarin': '恢复分析', 'Malay': 'Sambung analisis', 'Japanese': '分析を再開' },
+    'history_load_failed': {
+        'English': 'Could not load the saved analysis. Current data may have changed; review it before retrying.',
+        'Mandarin': '无法加载已保存的分析。当前数据可能已改变，请检查后重试。',
+        'Malay': 'Analisis yang disimpan tidak dapat dimuatkan. Data semasa mungkin telah berubah; semak sebelum mencuba lagi.',
+        'Spanish': 'No se pudo cargar el análisis guardado. Es posible que los datos actuales hayan cambiado; revíselos antes de reintentar.',
+        'Japanese': '保存した分析を読み込めませんでした。現在のデータが変更された可能性があります。確認してから再試行してください。',
+        'French': 'Impossible de charger l’analyse enregistrée. Les données actuelles ont peut-être changé ; vérifiez-les avant de réessayer.',
+    },
+    'history_load_retry': {
+        'English': 'Retry loading report', 'Mandarin': '重试加载报告', 'Malay': 'Cuba muatkan semula laporan',
+        'Spanish': 'Reintentar cargar el informe', 'Japanese': 'レポートの読み込みを再試行', 'French': 'Réessayer de charger le rapport',
+    },
     'history_open_report': { 'English': 'Open Report', 'Mandarin': '打开报告', 'Japanese': 'レポートを開く' },
     'history_export_pdf': { 'English': 'Export PDF', 'Mandarin': '导出 PDF', 'Japanese': 'PDFエクスポート' },
     'history_delete': { 'English': 'Delete', 'Mandarin': '删除', 'Japanese': '削除' },

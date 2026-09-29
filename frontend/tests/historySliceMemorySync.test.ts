@@ -79,7 +79,7 @@ describe('history slice load guards', () => {
         const slice = createHistorySlice(set as never, get as never, {} as never);
         state = { ...state, ...slice };
 
-        await slice.handleLoadReport('report-1');
+        await expect(slice.handleLoadReport('report-1')).rejects.toThrow('Cannot load a report while an AI turn is running');
 
         // Should show error and NOT call getReport
         expect(addProgress).toHaveBeenCalledWith(
@@ -87,6 +87,46 @@ describe('history slice load guards', () => {
             'error',
         );
         expect(storageMocks.getReport).not.toHaveBeenCalled();
+    });
+
+    it('reports and propagates a failed saved-report read without changing the session', async () => {
+        const addProgress = vi.fn();
+        let state: Record<string, unknown> = {
+            addProgress,
+            activeTurn: null,
+            sessionId: 'current-session',
+            isHistoryPanelOpen: true,
+        };
+        const set = vi.fn((partial: any) => {
+            const next = typeof partial === 'function' ? partial(state) : partial;
+            state = { ...state, ...next };
+        });
+        const get = () => state as any;
+        const slice = createHistorySlice(set as never, get as never, {} as never);
+        state = { ...state, ...slice };
+
+        storageMocks.getReport.mockRejectedValueOnce(new Error('IndexedDB unavailable'));
+        await expect(slice.handleLoadReport('report-1')).rejects.toThrow('IndexedDB unavailable');
+        expect(addProgress).toHaveBeenCalledWith(expect.stringContaining('Could not load saved report'), 'error');
+        expect(state.sessionId).toBe('current-session');
+        expect(state.isHistoryPanelOpen).toBe(true);
+    });
+
+    it('reports a saved report that disappeared before loading', async () => {
+        const addProgress = vi.fn();
+        let state: Record<string, unknown> = { addProgress, activeTurn: null, sessionId: 'current-session' };
+        const set = vi.fn((partial: any) => {
+            const next = typeof partial === 'function' ? partial(state) : partial;
+            state = { ...state, ...next };
+        });
+        const get = () => state as any;
+        const slice = createHistorySlice(set as never, get as never, {} as never);
+        state = { ...state, ...slice };
+
+        storageMocks.getReport.mockResolvedValueOnce(null);
+        await expect(slice.handleLoadReport('missing-report')).rejects.toThrow('was not found');
+        expect(addProgress).toHaveBeenCalledWith(expect.stringContaining('Could not load saved report'), 'error');
+        expect(state.sessionId).toBe('current-session');
     });
 
     it('propagates deletion failures after recording user feedback', async () => {

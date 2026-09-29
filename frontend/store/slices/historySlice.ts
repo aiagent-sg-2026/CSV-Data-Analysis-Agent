@@ -71,157 +71,163 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
         // stale turn results from being applied to the wrong session.
         const activeTurn = get().activeTurn;
         if (activeTurn && activeTurn.status === 'running') {
-            get().addProgress('Cannot load a report while an AI turn is running. Please wait for it to finish or cancel it first.', 'error');
-            return;
+            const message = 'Cannot load a report while an AI turn is running. Please wait for it to finish or cancel it first.';
+            get().addProgress(message, 'error');
+            throw new Error(message);
         }
         get().addProgress(`Loading report ${id}...`);
-        const [report, { normalizeDataPreparationPlan }, { updateCleaningRun }] = await Promise.all([
-            getReport(id),
-            import('../../services/agent/execution/dataOperationRunner'),
-            import('../../services/agent/cleaningRunState'),
-        ]);
-        if (report) {
-            await discardPiSessionCheckpoint(get().sessionId);
-            const normalizedAppState = normalizeRestoredAppState(report.appState);
-            const restoredMemoryScope = normalizedAppState.reportMemoryScope
-                ?? (report.lineage
-                    ? {
-                        reportId: report.lineage.reportId,
-                        datasetId: report.lineage.datasetId,
-                        datasetVersion: report.lineage.currentVersionId,
-                    }
-                    : resolveReportMemoryScope(normalizedAppState as AppStore));
-            const hydratedWorkspaceFiles = await hydrateLatestReportWorkspaceFiles(normalizedAppState.workspaceFiles ?? {});
-            const nextSessionId = createAndStoreTabSessionId();
-            const loadedAt = new Date();
-            await disposeDuckDbQueryEngine();
-            await vectorStore.clear();
-            set({
-                ...normalizedAppState,
-                sessionId: nextSessionId,
-                reportMemoryScope: restoredMemoryScope,
-                agentMemoryRun: restoredMemoryScope
-                    ? normalizeSavedAgentMemoryRun(normalizedAppState.agentMemoryRun, restoredMemoryScope)
-                    : null,
-                liveAgentMemoryRun: restoredMemoryScope
-                    ? normalizeSavedAgentMemoryRun(normalizedAppState.liveAgentMemoryRun, restoredMemoryScope)
-                    : null,
-                agentMemoryHistory: restoredMemoryScope
-                    ? normalizeSavedAgentMemoryRuns(normalizedAppState.agentMemoryHistory, restoredMemoryScope)
-                    : [],
-                pendingVectorMemoryDocs: restoredMemoryScope
-                    ? normalizeSavedReportPendingMemoryDocuments(
-                        normalizedAppState.pendingVectorMemoryDocs,
+        try {
+            const [report, { normalizeDataPreparationPlan }, { updateCleaningRun }] = await Promise.all([
+                getReport(id),
+                import('../../services/agent/execution/dataOperationRunner'),
+                import('../../services/agent/cleaningRunState'),
+            ]);
+            if (report) {
+                await discardPiSessionCheckpoint(get().sessionId);
+                const normalizedAppState = normalizeRestoredAppState(report.appState);
+                const restoredMemoryScope = normalizedAppState.reportMemoryScope
+                    ?? (report.lineage
+                        ? {
+                            reportId: report.lineage.reportId,
+                            datasetId: report.lineage.datasetId,
+                            datasetVersion: report.lineage.currentVersionId,
+                        }
+                        : resolveReportMemoryScope(normalizedAppState as AppStore));
+                const hydratedWorkspaceFiles = await hydrateLatestReportWorkspaceFiles(normalizedAppState.workspaceFiles ?? {});
+                const nextSessionId = createAndStoreTabSessionId();
+                const loadedAt = new Date();
+                await disposeDuckDbQueryEngine();
+                await vectorStore.clear();
+                set({
+                    ...normalizedAppState,
+                    sessionId: nextSessionId,
+                    reportMemoryScope: restoredMemoryScope,
+                    agentMemoryRun: restoredMemoryScope
+                        ? normalizeSavedAgentMemoryRun(normalizedAppState.agentMemoryRun, restoredMemoryScope)
+                        : null,
+                    liveAgentMemoryRun: restoredMemoryScope
+                        ? normalizeSavedAgentMemoryRun(normalizedAppState.liveAgentMemoryRun, restoredMemoryScope)
+                        : null,
+                    agentMemoryHistory: restoredMemoryScope
+                        ? normalizeSavedAgentMemoryRuns(normalizedAppState.agentMemoryHistory, restoredMemoryScope)
+                        : [],
+                    pendingVectorMemoryDocs: restoredMemoryScope
+                        ? normalizeSavedReportPendingMemoryDocuments(
+                            normalizedAppState.pendingVectorMemoryDocs,
+                            restoredMemoryScope,
+                        )
+                        : [],
+                    workspaceFiles: hydratedWorkspaceFiles,
+                    workspaceActionHistory: normalizedAppState.workspaceActionHistory ?? [],
+                    queryHistory: normalizedAppState.queryHistory ?? [],
+                    // Report state can persist a formerly-ready binding, but the
+                    // active worker session was disposed before this restore.
+                    duckDbSessionStatus: createIdleDuckDbSessionStatus(),
+                    dataPreparationPlan: normalizeDataPreparationPlan(normalizedAppState.dataPreparationPlan),
+                    pendingClarification: null,
+                    pendingMutationConfirmation: normalizedAppState.pendingMutationConfirmation ?? null,
+                    activeTurn: null,
+                    queuedChatTurns: [],
+                    queuedAgentRuns: [],
+                    cancelRequestedTurnId: null,
+                    runtimeEvents: [],
+                    runtimeRunHistory: [],
+                    lastInsightExtractedAtTurn: 0,
+                    agentEvents: restoreAgentActivityHistory(
+                        normalizedAppState.agentEvents,
+                        nextSessionId,
+                    ),
+                    cleaningRun: normalizedAppState.cleaningRun
+                        ? updateCleaningRun(normalizedAppState.cleaningRun, {
+                            status: normalizedAppState.cleaningRun.status === 'completed' ? 'completed' : 'paused',
+                            shouldAutoResume: false,
+                        })
+                        : null,
+                    analysisCards: normalizedAppState.cleaningRun && normalizedAppState.cleaningRun.status !== 'completed'
+                        ? []
+                        : normalizedAppState.analysisCards,
+                    finalSummary: normalizedAppState.cleaningRun && normalizedAppState.cleaningRun.status !== 'completed'
+                        ? null
+                        : normalizedAppState.finalSummary,
+                    aiCoreAnalysisSummary: normalizedAppState.cleaningRun && normalizedAppState.cleaningRun.status !== 'completed'
+                        ? null
+                        : normalizedAppState.aiCoreAnalysisSummary,
+                    initialAnalysisStatus: normalizedAppState.initialAnalysisStatus
+                        ?? (
+                            (normalizedAppState.cleaningRun && normalizedAppState.cleaningRun.status !== 'completed')
+                                ? 'idle'
+                                : ((normalizedAppState.analysisCards?.length ?? 0) > 0 || Boolean(normalizedAppState.finalSummary)
+                                    ? 'ready'
+                                    : 'idle')
+                        ),
+                    initialAnalysisFailureKind: normalizedAppState.initialAnalysisFailureKind ?? null,
+                    goalState: normalizeRestoredGoalState(normalizedAppState.goalState),
+                    currentView: normalizedAppState.csvData ? 'analysis_dashboard' : 'file_upload',
+                    isHistoryPanelOpen: false,
+                    isWorkspaceModalOpen: false,
+                    isDataPreparationModalOpen: false,
+                    isDebugLogsModalOpen: false,
+                    activeDataQuery: null,
+                    activeSpreadsheetFilter: normalizedAppState.activeSpreadsheetFilter ?? null,
+                    isBusy: false,
+                    chatLifecycleState: 'idle' as const,
+                    isGeneratingReport: false,
+                    isSummaryGenerating: false,
+                    reportGenerationProgress: null,
+                    isCardReviewInProgress: false,
+                    aiTaskStatus: null,
+                    sessionCreatedAt: loadedAt,
+                    vectorStoreDocuments: [],
+                });
+                // Prefer instant rehydration from saved embeddings over expensive
+                // ONNX re-computation. Fall back to rebuild only for legacy sessions
+                // that were saved without embedding data.
+                // Rehydrate vector memory in the background so report loading
+                // is never blocked by a slow or timed-out vector worker.
+                const savedVectorDocs = restoredMemoryScope
+                    ? normalizeSavedReportMemoryDocuments(
+                        normalizedAppState.vectorStoreDocuments ?? [],
                         restoredMemoryScope,
                     )
-                    : [],
-                workspaceFiles: hydratedWorkspaceFiles,
-                workspaceActionHistory: normalizedAppState.workspaceActionHistory ?? [],
-                queryHistory: normalizedAppState.queryHistory ?? [],
-                // Report state can persist a formerly-ready binding, but the
-                // active worker session was disposed before this restore.
-                duckDbSessionStatus: createIdleDuckDbSessionStatus(),
-                dataPreparationPlan: normalizeDataPreparationPlan(normalizedAppState.dataPreparationPlan),
-                pendingClarification: null,
-                pendingMutationConfirmation: normalizedAppState.pendingMutationConfirmation ?? null,
-                activeTurn: null,
-                queuedChatTurns: [],
-                queuedAgentRuns: [],
-                cancelRequestedTurnId: null,
-                runtimeEvents: [],
-                runtimeRunHistory: [],
-                lastInsightExtractedAtTurn: 0,
-                agentEvents: restoreAgentActivityHistory(
-                    normalizedAppState.agentEvents,
-                    nextSessionId,
-                ),
-                cleaningRun: normalizedAppState.cleaningRun
-                    ? updateCleaningRun(normalizedAppState.cleaningRun, {
-                        status: normalizedAppState.cleaningRun.status === 'completed' ? 'completed' : 'paused',
-                        shouldAutoResume: false,
-                    })
-                    : null,
-                analysisCards: normalizedAppState.cleaningRun && normalizedAppState.cleaningRun.status !== 'completed'
-                    ? []
-                    : normalizedAppState.analysisCards,
-                finalSummary: normalizedAppState.cleaningRun && normalizedAppState.cleaningRun.status !== 'completed'
-                    ? null
-                    : normalizedAppState.finalSummary,
-                aiCoreAnalysisSummary: normalizedAppState.cleaningRun && normalizedAppState.cleaningRun.status !== 'completed'
-                    ? null
-                    : normalizedAppState.aiCoreAnalysisSummary,
-                initialAnalysisStatus: normalizedAppState.initialAnalysisStatus
-                    ?? (
-                        (normalizedAppState.cleaningRun && normalizedAppState.cleaningRun.status !== 'completed')
-                            ? 'idle'
-                            : ((normalizedAppState.analysisCards?.length ?? 0) > 0 || Boolean(normalizedAppState.finalSummary)
-                                ? 'ready'
-                                : 'idle')
-                    ),
-                initialAnalysisFailureKind: normalizedAppState.initialAnalysisFailureKind ?? null,
-                goalState: normalizeRestoredGoalState(normalizedAppState.goalState),
-                currentView: normalizedAppState.csvData ? 'analysis_dashboard' : 'file_upload',
-                isHistoryPanelOpen: false,
-                isWorkspaceModalOpen: false,
-                isDataPreparationModalOpen: false,
-                isDebugLogsModalOpen: false,
-                activeDataQuery: null,
-                activeSpreadsheetFilter: normalizedAppState.activeSpreadsheetFilter ?? null,
-                isBusy: false,
-                chatLifecycleState: 'idle' as const,
-                isGeneratingReport: false,
-                isSummaryGenerating: false,
-                reportGenerationProgress: null,
-                isCardReviewInProgress: false,
-                aiTaskStatus: null,
-                sessionCreatedAt: loadedAt,
-                vectorStoreDocuments: [],
-            });
-            // Prefer instant rehydration from saved embeddings over expensive
-            // ONNX re-computation. Fall back to rebuild only for legacy sessions
-            // that were saved without embedding data.
-            // Rehydrate vector memory in the background so report loading
-            // is never blocked by a slow or timed-out vector worker.
-            const savedVectorDocs = restoredMemoryScope
-                ? normalizeSavedReportMemoryDocuments(
-                    normalizedAppState.vectorStoreDocuments ?? [],
-                    restoredMemoryScope,
-                )
-                : [];
-            if (Array.isArray(savedVectorDocs) && savedVectorDocs.length > 0
-                && savedVectorDocs.every(d => Array.isArray(d.embedding) && d.embedding.length > 0)) {
-                void (async () => {
-                    try {
-                        await vectorStore.rehydrate(savedVectorDocs);
-                        set({
-                            vectorStoreDocuments: savedVectorDocs,
-                            vectorMemoryState: 'queued',
-                        });
-                        vectorStore.schedulePersist();
-                        get().addProgress('Restored AI long-term memory from the loaded report.');
-                    } catch {
-                        // Non-blocking — rehydrate timeout is acceptable.
-                    }
-                })();
+                    : [];
+                if (Array.isArray(savedVectorDocs) && savedVectorDocs.length > 0
+                    && savedVectorDocs.every(d => Array.isArray(d.embedding) && d.embedding.length > 0)) {
+                    void (async () => {
+                        try {
+                            await vectorStore.rehydrate(savedVectorDocs);
+                            set({
+                                vectorStoreDocuments: savedVectorDocs,
+                                vectorMemoryState: 'queued',
+                            });
+                            vectorStore.schedulePersist();
+                            get().addProgress('Restored AI long-term memory from the loaded report.');
+                        } catch {
+                            // Non-blocking — rehydrate timeout is acceptable.
+                        }
+                    })();
+                } else {
+                    void import('../../services/agent/memory/vectorMemorySync').then(m =>
+                        m.rebuildVectorMemoryFromState({ getState: get as never, setState: set as never }, {
+                            reset: true,
+                            includeDatasetDocs: true,
+                            progressMessage: 'Rebuilding AI long-term memory from the loaded report...',
+                        }),
+                    );
+                }
+                if (normalizedAppState.cleaningRun?.status === 'completed' || !normalizedAppState.cleaningRun) {
+                    await get().refreshDuckDbSession();
+                } else {
+                    set(prev => ({
+                        chatHistory: appendUnfinishedCleaningNotice(prev.chatHistory, 'history_load'),
+                    }));
+                }
+                get().addProgress(`Report "${report.filename}" loaded.`);
             } else {
-                void import('../../services/agent/memory/vectorMemorySync').then(m =>
-                    m.rebuildVectorMemoryFromState({ getState: get as never, setState: set as never }, {
-                        reset: true,
-                        includeDatasetDocs: true,
-                        progressMessage: 'Rebuilding AI long-term memory from the loaded report...',
-                    }),
-                );
+                throw new Error(`Saved report ${id} was not found.`);
             }
-            if (normalizedAppState.cleaningRun?.status === 'completed' || !normalizedAppState.cleaningRun) {
-                await get().refreshDuckDbSession();
-            } else {
-                set(prev => ({
-                    chatHistory: appendUnfinishedCleaningNotice(prev.chatHistory, 'history_load'),
-                }));
-            }
-            get().addProgress(`Report "${report.filename}" loaded.`);
-        } else {
-            get().addProgress(`Failed to load report ${id}.`, 'error');
+        } catch (error) {
+            get().addProgress('Could not load saved report. Review the current data before retrying.', 'error');
+            throw error;
         }
     },
     handleDeleteReport: async (id) => {

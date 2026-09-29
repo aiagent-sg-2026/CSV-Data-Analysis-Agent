@@ -95,6 +95,7 @@ export const HistoryPanel: React.FC = () => {
     const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
     const [collapsedSearchGroups, setCollapsedSearchGroups] = useState<Set<string>>(() => new Set());
     const [loadingId, setLoadingId] = useState<string | null>(null);
+    const [loadErrorId, setLoadErrorId] = useState<string | null>(null);
     const [confirmLoadId, setConfirmLoadId] = useState<string | null>(null);
     const [sortField, setSortField] = useState<SortField>('updatedAt');
     const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -125,6 +126,7 @@ export const HistoryPanel: React.FC = () => {
         if (!isOpen) {
             setPendingDeletion(null);
             setDeletionError(null);
+            setLoadErrorId(null);
         }
     }, [isOpen]);
 
@@ -203,9 +205,12 @@ export const HistoryPanel: React.FC = () => {
 
     const doLoad = async (id: string) => {
         setConfirmLoadId(null);
+        setLoadErrorId(null);
         setLoadingId(id);
         try {
             await onLoadReport(id);
+        } catch {
+            setLoadErrorId(id);
         } finally {
             setLoadingId(null);
         }
@@ -378,6 +383,20 @@ export const HistoryPanel: React.FC = () => {
                             </button>
                         </div>
                 </div>
+
+                {loadErrorId && (
+                    <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-red-100 bg-red-50 px-5 py-2 text-sm text-red-800">
+                        <span>{getTranslation('history_load_failed', language)}</span>
+                        <button
+                            type="button"
+                            onClick={() => void doLoad(loadErrorId)}
+                            disabled={loadingId !== null}
+                            className="min-h-[44px] rounded-lg px-3 font-semibold text-red-800 hover:bg-red-100 disabled:opacity-50"
+                        >
+                            {getTranslation('history_load_retry', language)}
+                        </button>
+                    </div>
+                )}
 
                 <div data-history-scroll-region className="min-h-0 flex-1 overflow-y-auto">
                     {/* Storage Inspector (expandable) */}
