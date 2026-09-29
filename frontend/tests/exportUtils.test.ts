@@ -81,6 +81,18 @@ describe('analysis exports', () => {
         expect(clickedDownloads).toEqual(['cleaned_source.csv']);
     });
 
+    it('preserves sparse prepared-dataset columns and escapes spreadsheet formula text', async () => {
+        expect(exportDatasetToCsv([
+            { Town: 'A', Total: -5, '=Source': 'safe' },
+            { Total: 200, Town: '=1+1', Note: '@SUM(A1:A2)' },
+        ], 'cleaned_source.csv')).toEqual({ success: true });
+
+        const csv = await readBlob(downloadedBlobs[0]);
+        expect(csv).toContain('Town,Total,"\'=Source",Note');
+        expect(csv).toContain('A,-5,safe,');
+        expect(csv).toContain('"\'=1+1",200,,"\'@SUM(A1:A2)"');
+    });
+
     it('embeds provenance in HTML and safely escapes report values', async () => {
         const root = document.createElement('div');
         const result = await exportToHtml(
@@ -119,6 +131,15 @@ describe('analysis exports', () => {
         expect(Array.from(table?.querySelectorAll('tbody tr') ?? [], row =>
             Array.from(row.querySelectorAll('td'), cell => cell.textContent)))
             .toEqual([['A', '100', ''], ['B', '200', 'later field']]);
+    });
+
+    it('escapes spreadsheet formula text in card CSV while preserving numeric negatives', async () => {
+        expect(exportToCsv([
+            { Town: '=1+1', Total: -5, Note: '@SUM(A1:A2)' },
+        ], 'Formula text')).toEqual({ success: true });
+
+        const csv = await readBlob(downloadedBlobs[0]);
+        expect(csv).toContain('"\'=1+1",-5,"\'@SUM(A1:A2)"');
     });
 
     it('adds export provenance to PNG capture and removes it from the live card afterwards', async () => {

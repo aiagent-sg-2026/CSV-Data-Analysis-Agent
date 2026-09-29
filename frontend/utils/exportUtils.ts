@@ -281,7 +281,7 @@ export const exportToCsv = (
     const csv = Papa.unparse({
       fields: columns,
       data: rows.map(row => columns.map(column => row[column] ?? '')),
-    });
+    }, { escapeFormulae: true });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     triggerBlobDownload(blob, `${safeFileStem(title)}.csv`);
     return { success: true };
@@ -293,7 +293,7 @@ export const exportToCsv = (
 
 export const exportDatasetToCsv = (data: CsvRow[], fileName: string): ExportResult => {
   try {
-    const csv = Papa.unparse(data);
+    const csv = Papa.unparse({ fields: getExportColumns(data), data }, { escapeFormulae: true });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     triggerBlobDownload(blob, `${safeFileStem(fileName.replace(/\.csv$/i, ''))}.csv`);
     return { success: true };
