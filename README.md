@@ -54,7 +54,7 @@ A card's **Data Provenance** dialog lets you inspect original rows, cleaned rows
 
 History search includes titles from previous versions and reveals a matching version. On small screens, sort, storage, version, and row actions use touch-sized controls; the storage inspector and saved records share a scrollable area. Row action menus are positioned within the History dialog so their options remain visible even when the saved-record list is short.
 
-PWA update and offline notices remain available outside dialogs. While a modal is open, its title and controls stay above those notices; close the modal to use the update action.
+PWA update and offline notices occupy space above the app header, so they do not cover navigation controls on narrow screens. While a modal is open, its title and controls stay above those notices; close the modal to use the update action.
 
 The Assistant activity panel labels an empty session without implying that analysis is running. Its Memory and Dataset Knowledge tabs describe what will be available after a future analysis. Its card review action becomes available only after an analysis card exists; otherwise the panel explains the prerequisite.
 

@@ -238,7 +238,6 @@ const App: React.FC = () => {
         <div className="flex flex-col md:flex-row h-screen bg-slate-50 text-slate-800">
             <ExternalPayloadListener />
             <AutoSaveManager />
-            <PwaStatusBanner />
 
             {/* Global async error boundary toast */}
             {globalErrorToast && (
@@ -265,6 +264,7 @@ const App: React.FC = () => {
             <main
                 className="relative flex flex-1 flex-col overflow-hidden px-4 pb-4 pt-0"
             >
+                <PwaStatusBanner />
                 <div
                     id="app-main-scroll-container"
                     ref={scrollContainerRef}

@@ -19,7 +19,7 @@ export const PwaStatusBanner: React.FC = () => {
 
     if (pwa.status === 'offline') {
         return (
-            <div role="status" aria-live="polite" className="fixed inset-x-3 top-3 z-40 mx-auto max-w-2xl rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 shadow-lg">
+            <div role="status" aria-live="polite" className="mx-auto mb-3 mt-2 w-full max-w-2xl shrink-0 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 shadow-sm">
                 <strong className="font-semibold">{getTranslation('pwa_offline_title', language)}</strong>{' '}
                 {getTranslation('pwa_offline_detail', language)}
             </div>
@@ -34,7 +34,7 @@ export const PwaStatusBanner: React.FC = () => {
     };
 
     return (
-        <div role="status" aria-live="polite" className="fixed inset-x-3 top-3 z-40 mx-auto flex max-w-2xl flex-col gap-3 rounded-lg border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-950 shadow-lg sm:flex-row sm:items-center sm:justify-between">
+        <div role="status" aria-live="polite" className="mx-auto mb-3 mt-2 flex w-full max-w-2xl shrink-0 flex-col gap-3 rounded-lg border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-950 shadow-sm sm:flex-row sm:items-center sm:justify-between">
             <div>
                 <strong className="font-semibold">{getTranslation('pwa_update_title', language)}</strong>{' '}
                 {getTranslation(
