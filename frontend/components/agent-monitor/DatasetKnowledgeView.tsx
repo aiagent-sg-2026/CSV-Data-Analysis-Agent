@@ -7,7 +7,7 @@ export const DatasetKnowledgeView: React.FC = () => {
         state.agentMemoryRun ?? state.liveAgentMemoryRun
     )?.findings.datasetKnowledge);
     if (!knowledge) {
-        return <div className="text-center text-slate-500 text-sm">Dataset knowledge will appear after the current analysis finishes.</div>;
+        return <div className="text-center text-slate-500 text-sm">Dataset knowledge will appear after an analysis finishes.</div>;
     }
 
     const renderHighlightList = (title: string, highlights: DatasetKnowledgeHighlight[]) => (

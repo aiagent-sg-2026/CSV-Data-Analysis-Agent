@@ -122,6 +122,11 @@ describe('agent monitor progressive disclosure', () => {
         expect(screen.getByRole('option', { name: 'Current session (no finished run)' })).toBeInTheDocument();
         expect(screen.getByRole('combobox', { name: 'Memory Run' })).toHaveValue('live');
         expect(screen.queryByText(/in progress/i)).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Memory' }));
+        expect(screen.getByText('Memory will appear after an analysis run finishes.')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Dataset Knowledge' }));
+        expect(screen.getByText('Dataset knowledge will appear after an analysis finishes.')).toBeInTheDocument();
     });
 
     it('explains why card review is unavailable before any cards exist', () => {

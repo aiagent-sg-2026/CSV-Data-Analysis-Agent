@@ -7,7 +7,7 @@ export const AgentMemoryView: React.FC = () => {
     if (!memory) {
         return (
             <div className="text-center text-slate-500 text-sm">
-                Memory will appear after the current analysis run finishes.
+                Memory will appear after an analysis run finishes.
             </div>
         );
     }

@@ -42,7 +42,7 @@ History search includes titles from previous versions and reveals a matching ver
 
 PWA update and offline notices remain available outside dialogs. While a modal is open, its title and controls stay above those notices; close the modal to use the update action.
 
-The Assistant activity panel labels an empty session without implying that analysis is running. Its card review action becomes available only after an analysis card exists; otherwise the panel explains the prerequisite.
+The Assistant activity panel labels an empty session without implying that analysis is running. Its Memory and Dataset Knowledge tabs describe what will be available after a future analysis. Its card review action becomes available only after an analysis card exists; otherwise the panel explains the prerequisite.
 
 If a saved analysis needs cloud-assisted preparation to reproduce its evidence version, selecting the original CSV while offline leaves that saved analysis intact and asks you to reconnect before trying the restore again.
 
