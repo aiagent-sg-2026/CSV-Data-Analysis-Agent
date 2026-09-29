@@ -8,7 +8,7 @@ import { resolveReportMemoryScope } from '../services/agent/memory/memoryScope';
 const mocks = vi.hoisted(() => ({
     getDocumentsForScope: vi.fn(async () => [] as Array<{ id: string; text: string }>),
     ensureVectorMemoryReady: vi.fn(async () => undefined),
-    search: vi.fn(async () => [] as Array<{ text: string; score: number }>),
+    search: vi.fn(async () => [] as Array<{ id: string; text: string; score: number }>),
     getStatus: vi.fn(() => 'ready' as const),
     getLastError: vi.fn(() => null),
     getDocuments: vi.fn(async () => []),
@@ -130,7 +130,7 @@ describe('MemoryPanel search availability and feedback', () => {
 
         const input = screen.getByRole('textbox', { name: 'Search saved memories' });
         await waitFor(() => expect(input).toBeEnabled());
-        fireEvent.change(input, { target: { value: 'town' } });
+        fireEvent.change(input, { target: { value: 'missing district' } });
         fireEvent.click(screen.getByRole('button', { name: 'Search' }));
 
         expect(await screen.findByRole('status')).toHaveTextContent('No matching memories found for this query.');
@@ -147,7 +147,7 @@ describe('MemoryPanel search availability and feedback', () => {
     it('exposes a matching memory as a keyboard-accessible result action', async () => {
         state.csvData = { fileName: 'sample.csv', data: [{ Town: 'North' }] };
         mocks.getDocumentsForScope.mockResolvedValue([{ id: 'memory-1', text: 'Town prices' }]);
-        mocks.search.mockResolvedValueOnce([{ text: 'Town prices', score: 0.9 }]);
+        mocks.search.mockResolvedValueOnce([{ id: 'memory-1', text: 'Town prices', score: 0.9 }]);
         render(<MemoryPanel />);
 
         const input = screen.getByRole('textbox', { name: 'Search saved memories' });
@@ -155,9 +155,82 @@ describe('MemoryPanel search availability and feedback', () => {
         fireEvent.change(input, { target: { value: 'town' } });
         fireEvent.click(screen.getByRole('button', { name: 'Search' }));
 
-        const result = await screen.findByRole('button', { name: /Match.*90\.0%.*Town prices/ });
+        const result = await screen.findByRole('button', { name: /Show full memory: Town prices\. Vector similarity · 90\.0%/ });
+        expect(result).not.toHaveAttribute('aria-current');
         fireEvent.click(result);
-        expect(document.getElementById('memory-doc-Town prices')).toHaveClass('ring-2');
+        expect(result).toHaveAttribute('aria-current', 'true');
+        expect(document.getElementById('memory-doc-memory-1')).toHaveClass('ring-2');
+        expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+    });
+
+    it('finds a scoped card by natural keywords when semantic similarity is below its threshold', async () => {
+        state.csvData = { fileName: 'sample.csv', data: [{ Town: 'North' }] };
+        mocks.getDocumentsForScope.mockResolvedValue([
+            { id: 'town-card', text: '[Analysis Card] Sum Resale Price by Town\nDescription: Total resale_price grouped by Town. Keywords: Town, Resale Price' },
+            { id: 'street-card', text: '[Analysis Card] Sum Resale Price by Street Name' },
+        ]);
+        mocks.search.mockResolvedValue([]);
+        render(<MemoryPanel />);
+
+        const input = screen.getByRole('textbox', { name: 'Search saved memories' });
+        await waitFor(() => expect(input).toBeEnabled());
+        fireEvent.change(input, { target: { value: 'Town prices' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+        const result = await screen.findByRole('button', { name: /Show full memory: Sum Resale Price by Town\. Keyword match · fallback/ });
+        expect(result).toHaveTextContent('Total resale_price grouped by Town');
+        expect(result).not.toHaveTextContent('[Analysis Card]');
+        expect(screen.queryByText('No matching memories found for this query.')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Show full memory: Sum Resale Price by Street Name/ })).not.toBeInTheDocument();
+        fireEvent.click(result);
+        expect(result).toHaveAttribute('aria-current', 'true');
+        expect(document.getElementById('memory-doc-town-card')).toHaveClass('ring-2');
+        expect(document.getElementById('memory-doc-street-card')).not.toHaveClass('ring-2');
+    });
+
+    it('keeps keyword matches visible when another card passes the semantic threshold', async () => {
+        state.csvData = { fileName: 'sample.csv', data: [{ Town: 'North' }] };
+        mocks.getDocumentsForScope.mockResolvedValue([
+            { id: 'town-card', text: '[Analysis Card] Sum Resale Price by Town' },
+            { id: 'street-card', text: '[Analysis Card] Sum Resale Price by Street Name' },
+        ]);
+        mocks.search.mockResolvedValueOnce([{
+            id: 'street-card', text: '[Analysis Card] Sum Resale Price by Street Name', score: 0.51,
+        }]);
+        render(<MemoryPanel />);
+
+        const input = screen.getByRole('textbox', { name: 'Search saved memories' });
+        await waitFor(() => expect(input).toBeEnabled());
+        fireEvent.change(input, { target: { value: 'Town prices' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+        expect(await screen.findByRole('button', { name: /Show full memory: Sum Resale Price by Town\. Keyword match · fallback/ })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Show full memory: Sum Resale Price by Street Name\. Vector similarity · 51\.0%/ })).toBeInTheDocument();
+    });
+
+    it('does not show a completed search from a report that was closed', async () => {
+        let finishSearch: ((value: Array<{ id: string; text: string; score: number }>) => void) | undefined;
+        state.csvData = { fileName: 'old.csv', data: [{ Town: 'Old' }] };
+        mocks.getDocumentsForScope.mockResolvedValue([{ id: 'old-memory', text: 'Old town prices' }]);
+        mocks.search.mockImplementationOnce(() => new Promise(resolve => { finishSearch = resolve; }));
+        const view = render(<MemoryPanel />);
+
+        const input = screen.getByRole('textbox', { name: 'Search saved memories' });
+        await waitFor(() => expect(input).toBeEnabled());
+        fireEvent.change(input, { target: { value: 'old town prices' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+        state.isMemoryPanelOpen = false;
+        view.rerender(<MemoryPanel />);
+        state.csvData = { fileName: 'new.csv', data: [{ Town: 'New' }] };
+        mocks.getDocumentsForScope.mockResolvedValue([{ id: 'new-memory', text: 'New report memory' }]);
+        state.isMemoryPanelOpen = true;
+        view.rerender(<MemoryPanel />);
+        expect(await screen.findByText('New report memory')).toBeInTheDocument();
+
+        await act(async () => finishSearch?.([{ id: 'old-memory', text: 'Old town prices', score: 0.9 }]));
+        expect(screen.queryByRole('button', { name: /Show full memory: Old town prices/ })).not.toBeInTheDocument();
+        expect(screen.getByRole('textbox', { name: 'Search saved memories' })).toBeEnabled();
     });
 
     it('keeps exact scope and item provenance available without repeating IDs in the default view', async () => {

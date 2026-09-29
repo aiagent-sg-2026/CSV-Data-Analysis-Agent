@@ -11,9 +11,48 @@ import { resolveReportMemoryScope } from '../../services/agent/memory/memoryScop
 import { useDialogAccessibility } from '../../hooks/useDialogAccessibility';
 
 type SearchResult = {
+    id: string;
     text: string;
-    score: number;
     origin?: string;
+} & ({ kind: 'semantic'; score: number } | { kind: 'keyword' });
+
+const keywordTokens = (text: string): string[] =>
+    (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
+        .map(token => /^[a-z]+$/.test(token) && token.length > 3 && token.endsWith('s')
+            ? token.slice(0, -1)
+            : token);
+
+const findKeywordMatches = (query: string, documents: VectorStoreDocument[]): SearchResult[] => {
+    const terms = [...new Set(keywordTokens(query).filter(token => token.length > 1))];
+    if (terms.length === 0) return [];
+
+    return documents.flatMap(document => {
+        const tokens = keywordTokens(document.text);
+        const positions = terms.map(term => tokens.indexOf(term));
+        if (positions.some(position => position < 0)) return [];
+        return [{
+            id: document.id,
+            text: document.text,
+            origin: document.metadata?.origin?.label,
+            kind: 'keyword' as const,
+            position: (Math.max(...positions) - Math.min(...positions)) * 2 + Math.min(...positions),
+        }];
+    }).sort((a, b) => a.position - b.position).slice(0, 5);
+};
+
+const getSearchResultTitle = (result: SearchResult): string => {
+    const sourceTitle = result.origin?.replace(/^(Analysis card|Dataset import):\s*/i, '').trim();
+    const firstLine = result.text.replace(/^\[Analysis Card\]\s*/, '').split(/\n| Description:|\. Keywords:/)[0].trim();
+    const title = sourceTitle || firstLine || 'Saved memory';
+    return title.length > 100 ? `${title.slice(0, 97)}...` : title;
+};
+
+const getSearchResultPreview = (result: SearchResult): string => {
+    if (!result.text.startsWith('[Analysis Card]')) return result.text;
+    const description = /\bDescription:\s*/.exec(result.text);
+    return description
+        ? result.text.slice(description.index + description[0].length).trim()
+        : result.text;
 };
 
 type PendingMemoryDeletion =
@@ -34,7 +73,7 @@ export const MemoryPanel: React.FC = () => {
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
     const [searchFeedback, setSearchFeedback] = useState<'none' | 'empty' | 'error'>('none');
     const [isSearching, setIsSearching] = useState(false);
-    const [highlightedDocText, setHighlightedDocText] = useState<string | null>(null);
+    const [highlightedDocId, setHighlightedDocId] = useState<string | null>(null);
     const [modelStatus, setModelStatus] = useState(vectorStore.getStatus());
     const [modelError, setModelError] = useState(vectorStore.getLastError());
     const [pendingDeletion, setPendingDeletion] = useState<PendingMemoryDeletion | null>(null);
@@ -45,6 +84,7 @@ export const MemoryPanel: React.FC = () => {
     const cancelDeletionRef = useRef<HTMLButtonElement>(null);
     const confirmDeletionRef = useRef<HTMLButtonElement>(null);
     const refreshSequenceRef = useRef(0);
+    const searchSequenceRef = useRef(0);
     const deletionTitleId = useId();
     const deletionDescriptionId = useId();
     const dialogRef = useDialogAccessibility<HTMLDivElement>(isOpen, onClose);
@@ -125,6 +165,7 @@ export const MemoryPanel: React.FC = () => {
         } else {
             // Reset state on close
             refreshSequenceRef.current += 1;
+            searchSequenceRef.current += 1;
             activationTriggered.current = false;
             setDocuments([]);
             setDocumentsError(false);
@@ -133,37 +174,57 @@ export const MemoryPanel: React.FC = () => {
             setSearchQuery('');
             setSearchResults([]);
             setSearchFeedback('none');
-            setHighlightedDocText(null);
+            setIsSearching(false);
+            setHighlightedDocId(null);
             setPendingDeletion(null);
             setDeletionError(null);
         }
         return () => {
             cancelled = true;
             refreshSequenceRef.current += 1;
+            searchSequenceRef.current += 1;
         };
     }, [isOpen, refreshDocuments, syncModelState]);
 
     const handleSearch = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!canSearch || !searchQuery.trim() || modelStatus === 'loading') return;
+        const requestId = ++searchSequenceRef.current;
         setIsSearching(true);
-        setHighlightedDocText(null);
+        setHighlightedDocId(null);
         setSearchFeedback('none');
         syncModelState();
         try {
             const results = await vectorStore.search(searchQuery, 5, activeMemoryScope!, { propagateError: true });
-            setSearchResults(results.map(item => ({
+            if (requestId !== searchSequenceRef.current) return;
+            const semanticResults: SearchResult[] = results.map(item => ({
+                id: item.id,
                 text: item.text,
                 score: item.score,
                 origin: item.metadata?.origin?.label,
-            })));
-            setSearchFeedback(results.length === 0 ? 'empty' : 'none');
+                kind: 'semantic',
+            }));
+            // The vector worker applies a fixed similarity threshold. Keep scoped
+            // text matches discoverable even when another result passes that gate.
+            const keywordResults = findKeywordMatches(searchQuery, documents);
+            const semanticById = new Map(semanticResults.map(result => [result.id, result]));
+            const keywordIds = new Set(keywordResults.map(result => result.id));
+            const visibleResults = [
+                ...keywordResults.map(result => semanticById.get(result.id) ?? result),
+                ...semanticResults.filter(result => !keywordIds.has(result.id)),
+            ].slice(0, 5);
+            setSearchResults(visibleResults);
+            setSearchFeedback(visibleResults.length === 0 ? 'empty' : 'none');
         } catch {
-            setSearchResults([]);
-            setSearchFeedback('error');
+            if (requestId === searchSequenceRef.current) {
+                setSearchResults([]);
+                setSearchFeedback('error');
+            }
         } finally {
-            syncModelState();
-            setIsSearching(false);
+            if (requestId === searchSequenceRef.current) {
+                syncModelState();
+                setIsSearching(false);
+            }
         }
     };
 
@@ -205,10 +266,10 @@ export const MemoryPanel: React.FC = () => {
         }
     };
 
-    const handleSearchResultClick = (text: string) => {
-        setHighlightedDocText(text);
-        const element = document.getElementById(`memory-doc-${text.substring(0, 30)}`);
-        element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const handleSearchResultClick = (id: string) => {
+        setHighlightedDocId(id);
+        const element = document.getElementById(`memory-doc-${id}`);
+        element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     if (!isOpen) return null;
@@ -360,21 +421,27 @@ export const MemoryPanel: React.FC = () => {
                             {searchResults.length > 0 && (
                                 <div className="space-y-2">
                                     <h4 className="text-sm font-medium text-slate-600">Top Results:</h4>
-                                    {searchResults.map((result) => (
-                                        <button key={result.text} type="button" onClick={() => handleSearchResultClick(result.text)} className="w-full bg-white p-2.5 border border-slate-200 rounded-card text-left text-xs cursor-pointer hover:border-blue-500 hover:ring-1 hover:ring-blue-500">
-                                            <div className="flex justify-between items-center mb-1">
-                                                 <p className="text-slate-700 font-semibold">Match</p>
-                                                 <p className="text-blue-600 font-bold">{(result.score * 100).toFixed(1)}%</p>
-                                            </div>
-                                            <div className="w-full bg-slate-200 rounded-full h-1 mb-2">
-                                                <div className="bg-blue-500 h-1 rounded-full" style={{ width: `${result.score * 100}%`}}></div>
-                                            </div>
-                                            <p className="text-slate-600 italic">"{result.text}"</p>
-                                            {result.origin && (
-                                                <p className="mt-1 text-[11px] text-slate-500">Origin: {result.origin}</p>
-                                            )}
-                                        </button>
-                                    ))}
+                                    {searchResults.map((result) => {
+                                        const title = getSearchResultTitle(result);
+                                        const matchLabel = result.kind === 'semantic'
+                                            ? `Vector similarity · ${(result.score * 100).toFixed(1)}%`
+                                            : 'Keyword match · fallback';
+                                        return (
+                                            <button
+                                                key={result.id}
+                                                type="button"
+                                                aria-label={`Show full memory: ${title}. ${matchLabel}`}
+                                                aria-current={highlightedDocId === result.id ? 'true' : undefined}
+                                                onClick={() => handleSearchResultClick(result.id)}
+                                                className={`min-h-[44px] w-full rounded-card border bg-white p-2.5 text-left text-xs transition-colors hover:border-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${highlightedDocId === result.id ? 'border-blue-500 ring-1 ring-blue-500' : 'border-slate-200'}`}
+                                            >
+                                                <p className="line-clamp-1 font-semibold text-slate-800">{title}</p>
+                                                <p className="mt-1 font-medium text-blue-700">{matchLabel}</p>
+                                                <p className="mt-1 line-clamp-2 leading-relaxed text-slate-600">{getSearchResultPreview(result)}</p>
+                                                {result.origin && <p className="mt-1 line-clamp-1 text-[11px] text-slate-500">Origin: {result.origin}</p>}
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             )}
                             {searchFeedback === 'empty' && <p role="status" className="text-sm text-slate-500">No matching memories found for this query.</p>}
@@ -414,8 +481,8 @@ export const MemoryPanel: React.FC = () => {
                                     {documents.map(doc => (
                                         <li
                                             key={doc.id}
-                                            id={`memory-doc-${doc.text.substring(0, 30)}`}
-                                            className={`p-3 bg-slate-50 rounded-card text-sm text-slate-800 border border-slate-200 flex justify-between items-start group transition-all duration-300 ${highlightedDocText === doc.text ? 'border-blue-500 ring-2 ring-blue-500' : ''}`}>
+                                            id={`memory-doc-${doc.id}`}
+                                            className={`p-3 bg-slate-50 rounded-card text-sm text-slate-800 border border-slate-200 flex justify-between items-start group transition-all duration-300 ${highlightedDocId === doc.id ? 'border-blue-500 ring-2 ring-blue-500' : ''}`}>
                                             <div className="flex-grow pr-4 break-words">
                                                 <p>{doc.text}</p>
                                                 <p className="mt-2 text-xs text-slate-500">
