@@ -3976,6 +3976,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Mandarin': '没有可用的数值列',
         'Japanese': '利用可能な数値列がありません',
     },
+    'provenance_step3_no_numeric_values': {
+        'English': 'No numeric values are available for this average.',
+        'Mandarin': '此平均值没有可用的数值。',
+        'Malay': 'Tiada nilai angka tersedia untuk purata ini.',
+        'Japanese': 'この平均に使用できる数値がありません。',
+    },
     'provenance_step3_select_columns': {
         'English': 'Select a group and value column to preview results.',
         'Mandarin': '请选择分组列和数值列以预览结果。',
@@ -4032,6 +4038,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'English': 'Excel: create Pivot Table — Rows={group}, Columns={pivot}, Values={agg}({value})',
         'Mandarin': 'Excel 验证：建立数据透视表 — 行={group}，列={pivot}，值={agg}({value})',
         'Japanese': 'Excel: ピボットテーブル作成 — 行={group}、列={pivot}、値={agg}({value})',
+    },
+    'provenance_pivot_truncated': {
+        'English': 'Showing {shownRows} of {rowGroups} row groups and {shownPivots} of {pivotGroups} pivot values. Totals include all grouped rows and pivot values.',
+        'Mandarin': '显示 {rowGroups} 个行分组中的 {shownRows} 个，以及 {pivotGroups} 个透视值中的 {shownPivots} 个。总计包含所有已分组的行与透视值。',
+        'Malay': 'Memaparkan {shownRows} daripada {rowGroups} kumpulan baris dan {shownPivots} daripada {pivotGroups} nilai pivot. Jumlah merangkumi semua baris dan nilai pivot yang dikumpulkan.',
+        'Japanese': '{rowGroups} 行グループ中 {shownRows} 件、{pivotGroups} 個のピボット値中 {shownPivots} 件を表示しています。合計にはすべてのグループとピボット値が含まれます。',
     },
     'groupby_create_card': {
         'English': 'Create Card',
