@@ -28,6 +28,8 @@ export const MemoryPanel: React.FC = () => {
     const onClose = () => useAppStore.getState().setIsMemoryPanelOpen(false);
 
     const [documents, setDocuments] = useState<VectorStoreDocument[]>([]);
+    const [documentsError, setDocumentsError] = useState(false);
+    const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
     const [searchFeedback, setSearchFeedback] = useState<'none' | 'empty' | 'error'>('none');
@@ -41,6 +43,7 @@ export const MemoryPanel: React.FC = () => {
     const deletionTriggerRef = useRef<HTMLButtonElement>(null);
     const cancelDeletionRef = useRef<HTMLButtonElement>(null);
     const confirmDeletionRef = useRef<HTMLButtonElement>(null);
+    const refreshSequenceRef = useRef(0);
     const deletionTitleId = useId();
     const deletionDescriptionId = useId();
     const dialogRef = useDialogAccessibility<HTMLDivElement>(isOpen, onClose);
@@ -54,10 +57,22 @@ export const MemoryPanel: React.FC = () => {
     const canSearch = Boolean(activeMemoryScope && documents.length > 0);
 
     const refreshDocuments = useCallback(async () => {
-        const scope = resolveReportMemoryScope(useAppStore.getState());
-        const docs = await vectorStore.getDocumentsForScope(scope);
-        setDocuments(docs);
-        return docs;
+        const requestId = ++refreshSequenceRef.current;
+        setIsLoadingDocuments(true);
+        try {
+            const scope = resolveReportMemoryScope(useAppStore.getState());
+            const docs = await vectorStore.getDocumentsForScope(scope);
+            if (requestId === refreshSequenceRef.current) {
+                setDocuments(docs);
+                setDocumentsError(false);
+            }
+            return docs;
+        } catch {
+            if (requestId === refreshSequenceRef.current) setDocumentsError(true);
+            return null;
+        } finally {
+            if (requestId === refreshSequenceRef.current) setIsLoadingDocuments(false);
+        }
     }, []);
 
     const syncModelState = useCallback(() => {
@@ -79,6 +94,7 @@ export const MemoryPanel: React.FC = () => {
     const activationTriggered = useRef(false);
 
     useEffect(() => {
+        let cancelled = false;
         if (isOpen) {
             void refreshDocuments();
             syncModelState();
@@ -92,17 +108,26 @@ export const MemoryPanel: React.FC = () => {
                     store as never,
                     async (s) => {
                         await flushPendingVectorMemoryDocs(s as never);
+                        if (cancelled) return;
                         void refreshDocuments();
                         syncModelState();
                     },
                 ).then(() => {
+                    if (cancelled) return;
                     syncModelState();
                     void refreshDocuments();
+                }).catch(() => {
+                    if (cancelled) return;
+                    syncModelState();
                 });
             }
         } else {
             // Reset state on close
+            refreshSequenceRef.current += 1;
             activationTriggered.current = false;
+            setDocuments([]);
+            setDocumentsError(false);
+            setIsLoadingDocuments(false);
             setSearchQuery('');
             setSearchResults([]);
             setSearchFeedback('none');
@@ -110,6 +135,10 @@ export const MemoryPanel: React.FC = () => {
             setPendingDeletion(null);
             setDeletionError(null);
         }
+        return () => {
+            cancelled = true;
+            refreshSequenceRef.current += 1;
+        };
     }, [isOpen, refreshDocuments, syncModelState]);
 
     const handleSearch = async (e: React.FormEvent) => {
@@ -156,6 +185,7 @@ export const MemoryPanel: React.FC = () => {
                 vectorStoreDocuments: await vectorStore.getDocuments(),
             });
             const remaining = await refreshDocuments();
+            if (!remaining) throw new Error('Report memory list unavailable after deletion');
             setSearchResults([]);
             setSearchFeedback('none');
             if (results.some(result => result.status === 'rejected')) {
@@ -345,7 +375,7 @@ export const MemoryPanel: React.FC = () => {
                     {/* Right Column: All Documents */}
                     <div className="flex flex-col min-h-0">
                         <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
-                            <h3 className="font-semibold text-slate-800">All Stored Memories ({documents.length})</h3>
+                            <h3 className="font-semibold text-slate-800">All Stored Memories ({documentsError && documents.length === 0 ? 'unavailable' : documents.length})</h3>
                             {documents.length > 0 && (
                                 <button onClick={event => {
                                     deletionTriggerRef.current = event.currentTarget;
@@ -356,10 +386,18 @@ export const MemoryPanel: React.FC = () => {
                                 </button>
                             )}
                         </div>
+                        {documentsError && (
+                            <div role="alert" className="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                                <p>Could not load report memory.{documents.length > 0 ? ' Showing previously loaded items.' : ''}</p>
+                                <button type="button" onClick={() => void refreshDocuments()} disabled={isLoadingDocuments} className="mt-2 min-h-[44px] rounded-lg border border-amber-300 bg-white px-3 font-medium disabled:opacity-50">
+                                    Retry memory list
+                                </button>
+                            </div>
+                        )}
                         <div className="flex-grow overflow-y-auto pr-2 border-t border-slate-200 pt-2">
                             {documents.length === 0 ? (
                                 <div className="flex items-center justify-center h-full text-slate-500 text-sm">
-                                    <p>The AI's memory is currently empty.</p>
+                                    <p>{documentsError ? 'Memory list unavailable.' : isLoadingDocuments ? 'Loading report memory...' : "The AI's memory is currently empty."}</p>
                                 </div>
                             ) : (
                                 <ul className="space-y-2">

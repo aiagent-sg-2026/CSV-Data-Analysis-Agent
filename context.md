@@ -538,3 +538,9 @@
 - **Failure contract**: The history store had swallowed delete/purge failures. It now reports the failure, attempts to refresh the list after possible partial changes, and rejects so History keeps an inline error and retry action instead of silently closing.
 - **Checks**: Two UI regressions failed against the native path. Final focused tests passed 32/32; typecheck, lint, full suite 341 files / 2,840 tests, production build, and bundle budget passed. A type error in the focus-restore button query was corrected before these passing checks.
 - **Browser/release status**: The Mac remains locked according to the latest computer-use inventory; the rebuilt confirmations need actual browser visual/E2E checks after unlock. No real report, memory, or storage deletion was performed. Root deployment and public Pages are unchanged.
+
+## 2026-09-29 Memory List Failure and Scope Refresh QA
+
+- **Finding and fix**: `MemoryPanel` opened with an unhandled `getDocumentsForScope` rejection and incorrectly displayed an empty-memory state. It now shows a retry alert, keeps previously loaded items with a warning on refresh failure, and clears old report items on close. A request sequence prevents an older refresh from overwriting a newer one.
+- **Checks**: The injected worker failure first produced an unhandled rejection and no alert. After the fix, focused tests passed 10/10; typecheck, lint, full suite 341 files / 2,843 tests, production build, and bundle budget passed. Close/reopen and delayed model-activation tests check that old report text and stale asynchronous results do not reappear.
+- **Browser/release status**: The Mac is still locked according to the most recent inventory. Browser visual/E2E remains pending; root output and public Pages are unchanged.

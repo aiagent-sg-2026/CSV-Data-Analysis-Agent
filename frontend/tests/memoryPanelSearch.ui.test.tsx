@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryPanel } from '../components/modals/MemoryPanel';
 
@@ -45,6 +45,7 @@ describe('MemoryPanel search availability and feedback', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
+        state.isMemoryPanelOpen = true;
         state.csvData = null;
         mocks.getDocumentsForScope.mockResolvedValue([]);
         mocks.search.mockResolvedValue([]);
@@ -72,6 +73,53 @@ describe('MemoryPanel search availability and feedback', () => {
         expect(screen.getByRole('textbox', { name: 'Search saved memories' })).toBeDisabled();
         expect(screen.getByRole('button', { name: 'Search' })).toBeDisabled();
         expect(mocks.search).not.toHaveBeenCalled();
+    });
+
+    it('shows a retry instead of an empty-memory claim when the worker list fails', async () => {
+        mocks.getDocumentsForScope
+            .mockRejectedValueOnce(new Error('Worker unavailable'))
+            .mockResolvedValueOnce([{ id: 'memory-1', text: 'Town prices' }]);
+        render(<MemoryPanel />);
+
+        expect(await screen.findByRole('alert')).toHaveTextContent('Could not load report memory');
+        expect(screen.queryByText("The AI's memory is currently empty.")).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Retry memory list' }));
+        expect(await screen.findByText('Town prices')).toBeInTheDocument();
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('does not show the previous report memory while a reopened panel loads', async () => {
+        mocks.getDocumentsForScope
+            .mockResolvedValueOnce([{ id: 'old-memory', text: 'Old report item' }])
+            .mockImplementationOnce(() => new Promise<Array<{ id: string; text: string }>>(() => {}));
+        const view = render(<MemoryPanel />);
+        expect(await screen.findByText('Old report item')).toBeInTheDocument();
+
+        state.isMemoryPanelOpen = false;
+        view.rerender(<MemoryPanel />);
+        state.isMemoryPanelOpen = true;
+        view.rerender(<MemoryPanel />);
+
+        expect(screen.queryByText('Old report item')).not.toBeInTheDocument();
+        expect(screen.getByText('Loading report memory...')).toBeInTheDocument();
+    });
+
+    it('ignores a model activation that finishes after the panel closes', async () => {
+        let finishActivation: (() => void) | undefined;
+        mocks.ensureVectorMemoryReady.mockImplementationOnce(() => new Promise<void>(resolve => {
+            finishActivation = resolve;
+        }));
+        mocks.getDocumentsForScope.mockResolvedValue([{ id: 'memory-1', text: 'Town prices' }]);
+        state.csvData = { fileName: 'sample.csv', data: [{ Town: 'North' }] };
+        const view = render(<MemoryPanel />);
+        expect(await screen.findByText('Town prices')).toBeInTheDocument();
+
+        state.isMemoryPanelOpen = false;
+        view.rerender(<MemoryPanel />);
+        await act(async () => finishActivation?.());
+
+        expect(mocks.getDocumentsForScope).toHaveBeenCalledTimes(1);
+        expect(screen.queryByText('Town prices')).not.toBeInTheDocument();
     });
 
     it('shows no-result and failure feedback for a scoped search', async () => {
