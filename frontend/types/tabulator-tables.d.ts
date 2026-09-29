@@ -2,6 +2,7 @@ declare module 'tabulator-tables' {
     export interface TabulatorCellComponent {
         getValue(): unknown;
         getRow(): TabulatorRowComponent;
+        getTable(): TabulatorFull;
     }
 
     export interface TabulatorRowComponent {
@@ -54,6 +55,8 @@ declare module 'tabulator-tables' {
 
     export class TabulatorFull {
         constructor(element: HTMLElement, options: TabulatorOptions);
+        getPage(): number;
+        getPageSize(): number;
         setData(data: Record<string, unknown>[]): void | Promise<void>;
         setColumns(columns: TabulatorColumnDefinition[]): void;
         on(event: string, callback: (...args: unknown[]) => void): void;

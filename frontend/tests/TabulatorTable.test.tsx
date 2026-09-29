@@ -78,6 +78,21 @@ describe('TabulatorTable', () => {
         expect(formatted).not.toContain('501,001');
     });
 
+    it('numbers rows across pages instead of restarting at one', async () => {
+        createInstance();
+        render(<TabulatorTable data={[{ Name: 'Alpha' }]} columns={['Name']} pageSize={10} language="English" />);
+
+        await waitFor(() => expect(tabulatorConstructorMock).toHaveBeenCalledTimes(1));
+        const [, options] = tabulatorConstructorMock.mock.calls[0] as [HTMLElement, Record<string, any>];
+        const indexFormatter = options.columns[0].formatter;
+        const cell = {
+            getRow: () => ({ getPosition: () => 1 }),
+            getTable: () => ({ getPage: () => 2, getPageSize: () => 10 }),
+        };
+
+        expect(indexFormatter(cell)).toBe('11');
+    });
+
     it('renders blank cells explicitly instead of leaving an unexplained gap', async () => {
         createInstance();
 

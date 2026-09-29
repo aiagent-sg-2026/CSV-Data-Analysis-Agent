@@ -139,8 +139,11 @@ const buildColumns = (
     {
         title: '#',
         formatter: cell => {
-            const rowPosition = cell.getRow().getPosition(true);
-            return rowPosition === false ? '' : String(rowPosition);
+            const rowPosition = cell.getRow().getPosition();
+            if (rowPosition === false) return '';
+            // Tabulator restarts row positions on each page.
+            const table = cell.getTable();
+            return String((table.getPage() - 1) * table.getPageSize() + rowPosition);
         },
         cssClass: 'raw-data-tabulator__index-column',
         headerSort: false,
