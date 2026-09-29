@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useId, useMemo, useRef } from 'react';
 import { vectorStore } from '../../services/vectorStore';
 import { VectorStoreDocument } from '../../types';
 import { useAppStore } from '../../store/useAppStore';
@@ -16,6 +16,10 @@ type SearchResult = {
     origin?: string;
 };
 
+type PendingMemoryDeletion =
+    | { kind: 'item'; id: string; label: string }
+    | { kind: 'report'; count: number };
+
 // Soft capacity limit for the visual progress bar (in KB)
 const MEMORY_CAPACITY_KB = 5 * 1024; // 5 MB
 
@@ -31,7 +35,18 @@ export const MemoryPanel: React.FC = () => {
     const [highlightedDocText, setHighlightedDocText] = useState<string | null>(null);
     const [modelStatus, setModelStatus] = useState(vectorStore.getStatus());
     const [modelError, setModelError] = useState(vectorStore.getLastError());
+    const [pendingDeletion, setPendingDeletion] = useState<PendingMemoryDeletion | null>(null);
+    const [deletionError, setDeletionError] = useState<string | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const deletionTriggerRef = useRef<HTMLButtonElement>(null);
+    const cancelDeletionRef = useRef<HTMLButtonElement>(null);
+    const deletionTitleId = useId();
+    const deletionDescriptionId = useId();
     const dialogRef = useDialogAccessibility<HTMLDivElement>(isOpen, onClose);
+
+    useEffect(() => {
+        if (pendingDeletion) cancelDeletionRef.current?.focus();
+    }, [pendingDeletion]);
 
     const isModelReady = modelStatus === 'ready';
     const activeMemoryScope = resolveReportMemoryScope(useAppStore.getState());
@@ -41,6 +56,7 @@ export const MemoryPanel: React.FC = () => {
         const scope = resolveReportMemoryScope(useAppStore.getState());
         const docs = await vectorStore.getDocumentsForScope(scope);
         setDocuments(docs);
+        return docs;
     }, []);
 
     const syncModelState = useCallback(() => {
@@ -90,6 +106,8 @@ export const MemoryPanel: React.FC = () => {
             setSearchResults([]);
             setSearchFeedback('none');
             setHighlightedDocText(null);
+            setPendingDeletion(null);
+            setDeletionError(null);
         }
     }, [isOpen, refreshDocuments, syncModelState]);
 
@@ -117,30 +135,40 @@ export const MemoryPanel: React.FC = () => {
         }
     };
 
-    const handleDelete = async (id: string) => {
-        if (window.confirm('Are you sure you want to delete this memory item?')) {
-            await vectorStore.deleteDocument(id);
-            vectorStore.schedulePersist();
-            useAppStore.setState({
-                vectorStoreDocuments: await vectorStore.getDocuments(),
-            });
-            await refreshDocuments();
-            setSearchResults([]);
-            setSearchFeedback('none');
-        }
+    const dismissDeletion = () => {
+        setPendingDeletion(null);
+        setDeletionError(null);
+        requestAnimationFrame(() => deletionTriggerRef.current?.focus());
     };
 
-    const handleClearAll = async () => {
-        if (window.confirm('Are you sure you want to clear all memory items for this report and dataset version? This cannot be undone.')) {
-            await Promise.all(documents.map(document =>
-                vectorStore.deleteDocument(document.id)));
+    const confirmDeletion = async () => {
+        if (!pendingDeletion || isDeleting) return;
+        const ids = pendingDeletion.kind === 'item'
+            ? [pendingDeletion.id]
+            : documents.map(document => document.id);
+        setIsDeleting(true);
+        setDeletionError(null);
+        try {
+            const results = await Promise.allSettled(ids.map(id => vectorStore.deleteDocument(id)));
             vectorStore.schedulePersist();
             useAppStore.setState({
                 vectorStoreDocuments: await vectorStore.getDocuments(),
             });
-            await refreshDocuments();
+            const remaining = await refreshDocuments();
             setSearchResults([]);
             setSearchFeedback('none');
+            if (results.some(result => result.status === 'rejected')) {
+                if (pendingDeletion.kind === 'report') {
+                    setPendingDeletion({ kind: 'report', count: remaining.length });
+                }
+                setDeletionError('Some memory items could not be deleted. Review the list and retry.');
+                return;
+            }
+            dismissDeletion();
+        } catch {
+            setDeletionError('Could not refresh report memory after deletion. Review the list and retry.');
+        } finally {
+            setIsDeleting(false);
         }
     };
 
@@ -202,6 +230,40 @@ export const MemoryPanel: React.FC = () => {
                         <IconClose />
                     </button>
                 </header>
+
+                {pendingDeletion && (
+                    <div
+                        role="alertdialog"
+                        aria-labelledby={deletionTitleId}
+                        aria-describedby={deletionDescriptionId}
+                        className="mb-3 max-h-[45vh] shrink-0 overflow-y-auto rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-slate-700"
+                        onKeyDown={event => {
+                            if (event.key !== 'Escape' || isDeleting) return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            dismissDeletion();
+                        }}
+                    >
+                        <h3 id={deletionTitleId} className="font-semibold text-red-800">
+                            {pendingDeletion.kind === 'item' ? 'Delete memory item?' : 'Clear report memory?'}
+                        </h3>
+                        <p id={deletionDescriptionId} className="mt-1 break-words leading-relaxed">
+                            {pendingDeletion.kind === 'item'
+                                ? `Delete “${pendingDeletion.label}” from this report?`
+                                : `${pendingDeletion.count} saved memory item${pendingDeletion.count === 1 ? '' : 's'} for this report and dataset version will be deleted.`}
+                            {' '}This cannot be undone.
+                        </p>
+                        {deletionError && <p role="alert" className="mt-2 text-red-700">{deletionError}</p>}
+                        <div className="mt-3 flex flex-wrap justify-end gap-2">
+                            <button ref={cancelDeletionRef} type="button" onClick={dismissDeletion} disabled={isDeleting} className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 font-medium text-slate-700 disabled:opacity-50">
+                                Cancel
+                            </button>
+                            <button type="button" onClick={() => void confirmDeletion()} disabled={isDeleting} className="min-h-[44px] rounded-lg bg-red-600 px-3 font-medium text-white disabled:opacity-50">
+                                {pendingDeletion.kind === 'item' ? 'Delete memory' : 'Clear report memory'}
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 <div className="grid min-h-0 flex-grow gap-4 md:grid-cols-2">
                     {/* Left Column: Search */}
@@ -271,7 +333,11 @@ export const MemoryPanel: React.FC = () => {
                         <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
                             <h3 className="font-semibold text-slate-800">All Stored Memories ({documents.length})</h3>
                             {documents.length > 0 && (
-                                <button onClick={handleClearAll} className="min-h-[44px] rounded-md px-2 text-xs text-red-600 hover:bg-red-50 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600">
+                                <button onClick={event => {
+                                    deletionTriggerRef.current = event.currentTarget;
+                                    setPendingDeletion({ kind: 'report', count: documents.length });
+                                    setDeletionError(null);
+                                }} className="min-h-[44px] rounded-md px-2 text-xs text-red-600 hover:bg-red-50 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600">
                                     Clear Report Memory
                                 </button>
                             )}
@@ -300,7 +366,11 @@ export const MemoryPanel: React.FC = () => {
                                                 )}
                                             </div>
                                             <button
-                                                onClick={() => handleDelete(doc.id)}
+                                                onClick={event => {
+                                                    deletionTriggerRef.current = event.currentTarget;
+                                                    setPendingDeletion({ kind: 'item', id: doc.id, label: doc.text.slice(0, 60) });
+                                                    setDeletionError(null);
+                                                }}
                                                 className="flex min-h-[44px] min-w-[44px] flex-shrink-0 items-center justify-center rounded-full text-slate-600 transition-colors hover:bg-red-100 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-600"
                                                 title="Delete Memory"
                                                 aria-label={`Delete memory item: ${doc.text.slice(0, 60)}`}
