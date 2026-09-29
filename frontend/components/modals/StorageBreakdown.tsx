@@ -287,7 +287,7 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
                                         setPendingClear({ key: seg.key, label: seg.label, count: seg.count, isCache: seg.isCache });
                                     }}
                                     disabled={clearing !== null}
-                                    className="flex h-[44px] w-[44px] items-center justify-center rounded text-slate-600 transition-opacity hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 disabled:cursor-wait disabled:opacity-50 sm:opacity-0 sm:group-hover/row:opacity-100"
+                                    className="flex h-[44px] w-[44px] items-center justify-center rounded text-slate-600 transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-wait disabled:opacity-50"
                                     title={`Clear ${seg.label}`}
                                 >
                                     {clearing === seg.key ? (

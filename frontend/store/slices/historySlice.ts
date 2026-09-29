@@ -229,7 +229,9 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
             await deleteReport(id);
             await get().loadReportsList();
         } catch (error) {
+            await get().loadReportsList().catch(() => { /* Preserve the deletion error. */ });
             get().addProgress(`Failed to delete report: ${error instanceof Error ? error.message : String(error)}`, 'error');
+            throw error;
         }
     },
     handlePurgeStorage: async () => {
@@ -239,8 +241,9 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
             await get().loadReportsList();
             return result;
         } catch (error) {
+            await get().loadReportsList().catch(() => { /* Preserve the purge error. */ });
             get().addProgress(`Failed to purge storage: ${error instanceof Error ? error.message : String(error)}`, 'error');
-            return { deletedReports: 0, freedMB: 0 };
+            throw error;
         }
     },
     openPersistedReportArtifact: async (id) => {

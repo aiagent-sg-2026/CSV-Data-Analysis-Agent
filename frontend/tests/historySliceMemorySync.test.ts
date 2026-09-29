@@ -7,6 +7,7 @@ const storageMocks = vi.hoisted(() => ({
     saveReport: vi.fn(async () => undefined),
     getReport: vi.fn(),
     deleteReport: vi.fn(async () => undefined),
+    purgeAllStorage: vi.fn(async () => ({ deletedReports: 0, freedMB: 0 })),
     deleteOriginalData: vi.fn(async () => undefined),
     currentSessionKey: 'current_session',
 }));
@@ -25,6 +26,7 @@ vi.mock('../services/storageService', () => ({
     saveReport: storageMocks.saveReport,
     getReport: storageMocks.getReport,
     deleteReport: storageMocks.deleteReport,
+    purgeAllStorage: storageMocks.purgeAllStorage,
     deleteOriginalData: storageMocks.deleteOriginalData,
     CURRENT_SESSION_KEY: storageMocks.currentSessionKey,
 }));
@@ -85,6 +87,26 @@ describe('history slice load guards', () => {
             'error',
         );
         expect(storageMocks.getReport).not.toHaveBeenCalled();
+    });
+
+    it('propagates deletion failures after recording user feedback', async () => {
+        const addProgress = vi.fn();
+        let state: Record<string, unknown> = { sessionId: 'session-1', addProgress };
+        const set = vi.fn((partial: any) => {
+            const next = typeof partial === 'function' ? partial(state) : partial;
+            state = { ...state, ...next };
+        });
+        const get = () => state as any;
+        const slice = createHistorySlice(set as never, get as never, {} as never);
+        state = { ...state, ...slice };
+
+        storageMocks.deleteReport.mockRejectedValueOnce(new Error('delete unavailable'));
+        await expect(slice.handleDeleteReport('report-1')).rejects.toThrow('delete unavailable');
+        expect(addProgress).toHaveBeenCalledWith('Failed to delete report: delete unavailable', 'error');
+
+        storageMocks.purgeAllStorage.mockRejectedValueOnce(new Error('purge unavailable'));
+        await expect(slice.handlePurgeStorage()).rejects.toThrow('purge unavailable');
+        expect(addProgress).toHaveBeenCalledWith('Failed to purge storage: purge unavailable', 'error');
     });
 
     it('allows load when activeTurn is null', async () => {

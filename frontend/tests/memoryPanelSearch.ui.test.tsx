@@ -119,7 +119,13 @@ describe('MemoryPanel search availability and feedback', () => {
         fireEvent.click(trigger);
         expect(mocks.deleteDocument).not.toHaveBeenCalled();
         expect(screen.getByRole('alertdialog')).toHaveTextContent('Town prices');
-        expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+        const cancel = screen.getByRole('button', { name: 'Cancel' });
+        const confirm = screen.getByRole('button', { name: 'Delete memory' });
+        expect(cancel).toHaveFocus();
+        fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true });
+        expect(confirm).toHaveFocus();
+        fireEvent.keyDown(confirm, { key: 'Tab' });
+        expect(cancel).toHaveFocus();
         fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
         expect(mocks.deleteDocument).not.toHaveBeenCalled();
 

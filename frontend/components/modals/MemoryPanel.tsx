@@ -40,6 +40,7 @@ export const MemoryPanel: React.FC = () => {
     const [isDeleting, setIsDeleting] = useState(false);
     const deletionTriggerRef = useRef<HTMLButtonElement>(null);
     const cancelDeletionRef = useRef<HTMLButtonElement>(null);
+    const confirmDeletionRef = useRef<HTMLButtonElement>(null);
     const deletionTitleId = useId();
     const deletionDescriptionId = useId();
     const dialogRef = useDialogAccessibility<HTMLDivElement>(isOpen, onClose);
@@ -234,10 +235,23 @@ export const MemoryPanel: React.FC = () => {
                 {pendingDeletion && (
                     <div
                         role="alertdialog"
+                        aria-modal="true"
                         aria-labelledby={deletionTitleId}
                         aria-describedby={deletionDescriptionId}
                         className="mb-3 max-h-[45vh] shrink-0 overflow-y-auto rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-slate-700"
                         onKeyDown={event => {
+                            if (event.key === 'Tab') {
+                                if (event.shiftKey && document.activeElement === cancelDeletionRef.current) {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    confirmDeletionRef.current?.focus();
+                                } else if (!event.shiftKey && document.activeElement === confirmDeletionRef.current) {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    cancelDeletionRef.current?.focus();
+                                }
+                                return;
+                            }
                             if (event.key !== 'Escape' || isDeleting) return;
                             event.preventDefault();
                             event.stopPropagation();
@@ -258,7 +272,7 @@ export const MemoryPanel: React.FC = () => {
                             <button ref={cancelDeletionRef} type="button" onClick={dismissDeletion} disabled={isDeleting} className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 font-medium text-slate-700 disabled:opacity-50">
                                 Cancel
                             </button>
-                            <button type="button" onClick={() => void confirmDeletion()} disabled={isDeleting} className="min-h-[44px] rounded-lg bg-red-600 px-3 font-medium text-white disabled:opacity-50">
+                            <button ref={confirmDeletionRef} type="button" onClick={() => void confirmDeletion()} disabled={isDeleting} className="min-h-[44px] rounded-lg bg-red-600 px-3 font-medium text-white disabled:opacity-50">
                                 {pendingDeletion.kind === 'item' ? 'Delete memory' : 'Clear report memory'}
                             </button>
                         </div>

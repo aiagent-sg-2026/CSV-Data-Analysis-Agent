@@ -48,6 +48,7 @@ export const HistoryOverflowMenu: React.FC<HistoryOverflowMenuProps> = ({
 
     return <div className="relative" ref={isOpen ? overflowRef : undefined}>
         <button
+            data-history-more-id={reportId}
             onClick={(e) => {
                 e.stopPropagation();
                 if (!isOpen) {

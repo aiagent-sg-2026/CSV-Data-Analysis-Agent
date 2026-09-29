@@ -175,6 +175,85 @@ describe('report artifact action surfaces', () => {
         expect(exportPersistedReportPdf).toHaveBeenCalledWith('report-1');
     });
 
+    it('confirms report deletion inside History before calling the store', async () => {
+        const handleDeleteReport = vi.fn(async () => undefined);
+        const state = {
+            isHistoryPanelOpen: true,
+            setIsHistoryPanelOpen: vi.fn(),
+            reportsList: [{
+                id: 'report-1', filename: 'sample.csv',
+                createdAt: new Date('2026-03-14T09:00:00.000Z'),
+                updatedAt: new Date('2026-03-14T09:10:00.000Z'),
+            }],
+            handleLoadReport: vi.fn(async () => undefined),
+            handleDeleteReport,
+            handlePurgeStorage: vi.fn(async () => ({ deletedReports: 1, freedMB: 1 })),
+            openPersistedReportArtifact: vi.fn(async () => undefined),
+            exportPersistedReportPdf: vi.fn(async () => undefined),
+            sessionId: 'session-2',
+            settings: { language: 'English' },
+        };
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+        render(<HistoryPanel />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+        expect(handleDeleteReport).not.toHaveBeenCalled();
+        expect(screen.getByRole('alertdialog')).toHaveTextContent('sample.csv');
+        const cancel = screen.getByRole('button', { name: 'Cancel' });
+        const confirm = screen.getByRole('button', { name: 'Delete report' });
+        expect(cancel).toHaveFocus();
+        fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true });
+        expect(confirm).toHaveFocus();
+        fireEvent.keyDown(confirm, { key: 'Tab' });
+        expect(cancel).toHaveFocus();
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+        expect(handleDeleteReport).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Delete report' }));
+        await waitFor(() => expect(handleDeleteReport).toHaveBeenCalledExactlyOnceWith('report-1'));
+    });
+
+    it('keeps History data when the Clear all confirmation is cancelled', async () => {
+        const handlePurgeStorage = vi.fn(async () => ({ deletedReports: 1, freedMB: 1 }));
+        const state = {
+            isHistoryPanelOpen: true,
+            setIsHistoryPanelOpen: vi.fn(),
+            reportsList: [{
+                id: 'report-1', filename: 'sample.csv',
+                createdAt: new Date('2026-03-14T09:00:00.000Z'),
+                updatedAt: new Date('2026-03-14T09:10:00.000Z'),
+            }],
+            handleLoadReport: vi.fn(async () => undefined),
+            handleDeleteReport: vi.fn(async () => undefined),
+            handlePurgeStorage,
+            openPersistedReportArtifact: vi.fn(async () => undefined),
+            exportPersistedReportPdf: vi.fn(async () => undefined),
+            sessionId: 'session-2',
+            settings: { language: 'English' },
+        };
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+        render(<HistoryPanel />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Clear all' }));
+        expect(handlePurgeStorage).not.toHaveBeenCalled();
+        expect(screen.getByRole('alertdialog')).toHaveTextContent('1 history record');
+        fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), { key: 'Escape' });
+        expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+        expect(handlePurgeStorage).not.toHaveBeenCalled();
+        expect(state.setIsHistoryPanelOpen).not.toHaveBeenCalled();
+
+        handlePurgeStorage.mockRejectedValueOnce(new Error('storage unavailable'));
+        fireEvent.click(screen.getByRole('button', { name: 'Clear all' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Clear history now' }));
+        expect(await screen.findByRole('alert')).toHaveTextContent('Could not complete deletion');
+        expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Clear history now' }));
+        await waitFor(() => expect(handlePurgeStorage).toHaveBeenCalledTimes(2));
+    });
+
     it('hides delete actions for protected current-session aliases in grouped history rows', () => {
         const state = {
             isHistoryPanelOpen: true,

@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useId, useMemo } from 'react';
 import { shallow } from 'zustand/shallow';
 import { useAppStore, AppStore } from '../../store/useAppStore';
 import { CURRENT_SESSION_KEY, getStorageBreakdown } from '../../services/storageService';
@@ -22,6 +22,9 @@ const formatBytes = (bytes: number): string => {
 
 type SortField = 'updatedAt' | 'createdAt' | 'filename';
 type SortDirection = 'asc' | 'desc';
+type PendingHistoryDeletion =
+    | { kind: 'purge'; count: number }
+    | { kind: 'report'; id: string; filename: string };
 
 // ── Grouping logic ─────────────────────────────────────────────────────
 
@@ -98,13 +101,32 @@ export const HistoryPanel: React.FC = () => {
     const [storageInfo, setStorageInfo] = useState<{ idbLabel: string; idbBytes: number } | null>(null);
     const [storageError, setStorageError] = useState(false);
     const [isPurging, setIsPurging] = useState(false);
+    const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
+    const [pendingDeletion, setPendingDeletion] = useState<PendingHistoryDeletion | null>(null);
+    const [deletionError, setDeletionError] = useState<string | null>(null);
     const [showStorageInspector, setShowStorageInspector] = useState(false);
     const overflowRef = useRef<HTMLDivElement>(null);
+    const purgeTriggerRef = useRef<HTMLButtonElement>(null);
+    const cancelDeletionRef = useRef<HTMLButtonElement>(null);
+    const confirmDeletionRef = useRef<HTMLButtonElement>(null);
+    const deletionTitleId = useId();
+    const deletionDescriptionId = useId();
     const dialogRef = useDialogAccessibility<HTMLDivElement>(
         isOpen,
         onClose,
         { restoreFocusSelector: '[data-history-trigger="true"]' },
     );
+
+    useEffect(() => {
+        if (pendingDeletion) cancelDeletionRef.current?.focus();
+    }, [pendingDeletion]);
+
+    useEffect(() => {
+        if (!isOpen) {
+            setPendingDeletion(null);
+            setDeletionError(null);
+        }
+    }, [isOpen]);
 
     // Fetch actual IDB storage breakdown when modal opens
     const refreshStorageInfo = async () => {
@@ -125,18 +147,40 @@ export const HistoryPanel: React.FC = () => {
         void refreshStorageInfo();
     }, [isOpen]);
 
-    const handlePurge = async () => {
-        const nonCurrentReports = reports.filter(r => r.id !== currentSessionId && r.id !== CURRENT_SESSION_KEY);
-        const msg = nonCurrentReports.length > 0
-            ? `Delete all ${nonCurrentReports.length} history records and free up storage? This cannot be undone.`
-            : 'Clear all cached data (original CSV backups, memory runs, artifacts) to free up storage?';
-        if (!window.confirm(msg)) return;
-        setIsPurging(true);
+    const dismissDeletion = () => {
+        const reportButtons: HTMLButtonElement[] = dialogRef.current
+            ? Array.from(dialogRef.current.querySelectorAll<HTMLButtonElement>('[data-history-more-id]'))
+            : [];
+        const target = pendingDeletion?.kind === 'purge'
+            ? purgeTriggerRef.current
+            : reportButtons.find(button => button.dataset.historyMoreId === pendingDeletion?.id);
+        setPendingDeletion(null);
+        setDeletionError(null);
+        requestAnimationFrame(() => {
+            if (target?.isConnected) target.focus();
+            else dialogRef.current?.querySelector<HTMLElement>('[data-dialog-initial-focus]')?.focus();
+        });
+    };
+
+    const confirmDeletion = async () => {
+        if (!pendingDeletion || isPurging || deletingReportId) return;
+        const deletion = pendingDeletion;
+        setDeletionError(null);
+        if (deletion.kind === 'purge') setIsPurging(true);
+        else setDeletingReportId(deletion.id);
         try {
-            await onPurgeStorage();
-            await refreshStorageInfo();
+            if (deletion.kind === 'purge') {
+                await onPurgeStorage();
+                await refreshStorageInfo();
+            } else {
+                await onDeleteReport(deletion.id);
+            }
+            dismissDeletion();
+        } catch {
+            setDeletionError(getTranslation('history_delete_failed', language));
         } finally {
             setIsPurging(false);
+            setDeletingReportId(null);
         }
     };
 
@@ -201,10 +245,9 @@ export const HistoryPanel: React.FC = () => {
     if (!isOpen) return null;
 
     const handleDelete = (id: string, filename: string) => {
-        if (window.confirm(`Are you sure you want to delete the report for "${filename}"? This cannot be undone.`)) {
-            onDeleteReport(id);
-            setOverflowMenuId(null);
-        }
+        setOverflowMenuId(null);
+        setPendingDeletion({ kind: 'report', id, filename });
+        setDeletionError(null);
     };
 
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -320,7 +363,11 @@ export const HistoryPanel: React.FC = () => {
                                 </button>
                             )}
                             <button
-                                onClick={() => void handlePurge()}
+                                ref={purgeTriggerRef}
+                                onClick={() => {
+                                    setPendingDeletion({ kind: 'purge', count: reports.filter(report => report.id !== CURRENT_SESSION_KEY).length });
+                                    setDeletionError(null);
+                                }}
                                 disabled={isPurging}
                                 className="min-h-[44px] rounded-md px-2 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 hover:text-red-700 disabled:cursor-wait disabled:opacity-50"
                                 title={getTranslation('history_clear_all_title', language)}
@@ -417,6 +464,65 @@ export const HistoryPanel: React.FC = () => {
                                     className="min-h-[44px] rounded-lg bg-blue-600 px-3 text-xs font-medium text-white transition-colors hover:bg-blue-700"
                                 >
                                     {getTranslation('history_switch_confirm', language)}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                {pendingDeletion && (
+                    <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl bg-slate-900/40 p-4 backdrop-blur-[2px]">
+                        <div
+                            role="alertdialog"
+                            aria-modal="true"
+                            aria-labelledby={deletionTitleId}
+                            aria-describedby={deletionDescriptionId}
+                            className="max-h-full w-full max-w-sm overflow-y-auto rounded-xl border border-red-200 bg-white p-5 shadow-2xl"
+                            onKeyDown={event => {
+                                if (event.key === 'Tab') {
+                                    if (event.shiftKey && document.activeElement === cancelDeletionRef.current) {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        confirmDeletionRef.current?.focus();
+                                    } else if (!event.shiftKey && document.activeElement === confirmDeletionRef.current) {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        cancelDeletionRef.current?.focus();
+                                    }
+                                    return;
+                                }
+                                if (event.key !== 'Escape' || isPurging || deletingReportId) return;
+                                event.preventDefault();
+                                event.stopPropagation();
+                                dismissDeletion();
+                            }}
+                        >
+                            <h3 id={deletionTitleId} className="text-sm font-semibold text-red-800">
+                                {getTranslation(pendingDeletion.kind === 'purge' ? 'history_purge_confirm_title' : 'history_delete_confirm_title', language)}
+                            </h3>
+                            <p id={deletionDescriptionId} className="mt-2 break-words text-xs leading-relaxed text-slate-600">
+                                {pendingDeletion.kind === 'purge'
+                                    ? getTranslation('history_purge_confirm_desc', language, { count: pendingDeletion.count })
+                                    : getTranslation('history_delete_confirm_desc', language, { filename: pendingDeletion.filename })}
+                            </p>
+                            {deletionError && <p role="alert" className="mt-2 text-xs text-red-700">{deletionError}</p>}
+                            <div className="mt-4 flex flex-wrap justify-end gap-2">
+                                <button
+                                    ref={cancelDeletionRef}
+                                    type="button"
+                                    onClick={dismissDeletion}
+                                    disabled={isPurging || deletingReportId !== null}
+                                    className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 disabled:opacity-50"
+                                >
+                                    {getTranslation('history_switch_cancel', language)}
+                                </button>
+                                <button
+                                    ref={confirmDeletionRef}
+                                    type="button"
+                                    onClick={() => void confirmDeletion()}
+                                    disabled={isPurging || deletingReportId !== null}
+                                    className="min-h-[44px] rounded-lg bg-red-600 px-3 text-xs font-medium text-white disabled:opacity-50"
+                                >
+                                    {getTranslation(pendingDeletion.kind === 'purge' ? 'history_purge_confirm_action' : 'history_delete_confirm_action', language)}
                                 </button>
                             </div>
                         </div>

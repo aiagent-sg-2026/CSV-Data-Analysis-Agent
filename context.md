@@ -531,3 +531,10 @@
 - **Finding and fix**: Memory item deletion and scoped report-memory clearing relied on native `window.confirm`. They now use an inline confirmation that names the item or scoped count, focuses Cancel, supports Escape, and keeps partial worker failures visible with an updated remaining count for retry. The worker is not called on the first click or cancellation.
 - **Checks**: Two tests failed against the native path, then the final focused Memory suite passed 7/7. Typecheck, lint, production build, bundle budget, and full source suite (341 files / 2,837 tests) passed. No real memory deletion was performed in a browser.
 - **Browser/release status**: A fresh inventory still reports the Mac locked. The final inline UI needs browser visual/E2E verification after unlock; root output and public Pages remain unchanged.
+
+## 2026-09-29 History Deletion Confirmation QA
+
+- **Finding and fix**: History's per-report Delete and Clear all still used native `window.confirm`. Clear all also removes saved artifacts, old CSV backups, memory runs, and caches. Both now use localized inline confirmation with explicit scope, Cancel/Escape behavior, initial Cancel focus, and a two-button Tab loop. Storage category-clear icons no longer depend on hover at wide touch breakpoints.
+- **Failure contract**: The history store had swallowed delete/purge failures. It now reports the failure, attempts to refresh the list after possible partial changes, and rejects so History keeps an inline error and retry action instead of silently closing.
+- **Checks**: Two UI regressions failed against the native path. Final focused tests passed 32/32; typecheck, lint, full suite 341 files / 2,840 tests, production build, and bundle budget passed. A type error in the focus-restore button query was corrected before these passing checks.
+- **Browser/release status**: The Mac remains locked according to the latest computer-use inventory; the rebuilt confirmations need actual browser visual/E2E checks after unlock. No real report, memory, or storage deletion was performed. Root deployment and public Pages are unchanged.

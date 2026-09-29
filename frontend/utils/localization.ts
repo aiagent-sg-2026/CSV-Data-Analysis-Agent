@@ -3034,6 +3034,21 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'history_clear_all_title': { 'English': 'Clear all history and free up storage', 'Mandarin': '清除全部历史并释放存储空间', 'Japanese': 'すべての履歴を削除してストレージを解放' },
     'history_clear_all': { 'English': 'Clear all', 'Mandarin': '全部清除', 'Japanese': 'すべて削除' },
     'history_clearing': { 'English': 'Clearing…', 'Mandarin': '正在清除…', 'Japanese': '削除中…' },
+    'history_purge_confirm_title': { 'English': 'Clear local history and caches?', 'Mandarin': '清除本地历史与缓存？', 'Japanese': 'ローカル履歴とキャッシュを削除しますか？' },
+    'history_purge_confirm_desc': {
+        'English': '{count} history record(s), saved report artifacts, older CSV backups, memory runs, and browser caches will be removed. The current report alias and active CSV backup are kept. This cannot be undone.',
+        'Mandarin': '将删除 {count} 条历史记录、已保存的报告文件、旧 CSV 备份、记忆运行记录和浏览器缓存。当前报告别名及正在使用的 CSV 备份会保留。此操作无法撤销。',
+        'Japanese': '{count} 件の履歴、保存済みレポート、古い CSV バックアップ、メモリ実行記録、ブラウザキャッシュを削除します。現在のレポート別名と使用中の CSV バックアップは保持されます。元に戻せません。',
+    },
+    'history_purge_confirm_action': { 'English': 'Clear history now', 'Mandarin': '立即清除历史', 'Japanese': '履歴を削除する' },
+    'history_delete_confirm_title': { 'English': 'Delete saved report?', 'Mandarin': '删除已保存的报告？', 'Japanese': '保存済みレポートを削除しますか？' },
+    'history_delete_confirm_desc': {
+        'English': 'The saved report for “{filename}” will be deleted. This cannot be undone.',
+        'Mandarin': '将删除“{filename}”的已保存报告。此操作无法撤销。',
+        'Japanese': '「{filename}」の保存済みレポートを削除します。元に戻せません。',
+    },
+    'history_delete_confirm_action': { 'English': 'Delete report', 'Mandarin': '删除报告', 'Japanese': 'レポートを削除' },
+    'history_delete_failed': { 'English': 'Could not complete deletion. Some data may have changed; review History before retrying.', 'Mandarin': '删除未完成，部分数据可能已更改。请检查历史记录后重试。', 'Japanese': '削除を完了できませんでした。一部のデータが変更された可能性があります。履歴を確認してから再試行してください。' },
     'upload_working_on_file': { 'English': 'Working on “{fileName}”', 'Mandarin': '正在处理“{fileName}”', 'Japanese': '「{fileName}」を処理中' },
 
     // --- UI component labels (M5 localization) ---
