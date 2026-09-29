@@ -309,7 +309,7 @@ export const VerdictExplainerModal: React.FC<VerdictExplainerModalProps> = ({
                                 <button
                                     type="button"
                                     onClick={fetchAiExplanation}
-                                    className="text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline"
+                                    className="min-h-[44px] min-w-[44px] text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline"
                                 >
                                     {getTranslation('verdict_explainer_retry', language)}
                                 </button>
@@ -325,7 +325,7 @@ export const VerdictExplainerModal: React.FC<VerdictExplainerModalProps> = ({
                     {/* Technical detail (collapsed) */}
                     {detail && (
                         <details className="group">
-                            <summary className="cursor-pointer text-xs font-medium text-slate-400 hover:text-slate-600">
+                            <summary className="min-h-[44px] cursor-pointer py-3 text-xs font-medium text-slate-400 hover:text-slate-600">
                                 {getTranslation('verdict_explainer_technical_detail', language)}
                             </summary>
                             <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-50 p-3 text-[11px] text-slate-500">
@@ -340,7 +340,7 @@ export const VerdictExplainerModal: React.FC<VerdictExplainerModalProps> = ({
                     <button
                         type="button"
                         onClick={onClose}
-                        className="w-full rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200"
+                        className="min-h-[44px] w-full rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200"
                     >
                         {getTranslation('verdict_explainer_close', language)}
                     </button>
