@@ -684,3 +684,9 @@
 - Browser QA found that filtering Session Artifacts to `cleaned.csv` left a hidden `report_context.json` in the preview. The preview now follows the visible selection and clears its content and metadata when there are no matches. A failing UI test reproduced the defect before the fix.
 - The final local production bundle passed the same browser scenario, including clearing the filter after a no-match state, with zero browser errors. Screenshots and reproduction steps are in `UI/qa-audit.md`. Targeted tests passed 21/21; typecheck, lint, build, bundle budget, and full tests passed **345 files / 2,891 tests**.
 - The QA branch remains local. Root generated deployment and public Pages are unchanged; full-site functional coverage and downloadable artifact inspection are still incomplete.
+
+## 2026-09-29 full-site QA continuation: Session Artifacts header
+
+- Real 320px/390px browser captures showed the Session Artifacts title, chips, and header actions competing for one row. Codex CLI `gpt-6-luna` provided an explicitly illustrative layout proposal. The source now uses a mobile title/Close row, a count-chip row, and two action rows; desktop keeps one compact header row. Baseline/proposal/after captures are documented in `UI/qa-audit.md`.
+- In the rebuilt local preview, document width equaled viewport width at 320px, 390px, 667px landscape, 768px, 1023px, 1024px, and 1280px. All four header buttons were at least 44px high, with a 44×44px Close target. Show/Hide Debug, file filtering, Close, and Escape worked; Escape returned focus to Advanced and cleared inert background. Browser errors were zero.
+- Typecheck, lint, 21 focused Workspace/report-action tests, production build, and bundle budget passed. The previous full suite (345 files / 2,891 tests) was not repeated for this layout-only change. Root deployment and public Pages remain unchanged; the full-site QA goal and downloaded-artifact verification remain open.

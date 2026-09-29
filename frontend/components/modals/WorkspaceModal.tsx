@@ -162,31 +162,31 @@ export const WorkspaceModal: React.FC = () => {
                 onClick={event => event.stopPropagation()}
             >
                 <header className="border-b border-slate-200 bg-white/95 backdrop-blur-xl">
-                    <div className="flex items-center justify-between gap-4 px-4 py-3">
-                        <div className="min-w-0">
+                    <div className="grid grid-cols-[minmax(0,1fr)_44px] gap-x-2 gap-y-3 px-4 py-3 lg:flex lg:items-center lg:gap-4">
+                        <div className="col-start-1 row-start-1 min-w-0 lg:shrink-0">
                             <div className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Artifacts</div>
-                            <div className="mt-1 flex items-center gap-3">
-                                <h2 id="workspace-dialog-title" className="text-lg font-semibold text-slate-900">Session Artifacts</h2>
-                                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-600">
-                                    {bundle.primaryFiles.length} files
-                                </span>
-                                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-600">
-                                    {bundle.editableFiles.length} agent write paths
-                                </span>
-                            </div>
+                            <h2 id="workspace-dialog-title" className="mt-1 whitespace-nowrap text-lg font-semibold text-slate-900">Session Artifacts</h2>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="col-span-2 row-start-2 flex flex-wrap items-center gap-2 lg:mr-auto lg:min-w-0">
+                            <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-600">
+                                {bundle.primaryFiles.length} files
+                            </span>
+                            <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-600">
+                                {bundle.editableFiles.length} agent write paths
+                            </span>
+                        </div>
+                        <div className="col-span-2 row-start-3 grid grid-cols-2 gap-2 lg:flex lg:items-center">
                             {hasLatestAnalystReport ? (
                                 <>
                                     <button
                                         onClick={openLatestAnalystReport}
-                                        className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+                                        className="min-h-[44px] whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
                                     >
                                         Open Report
                                     </button>
                                     <button
                                         onClick={exportLatestAnalystReportPdf}
-                                        className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+                                        className="min-h-[44px] whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
                                     >
                                         Export PDF
                                     </button>
@@ -195,7 +195,7 @@ export const WorkspaceModal: React.FC = () => {
                             <button
                                 onClick={() => setShowDebugFiles(current => !current)}
                                 aria-pressed={showDebugFiles}
-                                className={`min-h-[44px] rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+                                className={`col-span-2 min-h-[44px] whitespace-nowrap rounded-md border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 lg:col-auto ${
                                     showDebugFiles
                                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                                         : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
@@ -203,15 +203,15 @@ export const WorkspaceModal: React.FC = () => {
                             >
                                 {showDebugFiles ? 'Hide Debug' : `Show Debug (${bundle.debugFiles.length})`}
                             </button>
-                            <button
-                                data-dialog-initial-focus
-                                onClick={onClose}
-                                className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md p-2 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
-                                aria-label="Close workspace modal"
-                            >
-                                <IconClose />
-                            </button>
                         </div>
+                        <button
+                            data-dialog-initial-focus
+                            onClick={onClose}
+                            className="col-start-2 row-start-1 flex min-h-[44px] min-w-[44px] items-center justify-center self-start rounded-md p-2 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                            aria-label="Close workspace modal"
+                        >
+                            <IconClose />
+                        </button>
                     </div>
                 </header>
 

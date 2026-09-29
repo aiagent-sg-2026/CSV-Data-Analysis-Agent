@@ -83,7 +83,7 @@ The sanitized support bundle reports full row and column counts for backed and s
 
 The Debug Logs export menu stays inside the viewport on mobile and short landscape screens. Its Workflow and Artifacts header actions have 44px touch targets.
 
-The Artifacts file preview remains visible by scrolling the modal on short landscape screens. File selection, filtering, and header actions use touch-sized controls. Filtering selects a visible file for preview; when no files match, the preview clears instead of showing a hidden file. The preview is read-only; agent write path badges describe paths eligible for governed agent tools, not direct editing in the viewer.
+The Artifacts header keeps its title, file counts, report actions, Debug toggle, and Close control in separate mobile rows at narrow widths, while using one compact row on desktop. The Artifacts file preview remains visible by scrolling the modal on short landscape screens. File selection, filtering, and header actions use touch-sized controls. Filtering selects a visible file for preview; when no files match, the preview clears instead of showing a hidden file. The preview is read-only; agent write path badges describe paths eligible for governed agent tools, not direct editing in the viewer.
 
 Modal background controls unlock after the last overlapping dialog closes, including when dialogs close in a different order from opening.
 

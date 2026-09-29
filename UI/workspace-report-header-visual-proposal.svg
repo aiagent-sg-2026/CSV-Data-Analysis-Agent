@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1520" height="920" viewBox="0 0 1520 920" role="img" aria-labelledby="title desc">
+  <title id="title">Illustrative proposal for a responsive Session Artifacts header</title>
+  <desc id="desc">A synthetic mobile interface at 390 pixels and a compact desktop interface at 1280 pixels. The mobile header puts the title and close control first, keeps both count chips horizontal, and places three actions in a two-column layout with Show Debug across the full row. This is an illustration, not a real screenshot.</desc>
+  <defs>
+    <style>
+      .eyebrow{font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:600;letter-spacing:2px;fill:#64748b}
+      .heading{font-family:Arial,Helvetica,sans-serif;font-size:19px;font-weight:700;fill:#111827}
+      .section{font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:600;letter-spacing:1.7px;fill:#64748b}
+      .body{font-family:Arial,Helvetica,sans-serif;font-size:13px;fill:#334155}
+      .small{font-family:Arial,Helvetica,sans-serif;font-size:11px;fill:#64748b}
+      .button{font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:500;fill:#243247}
+      .chip{font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:500;fill:#475569}
+      .white{fill:#fff}
+      .line{stroke:#e2e8f0;stroke-width:1}
+      .btn{fill:#fff;stroke:#cbd5e1;stroke-width:1}
+    </style>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="5" stdDeviation="9" flood-color="#0f172a" flood-opacity=".08"/>
+    </filter>
+  </defs>
+
+  <rect width="1520" height="920" fill="#f1f5f9"/>
+  <text x="40" y="49" font-family="Arial,Helvetica,sans-serif" font-size="27" font-weight="700" fill="#111827">Session Artifacts header</text>
+  <text x="40" y="77" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#475569">Roomier mobile controls; compact single-row desktop header.</text>
+  <rect x="1128" y="29" width="352" height="34" rx="17" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="1304" y="51" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="11" font-weight="700" letter-spacing="1.1" fill="#9a3412">ILLUSTRATIVE · NOT A REAL SCREENSHOT</text>
+
+  <!-- Mobile artboard: exactly 390 units wide to show the requested viewport. -->
+  <rect x="40" y="118" width="390" height="710" rx="18" fill="#fff" stroke="#cbd5e1" filter="url(#shadow)"/>
+  <path d="M40 136a18 18 0 0 1 18-18h354a18 18 0 0 1 18 18v9H40z" fill="#f8fafc"/>
+  <text x="56" y="140" class="small">Workspace</text>
+  <text x="414" y="140" text-anchor="end" class="small">390 px viewport</text>
+
+  <!-- Mobile header proposal -->
+  <rect x="41" y="148" width="388" height="246" fill="#fff"/>
+  <text x="56" y="169" class="eyebrow">ARTIFACTS</text>
+  <rect x="370" y="151" width="44" height="44" rx="10" class="btn"/>
+  <path d="m386 167 12 12m0-12-12 12" stroke="#475569" stroke-width="1.8" stroke-linecap="round"/>
+  <text x="56" y="216" class="heading" font-size="20">Session Artifacts</text>
+
+  <rect x="56" y="230" width="70" height="30" rx="15" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="91" y="249" text-anchor="middle" class="chip">6 files</text>
+  <rect x="134" y="230" width="154" height="30" rx="15" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="211" y="249" text-anchor="middle" class="chip">6 agent write paths</text>
+
+  <rect x="56" y="274" width="175" height="44" rx="8" class="btn"/>
+  <text x="143.5" y="301" text-anchor="middle" class="button">Open Report</text>
+  <rect x="239" y="274" width="175" height="44" rx="8" class="btn"/>
+  <text x="326.5" y="301" text-anchor="middle" class="button">Export PDF</text>
+  <rect x="56" y="326" width="358" height="44" rx="8" class="btn"/>
+  <text x="235" y="353" text-anchor="middle" class="button">Show Debug (24)</text>
+  <line x1="41" y1="394" x2="429" y2="394" class="line"/>
+
+  <!-- Synthetic explorer content provides context without reproducing private data. -->
+  <text x="56" y="421" class="section">EXPLORER</text>
+  <rect x="56" y="435" width="358" height="42" rx="8" fill="#fff" stroke="#94a3b8"/>
+  <text x="70" y="461" class="small">Filter files</text>
+  <rect x="56" y="489" width="91" height="25" rx="13" fill="#fff" stroke="#e2e8f0"/>
+  <text x="101.5" y="506" text-anchor="middle" class="small">6 primary</text>
+  <rect x="154" y="489" width="119" height="25" rx="13" fill="#fff" stroke="#e2e8f0"/>
+  <text x="213.5" y="506" text-anchor="middle" class="small">6 write paths</text>
+  <rect x="280" y="489" width="84" height="25" rx="13" fill="#fff" stroke="#e2e8f0"/>
+  <text x="322" y="506" text-anchor="middle" class="small">6 visible</text>
+  <text x="56" y="548" class="section">WORKSPACE</text>
+  <text x="414" y="548" text-anchor="end" class="small">4</text>
+  <line x1="56" y1="561" x2="414" y2="561" class="line"/>
+  <text x="68" y="589" class="body">report_context.json</text>
+  <rect x="322" y="572" width="80" height="23" rx="12" fill="#dcfce7"/>
+  <text x="362" y="588" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="10" fill="#166534">agent write</text>
+  <line x1="56" y1="605" x2="414" y2="605" class="line"/>
+  <text x="68" y="633" class="body">reports/summary.html</text>
+  <rect x="322" y="616" width="80" height="23" rx="12" fill="#dcfce7"/>
+  <text x="362" y="632" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="10" fill="#166534">agent write</text>
+  <line x1="56" y1="649" x2="414" y2="649" class="line"/>
+  <text x="56" y="684" class="section">DATASET</text>
+  <text x="414" y="684" text-anchor="end" class="small">2</text>
+  <rect x="56" y="699" width="358" height="46" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="70" y="727" class="body">sample-clean.csv</text>
+  <text x="56" y="777" class="small">Synthetic file names and counts</text>
+  <text x="56" y="797" class="small">for layout illustration only.</text>
+
+  <!-- Desktop artboard: scaled representation of a 1280 px viewport. -->
+  <rect x="460" y="118" width="1020" height="710" rx="18" fill="#fff" stroke="#cbd5e1" filter="url(#shadow)"/>
+  <path d="M460 136a18 18 0 0 1 18-18h984a18 18 0 0 1 18 18v9H460z" fill="#f8fafc"/>
+  <text x="478" y="140" class="small">Workspace</text>
+  <text x="1462" y="140" text-anchor="end" class="small">1280 px viewport</text>
+
+  <!-- Compact desktop header: title/counts left, all actions right. -->
+  <rect x="461" y="148" width="1018" height="63" fill="#fff"/>
+  <text x="482" y="166" class="eyebrow">ARTIFACTS</text>
+  <text x="482" y="191" class="heading">Session Artifacts</text>
+  <rect x="644" y="170" width="67" height="26" rx="13" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="677.5" y="187" text-anchor="middle" class="chip">6 files</text>
+  <rect x="719" y="170" width="151" height="26" rx="13" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="794.5" y="187" text-anchor="middle" class="chip">6 agent write paths</text>
+  <rect x="1041" y="157" width="101" height="44" rx="8" class="btn"/>
+  <text x="1091.5" y="184" text-anchor="middle" class="button">Open Report</text>
+  <rect x="1150" y="157" width="95" height="44" rx="8" class="btn"/>
+  <text x="1197.5" y="184" text-anchor="middle" class="button">Export PDF</text>
+  <rect x="1253" y="157" width="126" height="44" rx="8" class="btn"/>
+  <text x="1316" y="184" text-anchor="middle" class="button">Show Debug (24)</text>
+  <rect x="1404" y="157" width="44" height="44" rx="8" class="btn"/>
+  <path d="m1420 173 12 12m0-12-12 12" stroke="#475569" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="461" y1="211" x2="1479" y2="211" class="line"/>
+
+  <!-- Familiar two-pane content context. -->
+  <rect x="461" y="212" width="267" height="615" fill="#f8fafc"/>
+  <text x="482" y="244" class="section">EXPLORER</text>
+  <rect x="482" y="258" width="225" height="42" rx="8" fill="#fff" stroke="#94a3b8"/>
+  <text x="496" y="284" class="small">Filter files</text>
+  <rect x="482" y="313" width="84" height="25" rx="13" fill="#fff" stroke="#e2e8f0"/>
+  <text x="524" y="330" text-anchor="middle" class="small">6 primary</text>
+  <rect x="573" y="313" width="123" height="25" rx="13" fill="#fff" stroke="#e2e8f0"/>
+  <text x="634.5" y="330" text-anchor="middle" class="small">6 write paths</text>
+  <text x="482" y="372" class="section">WORKSPACE</text>
+  <text x="707" y="372" text-anchor="end" class="small">4</text>
+  <line x1="482" y1="385" x2="707" y2="385" class="line"/>
+  <text x="493" y="414" class="small">report_context.json</text>
+  <line x1="482" y1="430" x2="707" y2="430" class="line"/>
+  <text x="493" y="459" class="small">reports/summary.html</text>
+  <line x1="482" y1="475" x2="707" y2="475" class="line"/>
+  <text x="482" y="513" class="section">DATASET</text>
+  <text x="707" y="513" text-anchor="end" class="small">2</text>
+  <line x1="482" y1="526" x2="707" y2="526" class="line"/>
+  <rect x="482" y="540" width="225" height="43" rx="8" fill="#eef4ff" stroke="#c7d7fe"/>
+  <text x="494" y="566" class="small" fill="#1e3a8a">sample-clean.csv</text>
+  <rect x="728" y="212" width="751" height="615" fill="#fff"/>
+  <rect x="750" y="228" width="112" height="36" rx="7" fill="#fff" stroke="#e2e8f0"/>
+  <text x="806" y="251" text-anchor="middle" class="button">sample-clean.csv</text>
+  <text x="876" y="251" class="small">/dataset/sample-clean.csv</text>
+  <text x="750" y="294" class="section">READ-ONLY PREVIEW</text>
+  <text x="750" y="318" class="body" font-weight="700">/dataset/sample-clean.csv</text>
+  <text x="750" y="339" class="small">CSV · 24 rows · 1,280 bytes</text>
+  <line x1="728" y1="354" x2="1479" y2="354" class="line"/>
+  <g class="small">
+    <text x="756" y="386">1</text><text x="798" y="386" class="body">month, town, category, sample_value</text>
+    <text x="756" y="419">2</text><text x="798" y="419" class="body">2024, Northfield, A, 18</text>
+    <text x="756" y="452">3</text><text x="798" y="452" class="body">2024, Lakeside, B, 24</text>
+    <text x="756" y="485">4</text><text x="798" y="485" class="body">2025, Northfield, C, 31</text>
+    <text x="756" y="518">5</text><text x="798" y="518" class="body">2025, Hillview, A, 27</text>
+    <text x="756" y="551">6</text><text x="798" y="551" class="body">2025, Lakeside, B, 22</text>
+  </g>
+  <line x1="461" y1="793" x2="1479" y2="793" class="line"/>
+  <text x="482" y="814" class="small">CSV · 24 rows · 1,280 bytes</text>
+  <text x="1458" y="814" text-anchor="end" class="small">/dataset/sample-clean.csv</text>
+
+  <text x="40" y="875" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#475569">At 320 px, the title and both count chips still fit on single lines; mobile actions use a 2-column grid plus one full-width row.</text>
+</svg>
