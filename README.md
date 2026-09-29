@@ -40,6 +40,8 @@ History saves reports and analysis evidence without embedding the original CSV r
 
 History search includes titles from previous versions and reveals a matching version. On small screens, sort, storage, version, and row actions use touch-sized controls; the storage inspector and saved records share a scrollable area. Row action menus are positioned within the History dialog so their options remain visible even when the saved-record list is short.
 
+PWA update and offline notices remain available outside dialogs. While a modal is open, its title and controls stay above those notices; close the modal to use the update action.
+
 If a saved analysis needs cloud-assisted preparation to reproduce its evidence version, selecting the original CSV while offline leaves that saved analysis intact and asks you to reconnect before trying the restore again.
 
 When initial analysis cannot finish, the results page uses the recorded reason for its next action. Offline imports offer **Retry analysis** after reconnecting; provider errors offer **Retry analysis** and **Change provider**; verified structure blocks offer **Review and repair data structure**; missing trusted conclusions offer **Review analysis evidence**. Imported data stays available for retry. A provider failure does not by itself imply a CSV structure or cleaning problem, so the cleaning failure banner is hidden for that case.
