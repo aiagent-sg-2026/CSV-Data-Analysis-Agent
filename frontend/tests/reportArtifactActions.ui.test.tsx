@@ -215,6 +215,42 @@ describe('report artifact action surfaces', () => {
         expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
     });
 
+    it('finds a previous version by its title and reveals that version', () => {
+        const state = {
+            isHistoryPanelOpen: true,
+            setIsHistoryPanelOpen: vi.fn(),
+            reportsList: [
+                { id: 'new', filename: 'sample.csv', reportTitle: 'Latest overview', createdAt: new Date('2026-03-14T09:00:00.000Z'), updatedAt: new Date('2026-03-14T09:10:00.000Z') },
+                { id: 'old', filename: 'sample.csv', reportTitle: 'Regional trends', createdAt: new Date('2026-03-13T09:00:00.000Z'), updatedAt: new Date('2026-03-13T09:10:00.000Z') },
+                { id: 'other', filename: 'other.csv', reportTitle: 'Other analysis', createdAt: new Date('2026-03-12T09:00:00.000Z'), updatedAt: new Date('2026-03-12T09:10:00.000Z') },
+            ],
+            handleLoadReport: vi.fn(async () => undefined),
+            handleDeleteReport: vi.fn(async () => undefined),
+            handlePurgeStorage: vi.fn(async () => undefined),
+            openPersistedReportArtifact: vi.fn(async () => undefined),
+            exportPersistedReportPdf: vi.fn(async () => undefined),
+            sessionId: 'session-2',
+            settings: { language: 'English' },
+            csvData: null,
+        };
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+
+        render(<HistoryPanel />);
+        fireEvent.change(screen.getByPlaceholderText('Search by title or file name...'), { target: { value: 'regional' } });
+
+        expect(screen.getByText('Regional trends')).toBeInTheDocument();
+        expect(screen.getByText('Previous version')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: '+1 previous version(s)' })).toHaveAttribute('aria-expanded', 'true');
+        expect(screen.queryByText('Other analysis')).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: '+1 previous version(s)' }));
+        expect(screen.queryByText('Regional trends')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: '+1 previous version(s)' })).toHaveAttribute('aria-expanded', 'false');
+
+        fireEvent.click(screen.getByRole('button', { name: '+1 previous version(s)' }));
+        expect(screen.getByText('Regional trends')).toBeInTheDocument();
+    });
+
     it('shows a visible retry state when history storage cannot be read', async () => {
         getStorageBreakdownMock.mockRejectedValueOnce(new Error('IndexedDB unavailable'));
         const state = {

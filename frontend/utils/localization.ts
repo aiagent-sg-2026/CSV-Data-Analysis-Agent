@@ -3023,6 +3023,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Japanese': 'レポートは、このブラウザに暗号化されず保存されます。',
     },
     'history_older_versions': { 'English': '+{count} previous version(s)', 'Mandarin': '+{count} 个历史版本', 'Malay': '+{count} versi terdahulu', 'Japanese': '+{count} 件の以前のバージョン' },
+    'history_previous_version': { 'English': 'Previous version', 'Mandarin': '历史版本', 'Malay': 'Versi terdahulu', 'Spanish': 'Versión anterior', 'Japanese': '以前のバージョン', 'French': 'Version précédente' },
     'history_created_label': { 'English': 'Created', 'Mandarin': '创建于', 'Japanese': '作成' },
     'history_modified_label': { 'English': 'Modified', 'Mandarin': '修改于', 'Japanese': '更新' },
     'history_loading': { 'English': 'Loading...', 'Mandarin': '加载中…', 'Japanese': '読み込み中…' },

@@ -163,10 +163,10 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
                 <button
                     onClick={() => void refresh()}
                     disabled={loading}
-                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50"
+                    className="flex min-h-[44px] items-center gap-1 rounded px-2 text-[10px] text-slate-500 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
                     title="Refresh"
                 >
-                    <RefreshIcon className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+                    <RefreshIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
                     Refresh
                 </button>
             </div>
@@ -211,7 +211,7 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
 
                         {/* Size bar + value */}
                         <div className="flex items-center gap-2 flex-shrink-0">
-                            <div className="w-20 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                            <div className="hidden w-20 h-1.5 rounded-full bg-slate-100 overflow-hidden sm:block">
                                 <div
                                     className={`h-full rounded-full ${seg.color}`}
                                     style={{ width: `${Math.max(1, (seg.bytes / maxBytes) * 100)}%` }}
@@ -226,17 +226,17 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
                                 <button
                                     onClick={() => void (seg.isCache ? handleClearCache() : handleClearStore(seg.key))}
                                     disabled={clearing !== null}
-                                    className="flex items-center justify-center h-5 w-5 rounded text-slate-300 opacity-0 group-hover/row:opacity-100 transition-opacity hover:bg-red-50 hover:text-red-500 disabled:opacity-50 disabled:cursor-wait"
+                                    className="flex h-[44px] w-[44px] items-center justify-center rounded text-slate-600 transition-opacity hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 disabled:cursor-wait disabled:opacity-50 sm:opacity-0 sm:group-hover/row:opacity-100"
                                     title={`Clear ${seg.label}`}
                                 >
                                     {clearing === seg.key ? (
                                         <span className="h-3 w-3 border-2 border-slate-300 border-t-transparent rounded-full animate-spin" />
                                     ) : (
-                                        <TrashIcon className="h-3 w-3" />
+                                        <TrashIcon className="h-4 w-4" />
                                     )}
                                 </button>
                             ) : (
-                                <div className="w-5" />
+                                <div className="w-[44px]" />
                             )}
                         </div>
                     </div>

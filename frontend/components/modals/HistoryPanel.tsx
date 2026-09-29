@@ -90,6 +90,7 @@ export const HistoryPanel: React.FC = () => {
     const [search, setSearch] = useState('');
     const [overflowMenuId, setOverflowMenuId] = useState<string | null>(null);
     const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+    const [collapsedSearchGroups, setCollapsedSearchGroups] = useState<Set<string>>(() => new Set());
     const [loadingId, setLoadingId] = useState<string | null>(null);
     const [confirmLoadId, setConfirmLoadId] = useState<string | null>(null);
     const [sortField, setSortField] = useState<SortField>('updatedAt');
@@ -169,7 +170,8 @@ export const HistoryPanel: React.FC = () => {
     useEffect(() => {
         if (!overflowMenuId) return;
         const handler = (e: MouseEvent) => {
-            if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
+            if (overflowRef.current && !overflowRef.current.contains(e.target as Node)
+                && !(e.target instanceof Element && e.target.closest('[data-history-menu]'))) {
                 setOverflowMenuId(null);
             }
         };
@@ -182,14 +184,18 @@ export const HistoryPanel: React.FC = () => {
         [reports, currentSessionId, sortField, sortDirection],
     );
 
+    const searchQuery = search.trim().toLowerCase();
+    useEffect(() => {
+        setCollapsedSearchGroups(new Set());
+    }, [searchQuery]);
     const filteredGroups = useMemo(
         () => groups.filter(g => {
-            if (!search) return true;
-            const q = search.toLowerCase();
-            const title = g.latest.reportTitle?.toLowerCase() ?? '';
-            return g.filename.toLowerCase().includes(q) || title.includes(q);
+            if (!searchQuery) return true;
+            return g.filename.toLowerCase().includes(searchQuery)
+                || g.latest.reportTitle?.toLowerCase().includes(searchQuery)
+                || g.older.some(entry => entry.reportTitle?.toLowerCase().includes(searchQuery));
         }),
-        [groups, search],
+        [groups, searchQuery],
     );
 
     if (!isOpen) return null;
@@ -252,17 +258,16 @@ export const HistoryPanel: React.FC = () => {
                             value={search}
                             onChange={e => setSearch(e.target.value)}
                             placeholder={getTranslation('history_search_placeholder', language)}
-                            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-blue-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
+                            className="min-h-[44px] w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-blue-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
                         />
                     </div>
                 )}
 
                 {/* Sort controls + storage bar */}
-                {(reports.length > 2 || true) && (
-                    <div className="flex items-center justify-between border-b border-slate-100 px-5 py-2">
+                <div className="flex flex-col gap-1 border-b border-slate-100 px-5 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                         {reports.length > 2 ? (
-                            <div className="flex items-center gap-1 text-[11px]">
-                                <span className="text-slate-400 mr-1">{getTranslation('history_sort', language)}</span>
+                            <div role="group" aria-label={getTranslation('history_sort', language)} className="flex w-full items-center gap-1 text-xs sm:w-auto">
+                                <span className="mr-1 hidden text-slate-400 sm:inline">{getTranslation('history_sort', language)}</span>
                                 {([
                                     ['updatedAt', getTranslation('history_sort_modified', language)],
                                     ['createdAt', getTranslation('history_sort_created', language)],
@@ -271,7 +276,7 @@ export const HistoryPanel: React.FC = () => {
                                     <button
                                         key={field}
                                         onClick={() => toggleSort(field)}
-                                        className={`rounded px-1.5 py-0.5 transition-colors ${sortField === field ? 'bg-blue-100 text-blue-700 font-medium' : 'text-slate-500 hover:bg-slate-100'}`}
+                                        className={`min-h-[44px] flex-1 whitespace-nowrap rounded px-2 transition-colors sm:flex-none ${sortField === field ? 'bg-blue-100 text-blue-700 font-medium' : 'text-slate-500 hover:bg-slate-100'}`}
                                     >
                                         {label}
                                         {sortField === field && (
@@ -281,7 +286,7 @@ export const HistoryPanel: React.FC = () => {
                                 ))}
                             </div>
                         ) : <div />}
-                        <div className="flex items-center gap-2">
+                        <div className="flex w-full items-center justify-between gap-2 border-t border-slate-100 pt-1 sm:w-auto sm:border-0 sm:pt-0">
                             {storageError ? (
                                 <div role="alert" className="flex items-center gap-2 text-xs text-amber-800">
                                     <span>{getTranslation('history_storage_unavailable', language)}</span>
@@ -325,23 +330,22 @@ export const HistoryPanel: React.FC = () => {
                                     : getTranslation('history_clear_all', language)}
                             </button>
                         </div>
-                    </div>
-                )}
+                </div>
 
-                {/* Storage Inspector (expandable) */}
-                {showStorageInspector && (
-                    <div className="border-b border-slate-100 px-5 py-3 bg-slate-50/50">
-                        <StorageBreakdown
-                            activeSessionId={currentSessionId}
-                            onStorageChanged={() => void refreshStorageInfo()}
-                        />
-                    </div>
-                )}
+                <div data-history-scroll-region className="min-h-0 flex-1 overflow-y-auto">
+                    {/* Storage Inspector (expandable) */}
+                    {showStorageInspector && (
+                        <div className="border-b border-slate-100 bg-slate-50/50 px-5 py-3">
+                            <StorageBreakdown
+                                activeSessionId={currentSessionId}
+                                onStorageChanged={() => void refreshStorageInfo()}
+                            />
+                        </div>
+                    )}
 
-                {/* Report list */}
-                <div className="flex-grow overflow-y-auto">
+                    {/* Report list */}
                     {filteredGroups.length === 0 ? (
-                        <div className="flex items-center justify-center h-full px-5">
+                        <div className="flex min-h-[180px] items-center justify-center px-5">
                             <p className="text-sm text-slate-500">
                                 {search
                                     ? getTranslation('history_no_results', language)
@@ -350,16 +354,33 @@ export const HistoryPanel: React.FC = () => {
                         </div>
                     ) : (
                         <ul className="divide-y divide-slate-100">
-                            {filteredGroups.map(group => (
-                                <HistoryReportRow
+                            {filteredGroups.map(group => {
+                                const olderTitleMatchOnly = Boolean(searchQuery
+                                    && !group.filename.toLowerCase().includes(searchQuery)
+                                    && !group.latest.reportTitle?.toLowerCase().includes(searchQuery)
+                                    && group.older.some(entry => entry.reportTitle?.toLowerCase().includes(searchQuery)));
+                                return <HistoryReportRow
                                     key={group.latest.id}
                                     group={group}
                                     language={language}
                                     loadingId={loadingId}
-                                    isGroupExpanded={expandedGroup === group.filename}
+                                    isGroupExpanded={expandedGroup === group.filename
+                                        || (olderTitleMatchOnly && !collapsedSearchGroups.has(group.filename))}
                                     overflowMenuId={overflowMenuId}
                                     overflowRef={overflowRef}
-                                    onToggleExpand={fn => setExpandedGroup(prev => prev === fn ? null : fn)}
+                                    onToggleExpand={fn => {
+                                        if (olderTitleMatchOnly) {
+                                            setExpandedGroup(null);
+                                            setCollapsedSearchGroups(prev => {
+                                                const next = new Set(prev);
+                                                if (next.has(fn)) next.delete(fn);
+                                                else next.add(fn);
+                                                return next;
+                                            });
+                                        } else {
+                                            setExpandedGroup(prev => prev === fn ? null : fn);
+                                        }
+                                    }}
                                     onLoad={handleLoad}
                                     onOpenReport={id => void onOpenReport(id)}
                                     onDelete={handleDelete}
@@ -368,8 +389,8 @@ export const HistoryPanel: React.FC = () => {
                                     isProtectedReport={isProtectedReport}
                                     formatDate={formatDate}
                                     formatDateFull={formatDateFull}
-                                />
-                            ))}
+                                />;
+                            })}
                         </ul>
                     )}
                 </div>
@@ -387,13 +408,13 @@ export const HistoryPanel: React.FC = () => {
                             <div className="mt-4 flex justify-end gap-2">
                                 <button
                                     onClick={() => setConfirmLoadId(null)}
-                                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
+                                    className="min-h-[44px] rounded-lg border border-slate-200 px-3 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
                                 >
                                     {getTranslation('history_switch_cancel', language)}
                                 </button>
                                 <button
                                     onClick={() => void doLoad(confirmLoadId)}
-                                    className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700"
+                                    className="min-h-[44px] rounded-lg bg-blue-600 px-3 text-xs font-medium text-white transition-colors hover:bg-blue-700"
                                 >
                                     {getTranslation('history_switch_confirm', language)}
                                 </button>

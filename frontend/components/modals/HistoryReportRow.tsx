@@ -83,7 +83,7 @@ export const HistoryReportRow: React.FC<HistoryReportRowProps> = ({
     return (
         <li className="group/row">
             {/* Primary entry */}
-            <div className={`flex items-start gap-3 px-5 py-3 transition-colors hover:bg-slate-50 ${isCurrent ? 'bg-blue-50/50' : ''}`}>
+            <div className={`grid grid-cols-[36px_minmax(0,1fr)] gap-x-3 gap-y-2 px-4 py-3 transition-colors hover:bg-slate-50 sm:flex sm:items-start sm:gap-3 sm:px-5 ${isCurrent ? 'bg-blue-50/50' : ''}`}>
                 <div className={`mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg ${isCurrent ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400'}`}>
                     <FileIcon />
                 </div>
@@ -126,18 +126,20 @@ export const HistoryReportRow: React.FC<HistoryReportRowProps> = ({
                                 {getTranslation('history_current_badge', language)}
                             </span>
                         )}
-                        {older.length > 0 && (
-                            <button
-                                onClick={() => onToggleExpand(group.filename)}
-                                className="inline-flex items-center gap-0.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 transition-colors hover:bg-slate-200"
-                            >
-                                <ChevronIcon open={isGroupExpanded} />
-                                {getTranslation('history_older_versions', language, { count: older.length })}
-                            </button>
-                        )}
                     </div>
+                    {older.length > 0 && (
+                        <button
+                            type="button"
+                            aria-expanded={isGroupExpanded}
+                            onClick={() => onToggleExpand(group.filename)}
+                            className="mt-2 inline-flex min-h-[44px] w-full items-center gap-1 rounded-lg bg-slate-100 px-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-200 sm:w-auto"
+                        >
+                            <ChevronIcon open={isGroupExpanded} />
+                            {getTranslation('history_older_versions', language, { count: older.length })}
+                        </button>
+                    )}
                 </div>
-                <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
+                <div className="col-start-2 flex items-center gap-1.5 sm:mt-0.5 sm:flex-shrink-0">
                     {renderActionButton(latest, isCurrent)}
                     <HistoryOverflowMenu
                         reportId={latest.id}
@@ -158,8 +160,11 @@ export const HistoryReportRow: React.FC<HistoryReportRowProps> = ({
             {isGroupExpanded && older.length > 0 && (
                 <div className="border-t border-slate-50 bg-slate-50/50">
                     {older.map(entry => (
-                        <div key={entry.id} className="flex items-center gap-3 px-5 py-2 pl-16 transition-colors hover:bg-slate-100/80">
+                        <div key={entry.id} className="flex flex-wrap items-center gap-2 px-4 py-2 pl-16 transition-colors hover:bg-slate-100/80 sm:flex-nowrap sm:gap-3 sm:px-5 sm:pl-16">
                             <div className="min-w-0 flex-1">
+                                <p className="text-[11px] font-semibold text-slate-600">
+                                    {getTranslation('history_previous_version', language)}
+                                </p>
                                 {entry.reportTitle && (
                                     <p className="truncate text-xs text-slate-500">{entry.reportTitle}</p>
                                 )}
