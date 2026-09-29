@@ -1,12 +1,21 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DataPreparationWorkflowContent } from '../components/data-preparation/DataPreparationWorkflowContent';
+import { DataPreparationWorkflowContent, parseBoundaryRowInputs } from '../components/data-preparation/DataPreparationWorkflowContent';
 
 afterEach(() => {
     cleanup();
 });
 
 describe('DataPreparationWorkflowContent', () => {
+    it('rejects malformed or reversed row positions instead of silently omitting the summary', () => {
+        expect(parseBoundaryRowInputs('1', '2', '')).toEqual({ headerRowIndex: 0, bodyStartIndex: 1, summaryStartIndex: null });
+        expect(parseBoundaryRowInputs('1', '2', '4')).toEqual({ headerRowIndex: 0, bodyStartIndex: 1, summaryStartIndex: 3 });
+        expect(parseBoundaryRowInputs('1', '2', 'invalid')).toBeNull();
+        expect(parseBoundaryRowInputs('1', '2', '3abc')).toBeNull();
+        expect(parseBoundaryRowInputs('2', '1', '')).toBeNull();
+        expect(parseBoundaryRowInputs('1', '2', '2')).toBeNull();
+    });
+
     it('renders compact parser diagnostics in the workflow summary', () => {
         render(
             <DataPreparationWorkflowContent

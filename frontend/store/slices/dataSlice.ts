@@ -979,7 +979,12 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
                     get().addProgress(pipelineOutcome?.message ?? 'Report structure review was saved.', pipelineOutcome?.severity === 'blocked' ? 'warning' : 'system');
                 }
             } catch (error) {
-                get().addProgress(getTranslation('boundary_confirm_save_failed', get().settings.language), 'error');
+                get().addProgress(getTranslation(
+                    error instanceof Error && error.name === 'InvalidReportBoundaryError'
+                        ? 'boundary_confirm_invalid_boundary'
+                        : 'boundary_confirm_save_failed',
+                    get().settings.language,
+                ), 'error');
                 throw error;
             }
         },

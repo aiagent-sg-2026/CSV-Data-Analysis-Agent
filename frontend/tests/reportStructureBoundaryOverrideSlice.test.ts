@@ -164,4 +164,26 @@ describe('report structure boundary override slice integration', () => {
             'error',
         );
     });
+
+    it('rejects invalid human boundaries before changing report state', async () => {
+        const { getState, boundary } = createSliceHarness();
+        const addProgress = vi.spyOn(getState(), 'addProgress');
+        const originalCsvData = getState().csvData;
+        const invalidBoundaries = [
+            { ...boundary, bodyStartIndex: getState().rawIntakeIr.normalizedRows.length + 2, summaryStartIndex: null },
+            { ...boundary, summaryStartIndex: boundary.bodyStartIndex },
+            { ...boundary, headerRowIndex: boundary.bodyStartIndex },
+            { ...boundary, repeatedHeaderRowIndexes: [0] },
+        ];
+
+        for (const invalidBoundary of invalidBoundaries) {
+            await expect(getState().saveReportStructureBoundaryOverride(invalidBoundary))
+                .rejects.toThrow(/Invalid report boundary/);
+        }
+
+        expect(getState().setIsReportBoundaryConfirmModalOpen).not.toHaveBeenCalled();
+        expect(addProgress).toHaveBeenCalledWith(expect.stringContaining('These row positions are invalid'), 'error');
+        expect(getState().csvData).toBe(originalCsvData);
+        expect(getState().reportStructureResolution).toBeNull();
+    });
 });

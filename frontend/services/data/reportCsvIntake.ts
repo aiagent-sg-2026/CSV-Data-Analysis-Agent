@@ -8,6 +8,7 @@ import type {
     IntakeRowClassification,
     IntakeRowSignal,
     ReportIntakeBodyEvidenceKind,
+    ReportBoundary,
     ReportIntakeIr,
     ReportIntakeSegment,
     ReportIntakeSegmentKind,
@@ -1015,6 +1016,42 @@ export interface AiBoundaryValidationResult {
     valid: boolean;
     rejectionReason: string | null;
 }
+
+export const validateHumanBoundary = (
+    boundary: ReportBoundary,
+    intakeIr: ReportIntakeIr,
+): AiBoundaryValidationResult => {
+    const rowCount = intakeIr.normalizedRows.length;
+    const header = boundary.headerRowIndex;
+    const body = boundary.bodyStartIndex;
+    const summary = boundary.summaryStartIndex ?? rowCount;
+    const syntheticHeaders = intakeIr.diagnostics.aiStructureBoundary?.syntheticHeaders;
+
+    if (header === -1) {
+        if (!syntheticHeaders?.length) {
+            return { valid: false, rejectionReason: 'Headerless data requires saved synthetic headers.' };
+        }
+    } else if (!Number.isInteger(header) || header === null || header < 0 || header >= rowCount) {
+        return { valid: false, rejectionReason: 'Header row is outside the source data.' };
+    }
+    if (!Number.isInteger(body) || body === null || body <= header || body >= rowCount) {
+        return { valid: false, rejectionReason: 'Data must begin after the header and within the source data.' };
+    }
+    if (!Number.isInteger(summary) || summary <= body || summary > rowCount) {
+        return { valid: false, rejectionReason: 'Summary must follow at least one data row and remain within the source data.' };
+    }
+    const indexGroups: Array<[number[], number, number]> = [
+        [boundary.headerLayerRowIndexes, 0, body],
+        [boundary.parameterRowIndexes, 0, body],
+        [boundary.repeatedHeaderRowIndexes, body, rowCount],
+    ];
+    if (indexGroups.some(([indexes, min, max]) =>
+        !Array.isArray(indexes) || indexes.some(index => !Number.isInteger(index) || index < min || index >= max)
+    )) {
+        return { valid: false, rejectionReason: 'A header, parameter, or repeated-header row is outside its valid range.' };
+    }
+    return { valid: true, rejectionReason: null };
+};
 
 /**
  * Validate an AI-detected boundary against hard invariants.

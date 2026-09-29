@@ -81,8 +81,10 @@ describe('ReportBoundaryConfirmModal guided repair', () => {
     });
 
     it('keeps the repair available and explains a failed save before retrying', async () => {
+        const invalidBoundary = new Error('Out of range');
+        invalidBoundary.name = 'InvalidReportBoundaryError';
         const saveBoundary = vi.fn()
-            .mockRejectedValueOnce(new Error('Worker unavailable'))
+            .mockRejectedValueOnce(invalidBoundary)
             .mockResolvedValueOnce(undefined);
         const store = {
             isReportBoundaryConfirmModalOpen: true,
@@ -113,7 +115,7 @@ describe('ReportBoundaryConfirmModal guided repair', () => {
             render(<ReportBoundaryConfirmModal />);
             const confirm = screen.getByRole('button', { name: 'Confirm & Start Analysis' });
             fireEvent.click(confirm);
-            expect(await screen.findByRole('alert')).toHaveTextContent('Could not finish applying this data structure');
+            expect(await screen.findByRole('alert')).toHaveTextContent('These row positions are invalid');
             expect(confirm).toBeEnabled();
 
             fireEvent.click(confirm);

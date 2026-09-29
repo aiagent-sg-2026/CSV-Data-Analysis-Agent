@@ -4,6 +4,7 @@ import {
     buildReportIntakeIr,
     rebuildIntakeIrWithBoundary,
     validateAiBoundary,
+    validateHumanBoundary,
 } from '../services/data/reportCsvIntake';
 
 // Mock the AI detector module
@@ -35,6 +36,35 @@ const parseInline = (text: string): string[][] =>
 describe('intake structure harness', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+    });
+
+    it('accepts a headerless human boundary only when synthetic headers are saved', () => {
+        const baseIr = buildReportIntakeIr('headerless.csv', [['Alice', '10'], ['Bob', '20']]);
+        const boundary = {
+            headerRowIndex: -1,
+            headerLayerRowIndexes: [],
+            bodyStartIndex: 0,
+            summaryStartIndex: null,
+            parameterRowIndexes: [],
+            repeatedHeaderRowIndexes: [],
+        };
+        expect(validateHumanBoundary(boundary, baseIr).valid).toBe(false);
+
+        const withSyntheticHeaders = {
+            ...baseIr,
+            diagnostics: {
+                ...baseIr.diagnostics,
+                aiStructureBoundary: {
+                    headerRowIndex: -1,
+                    bodyStartIndex: 0,
+                    summaryStartIndex: 2,
+                    syntheticHeaders: ['Name', 'Value'],
+                    confidence: 0.9,
+                    reasoning: 'No header row exists.',
+                },
+            },
+        };
+        expect(validateHumanBoundary(boundary, withSyntheticHeaders).valid).toBe(true);
     });
 
     describe('buildPreScanSignals', () => {

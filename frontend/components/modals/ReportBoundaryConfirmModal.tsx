@@ -24,7 +24,7 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
     const [bodyStart, setBodyStart] = useState(0);
     const [summaryStart, setSummaryStart] = useState<number | null>(null);
     const [confirming, setConfirming] = useState(false);
-    const [saveError, setSaveError] = useState(false);
+    const [saveError, setSaveError] = useState<'invalid' | 'failed' | null>(null);
 
     const t = (key: string, params?: Record<string, string | number>) =>
         getTranslation(key, language, params);
@@ -39,7 +39,7 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
             setBodyStart(reportStructureResolution.bodyStartIndex ?? 0);
             setSummaryStart(reportStructureResolution.summaryStartIndex ?? null);
             setConfirming(false);
-            setSaveError(false);
+            setSaveError(null);
         }
     }, [isOpen, reportStructureResolution]);
 
@@ -76,7 +76,7 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
     const triggerConfirm = async () => {
         if (confirming) return;
         setConfirming(true);
-        setSaveError(false);
+        setSaveError(null);
         const boundary: ReportBoundary = {
             headerRowIndex: reportStructureResolution.headerRowIndex,
             headerLayerRowIndexes: reportStructureResolution.headerLayerRowIndexes,
@@ -89,7 +89,7 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
             await saveReportStructureBoundaryOverride(boundary);
         } catch (err) {
             console.error('[BoundaryConfirm] save failed:', err);
-            setSaveError(true);
+            setSaveError(err instanceof Error && err.name === 'InvalidReportBoundaryError' ? 'invalid' : 'failed');
         } finally {
             setConfirming(false);
         }
@@ -326,7 +326,7 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
 
                 {saveError && (
                     <p role="alert" className="mx-6 mb-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-                        {t('boundary_confirm_save_failed')}
+                        {t(saveError === 'invalid' ? 'boundary_confirm_invalid_boundary' : 'boundary_confirm_save_failed')}
                     </p>
                 )}
 

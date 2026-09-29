@@ -80,7 +80,7 @@ const OpenDataPreparationWorkflowModal: React.FC = () => {
     const exportMenuRef = useRef<HTMLDetailsElement>(null);
     const workflow = useMemo(() => buildDataPreparationWorkflowBundle(workflowState as AppStore), [workflowState]);
     const [copyStatus, setCopyStatus] = useState<'idle' | 'workflow' | 'failure' | 'download' | 'bundle' | 'support' | 'error'>('idle');
-    const [boundarySaveError, setBoundarySaveError] = useState(false);
+    const [boundarySaveError, setBoundarySaveError] = useState<'invalid' | 'failed' | null>(null);
     const boundarySaveInFlight = useRef(false);
     const closeExportMenu = () => {
         if (exportMenuRef.current) exportMenuRef.current.open = false;
@@ -254,11 +254,11 @@ const OpenDataPreparationWorkflowModal: React.FC = () => {
     const handleSaveStructureBoundary = async (boundary: ReportBoundary) => {
         if (boundarySaveInFlight.current) return;
         boundarySaveInFlight.current = true;
-        setBoundarySaveError(false);
+        setBoundarySaveError(null);
         try {
             await saveReportStructureBoundaryOverride(boundary);
-        } catch {
-            setBoundarySaveError(true);
+        } catch (error) {
+            setBoundarySaveError(error instanceof Error && error.name === 'InvalidReportBoundaryError' ? 'invalid' : 'failed');
         } finally {
             boundarySaveInFlight.current = false;
         }
@@ -383,7 +383,7 @@ const OpenDataPreparationWorkflowModal: React.FC = () => {
 
                 {boundarySaveError && (
                     <p role="alert" className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 lg:mx-5 xl:mx-6">
-                        {getTranslation('boundary_confirm_save_failed', language)}
+                        {getTranslation(boundarySaveError === 'invalid' ? 'boundary_confirm_invalid_boundary' : 'boundary_confirm_save_failed', language)}
                     </p>
                 )}
 

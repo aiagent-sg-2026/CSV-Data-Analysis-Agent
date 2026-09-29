@@ -32,6 +32,30 @@ const formatResultLabel = (value: WorkflowBundle['issueSummary']['mappings'][num
 const formatDelimiter = (value: string | null) => value === '\t' ? 'tab' : (value ?? 'unknown');
 const formatQuote = (value: string | null) => value === '\'' ? 'single quote' : value === '"' ? 'double quote' : 'none';
 
+export const parseBoundaryRowInputs = (
+    headerInput: string,
+    bodyInput: string,
+    summaryInput: string,
+): { headerRowIndex: number; bodyStartIndex: number; summaryStartIndex: number | null } | null => {
+    const parse = (value: string): number | null => {
+        const trimmed = value.trim();
+        if (!/^[1-9]\d*$/.test(trimmed)) return null;
+        const row = Number(trimmed);
+        return Number.isSafeInteger(row) ? row - 1 : null;
+    };
+    const headerRowIndex = parse(headerInput);
+    const bodyStartIndex = parse(bodyInput);
+    const hasSummary = summaryInput.trim().length > 0;
+    const summaryStartIndex = hasSummary ? parse(summaryInput) : null;
+    if (headerRowIndex === null || bodyStartIndex === null
+        || (hasSummary && summaryStartIndex === null)
+        || bodyStartIndex <= headerRowIndex
+        || (summaryStartIndex !== null && summaryStartIndex <= bodyStartIndex)) {
+        return null;
+    }
+    return { headerRowIndex, bodyStartIndex, summaryStartIndex };
+};
+
 type DataPreparationWorkflowContentProps = {
     workflow: WorkflowBundle;
     defaultDetailMode?: 'summary' | 'full';
@@ -80,32 +104,26 @@ export const DataPreparationWorkflowContent: React.FC<DataPreparationWorkflowCon
     const [headerRowInput, setHeaderRowInput] = React.useState('');
     const [bodyStartInput, setBodyStartInput] = React.useState('');
     const [summaryStartInput, setSummaryStartInput] = React.useState('');
+    const [boundaryInputError, setBoundaryInputError] = React.useState(false);
 
     React.useEffect(() => {
         const detectedBoundary = structureReview?.detectedBoundary;
         setHeaderRowInput(detectedBoundary?.headerRowIndex !== null && detectedBoundary?.headerRowIndex !== undefined ? String(detectedBoundary.headerRowIndex + 1) : '');
         setBodyStartInput(detectedBoundary?.bodyStartIndex !== null && detectedBoundary?.bodyStartIndex !== undefined ? String(detectedBoundary.bodyStartIndex + 1) : '');
         setSummaryStartInput(detectedBoundary?.summaryStartIndex !== null && detectedBoundary?.summaryStartIndex !== undefined ? String(detectedBoundary.summaryStartIndex + 1) : '');
+        setBoundaryInputError(false);
     }, [structureReview]);
 
-    const parseOneBasedIndex = (value: string) => {
-        const parsed = Number.parseInt(value.trim(), 10);
-        return Number.isFinite(parsed) && parsed > 0 ? parsed - 1 : null;
-    };
-
     const handleSaveBoundaryOverride = () => {
-        const headerRowIndex = parseOneBasedIndex(headerRowInput);
-        const bodyStartIndex = parseOneBasedIndex(bodyStartInput);
-        const summaryStartIndex = summaryStartInput.trim() ? parseOneBasedIndex(summaryStartInput) : null;
-        if (headerRowIndex === null || bodyStartIndex === null) {
-            return;
-        }
+        const parsed = parseBoundaryRowInputs(headerRowInput, bodyStartInput, summaryStartInput);
+        if (!parsed) { setBoundaryInputError(true); return; }
+        setBoundaryInputError(false);
 
         onSaveStructureBoundaryOverride({
-            headerRowIndex,
+            headerRowIndex: parsed.headerRowIndex,
             headerLayerRowIndexes: structureReview?.detectedBoundary?.headerLayerRowIndexes ?? [],
-            bodyStartIndex,
-            summaryStartIndex,
+            bodyStartIndex: parsed.bodyStartIndex,
+            summaryStartIndex: parsed.summaryStartIndex,
             parameterRowIndexes: structureReview?.detectedBoundary?.parameterRowIndexes ?? [],
             repeatedHeaderRowIndexes: structureReview?.detectedBoundary?.repeatedHeaderRowIndexes ?? [],
         });
@@ -443,7 +461,7 @@ export const DataPreparationWorkflowContent: React.FC<DataPreparationWorkflowCon
                                 <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Header Row</span>
                                 <input
                                     value={headerRowInput}
-                                    onChange={event => setHeaderRowInput(event.target.value)}
+                                    onChange={event => { setHeaderRowInput(event.target.value); setBoundaryInputError(false); }}
                                     className="mt-1 min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 md:min-h-0"
                                     inputMode="numeric"
                                 />
@@ -452,7 +470,7 @@ export const DataPreparationWorkflowContent: React.FC<DataPreparationWorkflowCon
                                 <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Body Start</span>
                                 <input
                                     value={bodyStartInput}
-                                    onChange={event => setBodyStartInput(event.target.value)}
+                                    onChange={event => { setBodyStartInput(event.target.value); setBoundaryInputError(false); }}
                                     className="mt-1 min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 md:min-h-0"
                                     inputMode="numeric"
                                 />
@@ -461,13 +479,18 @@ export const DataPreparationWorkflowContent: React.FC<DataPreparationWorkflowCon
                                 <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Summary Start</span>
                                 <input
                                     value={summaryStartInput}
-                                    onChange={event => setSummaryStartInput(event.target.value)}
+                                    onChange={event => { setSummaryStartInput(event.target.value); setBoundaryInputError(false); }}
                                     className="mt-1 min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 md:min-h-0"
                                     inputMode="numeric"
                                     placeholder="optional"
                                 />
                             </label>
                         </div>
+                        {boundaryInputError && (
+                            <p role="alert" className="mt-3 text-sm text-red-700">
+                                Enter whole-number rows with the header before the data and any summary after at least one data row.
+                            </p>
+                        )}
                         <div className="mt-4 flex flex-wrap gap-2">
                             <button
                                 onClick={onConfirmStructureBoundary}

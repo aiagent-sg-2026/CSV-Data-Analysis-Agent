@@ -3672,6 +3672,14 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Japanese': 'このデータ構造の適用を完了できませんでした。現在の状態を確認してから再試行してください。',
         'French': 'Impossible de terminer l’application de cette structure de données. Vérifiez l’état actuel, puis réessayez.',
     },
+    'boundary_confirm_invalid_boundary': {
+        'English': 'These row positions are invalid. Choose a header before the data, with at least one data row and a summary within the file.',
+        'Mandarin': '这些行号无效。表头须在数据之前，至少保留一行数据，汇总行须在文件范围内。',
+        'Malay': 'Kedudukan baris ini tidak sah. Pilih pengepala sebelum data, sekurang-kurangnya satu baris data, dan baris ringkasan dalam fail.',
+        'Spanish': 'Estas posiciones de fila no son válidas. Elige un encabezado antes de los datos, al menos una fila de datos y un resumen dentro del archivo.',
+        'Japanese': '行の位置が無効です。ヘッダーをデータ行より前に指定し、データ行を1行以上残し、集計行をファイル内に指定してください。',
+        'French': 'Ces positions de lignes sont invalides. Placez l’en-tête avant les données, conservez au moins une ligne de données et placez le résumé dans le fichier.',
+    },
     'boundary_confirm_auto_confirm_label': {
         'English': 'Auto-confirm after 10 s',
         'Mandarin': '10 秒后自动确认',

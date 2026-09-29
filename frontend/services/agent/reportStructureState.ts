@@ -6,7 +6,7 @@ import type {
     ReportStructureProposal,
     ReportStructureResolution,
 } from '../../types';
-import { buildCsvDataFromIntakeIr, rebuildIntakeIrWithBoundary } from '../data/reportCsvIntake';
+import { buildCsvDataFromIntakeIr, rebuildIntakeIrWithBoundary, validateHumanBoundary } from '../data/reportCsvIntake';
 import { buildIntakeDiagnosticsSnapshot, evaluateIntakeDiagnostics } from './intakeDiagnosticsPolicy';
 import { buildRuntimeTableAssessmentFromIr } from './orchestration/cleaningRuntimePolicy';
 import { inspectCsvRows } from './rowInspectionService';
@@ -18,6 +18,12 @@ import { verifyCleanedDatasetShape } from './cleaningVerification';
 export const getPreferredAnalysisDataset = (
     state: Pick<AppState, 'canonicalCsvData' | 'csvData'>,
 ): CsvData | null => state.canonicalCsvData ?? state.csvData ?? null;
+
+const invalidReportBoundary = (reason: string): Error => {
+    const error = new Error(`Invalid report boundary: ${reason}`);
+    error.name = 'InvalidReportBoundaryError';
+    return error;
+};
 
 export const resolveReportStructureArtifacts = (params: {
     rawCsvData: CsvData | null | undefined;
@@ -35,6 +41,11 @@ export const resolveReportStructureArtifacts = (params: {
     canonicalizationStatus: AppState['canonicalizationStatus'];
     pipelineOutcome: PipelineOutcome | null;
 } => {
+    if (params.humanBoundary) {
+        if (!params.rawIntakeIr) throw invalidReportBoundary('source rows are unavailable.');
+        const validation = validateHumanBoundary(params.humanBoundary, params.rawIntakeIr);
+        if (!validation.valid) throw invalidReportBoundary(validation.rejectionReason ?? 'unknown validation error.');
+    }
     const effectiveIntakeIr = params.humanBoundary && params.rawIntakeIr
         ? rebuildIntakeIrWithBoundary(
             params.rawIntakeIr,
@@ -45,6 +56,9 @@ export const resolveReportStructureArtifacts = (params: {
                 summaryStartIndex: params.humanBoundary.summaryStartIndex ?? params.rawIntakeIr.normalizedRows.length,
                 parameterRowIndexes: params.humanBoundary.parameterRowIndexes,
                 repeatedHeaderRowIndexes: params.humanBoundary.repeatedHeaderRowIndexes,
+                syntheticHeaders: params.humanBoundary.headerRowIndex === -1
+                    ? params.rawIntakeIr.diagnostics.aiStructureBoundary?.syntheticHeaders
+                    : undefined,
             },
             'ai_fallback_deterministic',
         )
