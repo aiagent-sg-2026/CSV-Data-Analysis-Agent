@@ -117,6 +117,7 @@ export const HistoryPanel: React.FC = () => {
     const cancelDeletionRef = useRef<HTMLButtonElement>(null);
     const confirmDeletionRef = useRef<HTMLButtonElement>(null);
     const reportsRequestIdRef = useRef(0);
+    const panelEpochRef = useRef(0);
     const deletionTitleId = useId();
     const deletionDescriptionId = useId();
     const dialogRef = useDialogAccessibility<HTMLDivElement>(
@@ -155,23 +156,34 @@ export const HistoryPanel: React.FC = () => {
 
     useEffect(() => {
         if (!isOpen) {
+            panelEpochRef.current += 1;
             setPendingDeletion(null);
             setDeletionError(null);
+            setIsPurging(false);
+            setDeletingReportId(null);
+            setConfirmLoadId(null);
+            setLoadingId(null);
             setLoadErrorId(null);
             setReportActionError(null);
+            setReportActionBusy(false);
+            setStorageInfo(null);
+            setStorageError(false);
         }
     }, [isOpen]);
 
     // Fetch actual IDB storage breakdown when modal opens
     const refreshStorageInfo = async () => {
+        const panelEpoch = panelEpochRef.current;
         setStorageError(false);
         try {
             const breakdown = await getStorageBreakdown();
+            if (panelEpoch !== panelEpochRef.current) return;
             setStorageInfo({
                 idbLabel: formatBytes(breakdown.totalIdbBytes),
                 idbBytes: breakdown.totalIdbBytes,
             });
         } catch {
+            if (panelEpoch !== panelEpochRef.current) return;
             setStorageInfo(null);
             setStorageError(true);
         }
@@ -198,6 +210,7 @@ export const HistoryPanel: React.FC = () => {
 
     const confirmDeletion = async () => {
         if (!pendingDeletion || isPurging || deletingReportId) return;
+        const panelEpoch = panelEpochRef.current;
         const deletion = pendingDeletion;
         setDeletionError(null);
         if (deletion.kind === 'purge') setIsPurging(true);
@@ -205,16 +218,20 @@ export const HistoryPanel: React.FC = () => {
         try {
             if (deletion.kind === 'purge') {
                 await onPurgeStorage();
-                await refreshStorageInfo();
+                if (panelEpoch === panelEpochRef.current) await refreshStorageInfo();
             } else {
                 await onDeleteReport(deletion.id);
             }
-            dismissDeletion();
+            if (panelEpoch === panelEpochRef.current) dismissDeletion();
         } catch {
-            setDeletionError(getTranslation('history_delete_failed', language));
+            if (panelEpoch === panelEpochRef.current) {
+                setDeletionError(getTranslation('history_delete_failed', language));
+            }
         } finally {
-            setIsPurging(false);
-            setDeletingReportId(null);
+            if (panelEpoch === panelEpochRef.current) {
+                setIsPurging(false);
+                setDeletingReportId(null);
+            }
         }
     };
 
@@ -236,31 +253,35 @@ export const HistoryPanel: React.FC = () => {
     };
 
     const doLoad = async (id: string) => {
+        const panelEpoch = panelEpochRef.current;
         setConfirmLoadId(null);
         setLoadErrorId(null);
         setLoadingId(id);
         try {
             await onLoadReport(id);
         } catch {
-            setLoadErrorId(id);
+            if (panelEpoch === panelEpochRef.current) setLoadErrorId(id);
         } finally {
-            setLoadingId(null);
+            if (panelEpoch === panelEpochRef.current) setLoadingId(null);
         }
     };
 
     const runReportAction = async (action: ReportAction, id: string) => {
         if (reportActionBusy) return;
+        const panelEpoch = panelEpochRef.current;
         setReportActionError(null);
         setReportActionBusy(true);
         try {
             const succeeded = action === 'open'
                 ? await onOpenReport(id)
                 : await onExportPdf(id);
-            if (succeeded === false) setReportActionError({ id, action });
+            if (succeeded === false && panelEpoch === panelEpochRef.current) {
+                setReportActionError({ id, action });
+            }
         } catch {
-            setReportActionError({ id, action });
+            if (panelEpoch === panelEpochRef.current) setReportActionError({ id, action });
         } finally {
-            setReportActionBusy(false);
+            if (panelEpoch === panelEpochRef.current) setReportActionBusy(false);
         }
     };
 

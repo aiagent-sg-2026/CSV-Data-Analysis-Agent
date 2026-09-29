@@ -285,3 +285,7 @@ A failure-injection UI test first showed the incorrect empty state and no alert.
 Periodic storage cleanup could reject from a timer without any catch. A rejected IndexedDB cleanup produced an unhandled Promise rejection in the focused test. The background task now warns once per failure period, retries at its next interval, and uses all six supported languages. The optional startup History preload also contains a failed read; the History panel owns the user-visible retry.
 
 The full suite passed 342 files / 2,863 tests before the final localized warning was added. Final autosave/localization tests passed 19/19, and typecheck, lint, production build, and bundle budget passed. The Mac is locked, so browser verification of the warning remains pending. Root deployment and public Pages remain unchanged.
+
+## 2026-09-29 History late-action result QA
+
+A delayed Open Report failure could settle after History closed and display an old error on the next opening. The deferred-operation UI test reproduced this before the fix. History now clears action state on close and ignores late UI results from report opening, saved-analysis loading, deletion, and storage scans; already started store operations continue. Focused History/header tests passed 39/39, including a delayed load failure. Typecheck, lint, full suite (342 files / 2,865 tests), production build, and bundle budget passed. Browser close/reopen verification remains pending while the Mac is locked.

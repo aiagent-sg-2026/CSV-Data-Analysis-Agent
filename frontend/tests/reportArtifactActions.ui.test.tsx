@@ -238,6 +238,81 @@ describe('report artifact action surfaces', () => {
         await waitFor(() => expect(screen.queryByText(/Could not open the saved report/)).not.toBeInTheDocument());
     });
 
+    it('does not show an old report-action failure after History closes and reopens', async () => {
+        let settleOpen!: (succeeded: boolean) => void;
+        const openPersistedReportArtifact = vi.fn(() => new Promise<boolean>(resolve => {
+            settleOpen = resolve;
+        }));
+        const state = {
+            isHistoryPanelOpen: true,
+            setIsHistoryPanelOpen: vi.fn(),
+            reportsList: [{
+                id: 'report-1', filename: 'sample.csv',
+                createdAt: new Date('2026-03-14T09:00:00.000Z'),
+                updatedAt: new Date('2026-03-14T09:10:00.000Z'),
+            }],
+            handleLoadReport: vi.fn(async () => undefined),
+            handleDeleteReport: vi.fn(async () => undefined),
+            handlePurgeStorage: vi.fn(async () => ({ deletedReports: 0, freedMB: 0 })),
+            openPersistedReportArtifact,
+            exportPersistedReportPdf: vi.fn(async () => true),
+            sessionId: 'report-1',
+            settings: { language: 'English' },
+            csvData: null,
+        };
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+
+        const { rerender } = render(<HistoryPanel />);
+        fireEvent.click(screen.getByRole('button', { name: 'Open Report' }));
+        expect(openPersistedReportArtifact).toHaveBeenCalledTimes(1);
+
+        state.isHistoryPanelOpen = false;
+        rerender(<HistoryPanel />);
+        await act(async () => settleOpen(false));
+        state.isHistoryPanelOpen = true;
+        rerender(<HistoryPanel />);
+
+        expect(screen.queryByText(/Could not open the saved report/)).not.toBeInTheDocument();
+    });
+
+    it('does not carry a late saved-analysis load failure into a new History opening', async () => {
+        let rejectLoad!: (reason: Error) => void;
+        const handleLoadReport = vi.fn(() => new Promise<void>((_resolve, reject) => {
+            rejectLoad = reject;
+        }));
+        const state = {
+            isHistoryPanelOpen: true,
+            setIsHistoryPanelOpen: vi.fn(),
+            reportsList: [{
+                id: 'report-1', filename: 'sample.csv',
+                createdAt: new Date('2026-03-14T09:00:00.000Z'),
+                updatedAt: new Date('2026-03-14T09:10:00.000Z'),
+            }],
+            handleLoadReport,
+            handleDeleteReport: vi.fn(async () => undefined),
+            handlePurgeStorage: vi.fn(async () => ({ deletedReports: 0, freedMB: 0 })),
+            openPersistedReportArtifact: vi.fn(async () => true),
+            exportPersistedReportPdf: vi.fn(async () => true),
+            sessionId: 'session-2',
+            settings: { language: 'English' },
+            csvData: null,
+        };
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+
+        const { rerender } = render(<HistoryPanel />);
+        fireEvent.click(screen.getByRole('button', { name: 'Resume analysis' }));
+        expect(handleLoadReport).toHaveBeenCalledTimes(1);
+
+        state.isHistoryPanelOpen = false;
+        rerender(<HistoryPanel />);
+        await act(async () => rejectLoad(new Error('IndexedDB unavailable')));
+        state.isHistoryPanelOpen = true;
+        rerender(<HistoryPanel />);
+
+        expect(screen.queryByText(/Could not load the saved analysis/)).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Resume analysis' })).toBeEnabled();
+    });
+
     it('shows a retry when PDF export cannot open a print view', async () => {
         const exportPersistedReportPdf = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
         const state = {
