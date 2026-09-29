@@ -59,6 +59,36 @@ const RemountingTriggerHarness: React.FC = () => {
     );
 };
 
+const OverlappingDialogsHarness: React.FC = () => {
+    const [firstOpen, setFirstOpen] = useState(false);
+    const [secondOpen, setSecondOpen] = useState(false);
+    const firstRef = useDialogAccessibility<HTMLDivElement>(firstOpen, () => setFirstOpen(false));
+    const secondRef = useDialogAccessibility<HTMLDivElement>(secondOpen, () => setSecondOpen(false));
+
+    return (
+        <div>
+            <main data-testid="shared-background">
+                <button type="button" data-testid="open-first" onClick={() => setFirstOpen(true)}>Open first</button>
+                <button type="button" data-testid="open-second" onClick={() => setSecondOpen(true)}>Open second</button>
+            </main>
+            {firstOpen && (
+                <div className="fixed">
+                    <div ref={firstRef} role="dialog" aria-modal="true" aria-label="First dialog" tabIndex={-1}>
+                        <button type="button" data-testid="close-first" onClick={() => setFirstOpen(false)}>Close first</button>
+                    </div>
+                </div>
+            )}
+            {secondOpen && (
+                <div className="fixed">
+                    <div ref={secondRef} role="dialog" aria-modal="true" aria-label="Second dialog" tabIndex={-1}>
+                        <button type="button" data-testid="close-second" onClick={() => setSecondOpen(false)}>Close second</button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
 describe('useDialogAccessibility', () => {
     it('moves and traps focus, closes on Escape, inerts background, and restores focus', async () => {
         render(<DialogHarness />);
@@ -93,5 +123,21 @@ describe('useDialogAccessibility', () => {
         fireEvent.keyDown(document, { key: 'Escape' });
 
         await waitFor(() => expect(screen.getByRole('button', { name: 'Open remounting dialog' })).toHaveFocus());
+    });
+
+    it('restores the background when overlapping dialogs close out of order', () => {
+        render(<OverlappingDialogsHarness />);
+        const background = screen.getByTestId('shared-background');
+
+        fireEvent.click(screen.getByTestId('open-first'));
+        fireEvent.click(screen.getByTestId('open-second'));
+        expect(background).toHaveAttribute('inert');
+
+        fireEvent.click(screen.getByTestId('close-first'));
+        expect(background).toHaveAttribute('inert');
+
+        fireEvent.click(screen.getByTestId('close-second'));
+        expect(background).not.toHaveAttribute('inert');
+        expect(background).not.toHaveAttribute('aria-hidden');
     });
 });

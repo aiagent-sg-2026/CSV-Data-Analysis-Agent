@@ -17,6 +17,48 @@ const getFocusableElements = (dialog: HTMLElement) => Array.from(
     && element.closest('[hidden]') === null,
 );
 
+type BackgroundState = {
+    owners: number;
+    wasInert: boolean;
+    hadInertAttribute: boolean;
+    previousAriaHidden: string | null;
+};
+
+// Dialogs can overlap; the last owner restores each sibling's original state.
+const backgroundStates = new Map<HTMLElement, BackgroundState>();
+
+const acquireBackground = (element: HTMLElement): void => {
+    const existing = backgroundStates.get(element);
+    if (existing) {
+        existing.owners += 1;
+        return;
+    }
+
+    backgroundStates.set(element, {
+        owners: 1,
+        wasInert: element.inert,
+        hadInertAttribute: element.hasAttribute('inert'),
+        previousAriaHidden: element.getAttribute('aria-hidden'),
+    });
+    element.inert = true;
+    element.setAttribute('inert', '');
+    element.setAttribute('aria-hidden', 'true');
+};
+
+const releaseBackground = (element: HTMLElement): void => {
+    const state = backgroundStates.get(element);
+    if (!state) return;
+    state.owners -= 1;
+    if (state.owners > 0) return;
+
+    backgroundStates.delete(element);
+    element.inert = state.wasInert;
+    if (state.hadInertAttribute) element.setAttribute('inert', '');
+    else element.removeAttribute('inert');
+    if (state.previousAriaHidden === null) element.removeAttribute('aria-hidden');
+    else element.setAttribute('aria-hidden', state.previousAriaHidden);
+};
+
 export const useDialogAccessibility = <T extends HTMLElement>(
     isOpen: boolean,
     onClose: () => void,
@@ -42,13 +84,8 @@ export const useDialogAccessibility = <T extends HTMLElement>(
                 .filter(element => element !== overlay)
                 .map(element => {
                     const htmlElement = element as HTMLElement;
-                    const wasInert = htmlElement.inert;
-                    const hadInertAttribute = htmlElement.hasAttribute('inert');
-                    const previousAriaHidden = htmlElement.getAttribute('aria-hidden');
-                    htmlElement.inert = true;
-                    htmlElement.setAttribute('inert', '');
-                    htmlElement.setAttribute('aria-hidden', 'true');
-                    return { htmlElement, wasInert, hadInertAttribute, previousAriaHidden };
+                    acquireBackground(htmlElement);
+                    return htmlElement;
                 })
             : [];
 
@@ -87,17 +124,7 @@ export const useDialogAccessibility = <T extends HTMLElement>(
         return () => {
             cancelAnimationFrame(frameId);
             document.removeEventListener('keydown', handleKeyDown);
-            inertedSiblings.forEach(({ htmlElement, wasInert, hadInertAttribute, previousAriaHidden }) => {
-                htmlElement.inert = wasInert;
-                if (!hadInertAttribute) {
-                    htmlElement.removeAttribute('inert');
-                }
-                if (previousAriaHidden === null) {
-                    htmlElement.removeAttribute('aria-hidden');
-                } else {
-                    htmlElement.setAttribute('aria-hidden', previousAriaHidden);
-                }
-            });
+            inertedSiblings.forEach(releaseBackground);
             const preferredRestoreTarget = options?.restoreFocusSelector
                 ? document.querySelector<HTMLElement>(options.restoreFocusSelector)
                 : null;

@@ -19,7 +19,7 @@ import { readDatasetFileFromOpfs } from '../../services/data/opfsDatasetStorage'
 import { getSandboxTableRows } from '../../services/data/sandboxTableRegistry';
 import { getCsvDataRowCount } from '../../utils/datasetId';
 
-const PUBLIC_SUPPORT_ISSUES_URL = 'https://github.com/yapweijun1996/React-CSV-Data-Analysis-Agent-Backup/issues';
+const PUBLIC_SUPPORT_ISSUES_URL = 'https://github.com/yapweijun1996/CSV-Data-Analysis-Agent/issues';
 
 const downloadTextFile = (contents: string, fileName: string): void => {
     const objectUrl = URL.createObjectURL(new Blob([contents], { type: 'text/markdown;charset=utf-8' }));
