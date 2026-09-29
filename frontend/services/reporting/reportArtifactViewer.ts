@@ -11,7 +11,22 @@ const openReportWindow = (
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const objectUrl = URL.createObjectURL(blob);
     const targetUrl = mode === 'print' ? `${objectUrl}#print` : objectUrl;
-    const openedWindow = window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    // noopener makes window.open return null even when the tab opens, so isolate
+    // the blank tab before navigating it to the generated report.
+    const openedWindow = window.open('', '_blank');
+    if (!openedWindow) {
+        URL.revokeObjectURL(objectUrl);
+        return null;
+    }
+
+    try {
+        openedWindow.opener = null;
+        openedWindow.location.replace(targetUrl);
+    } catch {
+        openedWindow.close();
+        URL.revokeObjectURL(objectUrl);
+        return null;
+    }
 
     window.setTimeout(() => {
         URL.revokeObjectURL(objectUrl);
