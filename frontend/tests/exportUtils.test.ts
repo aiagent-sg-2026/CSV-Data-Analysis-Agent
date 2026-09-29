@@ -99,6 +99,28 @@ describe('analysis exports', () => {
         expect(html).not.toContain('<script>alert(1)</script>');
     });
 
+    it('keeps later-only fields and aligns reordered row values in card CSV and HTML exports', async () => {
+        const rows = [
+            { Town: 'A', Total: 100 },
+            { Total: 200, Town: 'B', Note: 'later field' },
+        ];
+        expect(exportToCsv(rows, 'Sparse card')).toEqual({ success: true });
+        const csv = await readBlob(downloadedBlobs[0]);
+        expect(csv).toContain('Town,Total,Note');
+        expect(csv).toContain('A,100,');
+        expect(csv).toContain('B,200,later field');
+
+        expect(await exportToHtml(document.createElement('div'), 'Sparse card', rows, 'Summary'))
+            .toEqual({ success: true });
+        const html = await readBlob(downloadedBlobs[1]);
+        const table = new DOMParser().parseFromString(html, 'text/html').querySelector('table');
+        expect(Array.from(table?.querySelectorAll('th') ?? [], cell => cell.textContent))
+            .toEqual(['Town', 'Total', 'Note']);
+        expect(Array.from(table?.querySelectorAll('tbody tr') ?? [], row =>
+            Array.from(row.querySelectorAll('td'), cell => cell.textContent)))
+            .toEqual([['A', '100', ''], ['B', '200', 'later field']]);
+    });
+
     it('adds export provenance to PNG capture and removes it from the live card afterwards', async () => {
         const root = document.createElement('div');
         root.textContent = 'Card';
@@ -119,6 +141,8 @@ describe('analysis exports', () => {
             expect(table?.querySelectorAll('tbody tr')).toHaveLength(2);
             expect(table?.textContent).toContain('STREET 1');
             expect(table?.textContent).toContain('36506250');
+            expect(table?.querySelectorAll('th')[2]?.textContent).toBe('Note');
+            expect(table?.querySelectorAll('tbody tr')[1]?.querySelectorAll('td')[2]?.textContent).toBe('later field');
             expect(captured.querySelector('script')).toBeNull();
             return 'data:image/png;base64,export';
         });
@@ -127,7 +151,7 @@ describe('analysis exports', () => {
             includeTable: true,
             tableData: [
                 { street_name: 'STREET 1', sum_resale_price: 36506250 },
-                { street_name: '<script>unsafe</script>', sum_resale_price: 1 },
+                { street_name: '<script>unsafe</script>', sum_resale_price: 1, Note: 'later field' },
             ],
         })).toEqual({ success: true });
         expect(root.querySelector('[data-temporary-export-table]')).toBeNull();

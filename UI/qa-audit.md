@@ -293,3 +293,7 @@ A delayed Open Report failure could settle after History closed and display an o
 ## 2026-09-29 PWA update failure QA
 
 The **Refresh to update** button could produce an unhandled Promise rejection without telling the user that the service-worker update failed. Failure injection covered a rejected update check, a failed `SKIP_WAITING` message, and an unexpected button-level rejection. The update state now remains retryable and the banner shows a localized error; a second click can succeed. Focused PWA/localization tests passed 21/21; typecheck, lint, full suite (342 files / 2,868 tests), production build, and bundle budget passed. Live service-worker retry remains unverified while the Mac is locked.
+
+## 2026-09-29 Card export column fidelity QA
+
+Card CSV export lost a field if it first appeared after the first row; HTML export put reordered values under the wrong headers. A two-row sparse fixture failed before the fix. CSV, HTML, and Full card PNG temporary tables now derive one union of named columns and read each cell by its column name. Focused export tests passed 7/7, including inspection of the generated CSV/HTML blobs and PNG capture table. Typecheck, lint, full suite (342 files / 2,869 tests), production build, and bundle budget passed. Download behavior in the in-app browser remains unverified while the Mac is locked.

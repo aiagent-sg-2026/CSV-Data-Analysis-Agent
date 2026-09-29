@@ -98,6 +98,12 @@ const escapeHtml = (value: unknown): string => String(value ?? '')
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#039;');
 
+const getExportColumns = (rows: CsvRow[]): string[] => {
+  const columns = new Set<string>();
+  rows.forEach(row => Object.keys(row).forEach(column => columns.add(column)));
+  return Array.from(columns);
+};
+
 const triggerBlobDownload = (blob: Blob, fileName: string): void => {
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -147,7 +153,7 @@ const appendCollapsedExportTable = (root: HTMLElement, rows: CsvRow[]): (() => v
     empty.textContent = 'No data available.';
     section.appendChild(empty);
   } else {
-    const columns = Object.keys(rows[0]);
+    const columns = getExportColumns(rows);
     const table = document.createElement('table');
     table.style.cssText = `width:100%;table-layout:fixed;border-collapse:collapse;font:12px ${EXPORT_THEME.fontFamily};color:${EXPORT_THEME.textBody};`;
     const head = table.createTHead().insertRow();
@@ -270,7 +276,12 @@ export const exportToCsv = (
   metadata?: AnalysisExportMetadata,
 ): ExportResult => {
   try {
-    const csv = Papa.unparse(withExportMetadataColumns(data, metadata));
+    const rows = withExportMetadataColumns(data, metadata);
+    const columns = getExportColumns(rows);
+    const csv = Papa.unparse({
+      fields: columns,
+      data: rows.map(row => columns.map(column => row[column] ?? '')),
+    });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     triggerBlobDownload(blob, `${safeFileStem(title)}.csv`);
     return { success: true };
@@ -316,17 +327,18 @@ export const exportToHtml = async (
       }
     }
 
+    const columns = getExportColumns(data);
     const dataTableHtml = data.length > 0 ? `
       <table border="1" style="border-collapse: collapse; width: 100%; font-family: ${EXPORT_THEME.fontFamily}; color: ${EXPORT_THEME.textBody};">
         <thead>
           <tr style="background-color: ${EXPORT_THEME.bgHeader};">
-            ${Object.keys(data[0]).map(key => `<th style="padding: ${EXPORT_THEME.cellPadding};">${escapeHtml(key)}</th>`).join('')}
+            ${columns.map(key => `<th style="padding: ${EXPORT_THEME.cellPadding};">${escapeHtml(key)}</th>`).join('')}
           </tr>
         </thead>
         <tbody>
           ${data.map(row => `
             <tr>
-              ${Object.values(row).map(val => `<td style="padding: ${EXPORT_THEME.cellPadding};">${escapeHtml(val)}</td>`).join('')}
+              ${columns.map(column => `<td style="padding: ${EXPORT_THEME.cellPadding};">${escapeHtml(row[column])}</td>`).join('')}
             </tr>
           `).join('')}
         </tbody>

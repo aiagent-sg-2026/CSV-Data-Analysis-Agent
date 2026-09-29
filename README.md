@@ -26,6 +26,7 @@ When the user explicitly asks the main assistant to create a dashboard card, Pi 
 
 In Explore, each analysis card's More actions menu includes Data Provenance and Delete card. Deleting a card requires an explicit confirmation because there is no card-level Undo action.
 The Export menu's Full card PNG includes the card's complete current result table even when that table is collapsed in Explore; chart-only PNG leaves it out.
+Card CSV, HTML, and Full card PNG exports keep fields that first appear in later result rows and align values under their named columns.
 
 Dashboard cards distinguish additive measures (`sum`, `count`) from averages and other non-additive measures. Top N on an average card shows only the selected groups; it does not invent an `Others` average, sum group averages, or display each average as a share of that sum. Dense average comparisons default to a horizontal bar chart, and the full chart scrolls vertically so labels remain readable. The table exposes the full grouped values. Temporal average trends can still use line or area charts.
 
