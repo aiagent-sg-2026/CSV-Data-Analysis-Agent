@@ -142,22 +142,23 @@ export const DataProvenanceModal: React.FC<DataProvenanceModalProps> = ({
 
     const renderStep1 = () => (
         <div className="flex h-full flex-col gap-3">
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                 <div>
                     <h3 className="text-lg font-bold text-blue-800">{t('provenance_step1_title')}</h3>
                     <p className="mt-0.5 text-sm text-slate-500">
                         {t('provenance_step1_summary', { rows: rawRows.length, cols: rawColCount, header: headerRow })}
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
                     <ViewModeToggle isGroupBy={rawGroupByMode} onToggle={setRawGroupByMode} language={language} />
                     {!rawGroupByMode && (
                         <input
                             type="text"
                             value={rawFilter}
                             onChange={e => setRawFilter(e.target.value)}
-                            placeholder={getTranslation('spreadsheet_search_placeholder', language)}
-                            className="w-52 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 placeholder-slate-400 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                            placeholder={t('provenance_filter_rows_placeholder')}
+                            aria-label={t('provenance_filter_rows_placeholder')}
+                            className="min-h-[44px] w-full min-w-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 placeholder-slate-400 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 sm:w-52"
                         />
                     )}
                 </div>
@@ -188,7 +189,7 @@ export const DataProvenanceModal: React.FC<DataProvenanceModalProps> = ({
 
     const renderStep2 = () => (
         <div className="flex h-full flex-col gap-3">
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                 <div>
                     <h3 className="text-lg font-bold text-amber-800">{t('provenance_step2_title')}</h3>
                     {operations.length > 0 ? (
@@ -222,15 +223,16 @@ export const DataProvenanceModal: React.FC<DataProvenanceModalProps> = ({
                         )}
                     </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
                     <ViewModeToggle isGroupBy={cleanedGroupByMode} onToggle={setCleanedGroupByMode} language={language} />
                     {!cleanedGroupByMode && (
                         <input
                             type="text"
                             value={cleanedFilter}
                             onChange={e => setCleanedFilter(e.target.value)}
-                            placeholder={getTranslation('spreadsheet_search_placeholder', language)}
-                            className="w-52 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 placeholder-slate-400 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                            placeholder={t('provenance_filter_rows_placeholder')}
+                            aria-label={t('provenance_filter_rows_placeholder')}
+                            className="min-h-[44px] w-full min-w-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 placeholder-slate-400 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400 sm:w-52"
                         />
                     )}
                 </div>
@@ -310,18 +312,20 @@ export const DataProvenanceModal: React.FC<DataProvenanceModalProps> = ({
                 </div>
 
                 {/* Mode toggle */}
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <button
                         type="button"
                         onClick={() => setIsCustomMode(false)}
-                        className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${!isCustomMode ? 'bg-violet-100 text-violet-800 border border-violet-300' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                        aria-pressed={!isCustomMode}
+                        className={`min-h-[44px] rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${!isCustomMode ? 'bg-violet-100 text-violet-800 border border-violet-300' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                     >
                         {t('provenance_step3_card_query')}
                     </button>
                     <button
                         type="button"
                         onClick={() => setIsCustomMode(true)}
-                        className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${isCustomMode ? 'bg-violet-100 text-violet-800 border border-violet-300' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                        aria-pressed={isCustomMode}
+                        className={`min-h-[44px] rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${isCustomMode ? 'bg-violet-100 text-violet-800 border border-violet-300' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                     >
                         {t('provenance_step3_custom_query')}
                     </button>
@@ -453,14 +457,14 @@ export const DataProvenanceModal: React.FC<DataProvenanceModalProps> = ({
                     type="button"
                     onClick={goPrev}
                     disabled={currentStep === 1}
-                    className="rounded-lg border border-slate-200 px-5 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="min-h-[44px] rounded-lg border border-slate-200 px-5 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                     {t('provenance_prev')}
                 </button>
                 <button
                     type="button"
                     onClick={currentStep === TOTAL_STEPS ? onClose : goNext}
-                    className={`rounded-lg px-5 py-2 text-sm font-medium text-white transition-colors ${
+                    className={`min-h-[44px] rounded-lg px-5 py-2 text-sm font-medium text-white transition-colors ${
                         currentStep === TOTAL_STEPS
                             ? 'bg-emerald-600 hover:bg-emerald-700'
                             : 'bg-blue-600 hover:bg-blue-700'

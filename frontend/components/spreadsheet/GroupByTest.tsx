@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useId } from 'react';
 import { getTranslation } from '../../utils/localization';
 import type { CsvRow } from '../../types';
 import { IconInsights } from '../../icons/IconInsights';
@@ -62,14 +62,17 @@ export const computeAggregation = (
         groups.set(key, entry);
     }
     const result: CsvRow[] = [];
-    let grandTotal = 0;
+    let grandSum = 0;
+    let grandCount = 0;
     for (const [key, entry] of groups) {
         const value = agg === 'count' ? entry.count : agg === 'avg' ? (entry.count > 0 ? entry.sum / entry.count : 0) : entry.sum;
         result.push({ [groupByCol]: key, [valueCol]: Math.round(value * 100) / 100 });
-        grandTotal += value;
+        grandSum += entry.sum;
+        grandCount += entry.count;
     }
     result.sort((a, b) => (parseNumeric(b[valueCol]) - parseNumeric(a[valueCol])));
-    return { rows: result.slice(0, 20), total: Math.round(grandTotal * 100) / 100 };
+    const total = agg === 'count' ? grandCount : agg === 'avg' ? (grandCount > 0 ? grandSum / grandCount : 0) : grandSum;
+    return { rows: result.slice(0, 20), total: Math.round(total * 100) / 100 };
 };
 
 // Smart sort: detect dates and sort chronologically, otherwise alphabetical ASC
@@ -146,23 +149,39 @@ const computePivotAggregation = (
     const round2 = (n: number) => Math.round(n * 100) / 100;
 
     const resultRows: CsvRow[] = [];
+    const columnAccumulators = new Map(pivotColumns.map(pc => [pc, { sum: 0, count: 0 }]));
     const columnTotals: Record<string, number> = {};
-    for (const pc of pivotColumns) columnTotals[pc] = 0;
-    columnTotals['Total'] = 0;
+    let grandSum = 0;
+    let grandCount = 0;
 
     for (const [rk, inner] of groups) {
         const row: CsvRow = { [rowCol]: rk };
-        let rowTotal = 0;
-        for (const pc of pivotColumns) {
-            const val = round2(aggValue(inner.get(pc)));
-            row[pc] = val;
-            rowTotal += val;
-            columnTotals[pc] += val;
+        let rowSum = 0;
+        let rowCount = 0;
+        for (const entry of inner.values()) {
+            rowSum += entry.sum;
+            rowCount += entry.count;
         }
-        row['Total'] = round2(rowTotal);
-        columnTotals['Total'] += rowTotal;
+        for (const pc of pivotColumns) {
+            const entry = inner.get(pc);
+            const val = round2(aggValue(entry));
+            row[pc] = val;
+            if (entry) {
+                const accumulator = columnAccumulators.get(pc)!;
+                accumulator.sum += entry.sum;
+                accumulator.count += entry.count;
+            }
+        }
+        row['Total'] = round2(agg === 'count' ? rowCount : agg === 'avg' ? (rowCount > 0 ? rowSum / rowCount : 0) : rowSum);
+        grandSum += rowSum;
+        grandCount += rowCount;
         resultRows.push(row);
     }
+
+    for (const [pc, entry] of columnAccumulators) {
+        columnTotals[pc] = round2(agg === 'count' ? entry.count : agg === 'avg' ? (entry.count > 0 ? entry.sum / entry.count : 0) : entry.sum);
+    }
+    columnTotals['Total'] = round2(agg === 'count' ? grandCount : agg === 'avg' ? (grandCount > 0 ? grandSum / grandCount : 0) : grandSum);
 
     // Sort rows by the row dimension (alphabetical / date-aware), not by Total
     resultRows.sort((a, b) => {
@@ -170,8 +189,6 @@ const computePivotAggregation = (
         const bk = String(b[rowCol] ?? '');
         return ak.localeCompare(bk);
     });
-    for (const k of Object.keys(columnTotals)) columnTotals[k] = round2(columnTotals[k]);
-
     return {
         pivotColumns,
         rows: resultRows.slice(0, MAX_PIVOT_ROWS),
@@ -240,8 +257,8 @@ export const DataTable: React.FC<{
 
 // --- Pivot table renderer ---
 
-const PivotTableView: React.FC<{ pivot: PivotResult; language: string }> = ({ pivot, language }) => {
-    const totalLabel = getTranslation('provenance_step3_total_label', language);
+const PivotTableView: React.FC<{ pivot: PivotResult; language: string; agg: 'sum' | 'count' | 'avg' }> = ({ pivot, language, agg }) => {
+    const totalLabel = getTranslation(agg === 'avg' ? 'provenance_step3_average_label' : 'provenance_step3_total_label', language);
 
     return (
         <div className="overflow-x-auto rounded-lg border border-slate-200">
@@ -292,6 +309,7 @@ interface GroupByTestProps {
 }
 
 export const GroupByTest: React.FC<GroupByTestProps> = ({ rows, language, accentColor, onRequestCard }) => {
+    const fieldId = useId();
     const [groupBy, setGroupBy] = useState('');
     const [pivotBy, setPivotBy] = useState('');
     const [valueCol, setValueCol] = useState('');
@@ -316,35 +334,41 @@ export const GroupByTest: React.FC<GroupByTestProps> = ({ rows, language, accent
 
     const t = (key: string, params?: Record<string, string | number>) => getTranslation(key, language, params);
     const totalValue = pivotResult?.grandTotal ?? flatResult?.total ?? 0;
+    const totalLabel = t(agg === 'avg' ? 'provenance_step3_average_label' : 'provenance_step3_total_label');
+    const excelHint = agg === 'sum'
+        ? `SUMIFS(${valueCol}, ${groupBy}, "<>") = ${formatNumber(totalValue)}`
+        : agg === 'count'
+            ? `COUNTIF(${groupBy}, "<>") = ${formatNumber(totalValue)}`
+            : `AVERAGEIFS(${valueCol}, ${groupBy}, "<>") = ${formatNumber(totalValue)}`;
 
     return (
         <div className="flex h-full flex-col gap-3">
             <div className={`flex flex-wrap items-end gap-3 rounded-lg border p-3 border-${accentColor}-200 bg-${accentColor}-50/30`}>
                 <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold text-slate-600">{t('provenance_step3_group_by_label')}</label>
-                    <select value={groupBy} onChange={e => { setGroupBy(e.target.value); if (e.target.value === pivotBy) setPivotBy(''); }} className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800">
+                    <label htmlFor={`${fieldId}-group`} className="text-xs font-semibold text-slate-600">{t('provenance_step3_group_by_label')}</label>
+                    <select id={`${fieldId}-group`} value={groupBy} onChange={e => { setGroupBy(e.target.value); if (e.target.value === pivotBy) setPivotBy(''); }} className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800">
                         <option value="">—</option>
                         {categorical.map(col => <option key={col} value={col}>{col}</option>)}
                     </select>
                 </div>
                 <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold text-slate-600">{t('provenance_pivot_by_label')}</label>
-                    <select value={pivotBy} onChange={e => setPivotBy(e.target.value)} disabled={!groupBy} className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 disabled:opacity-40">
+                    <label htmlFor={`${fieldId}-pivot`} className="text-xs font-semibold text-slate-600">{t('provenance_pivot_by_label')}</label>
+                    <select id={`${fieldId}-pivot`} value={pivotBy} onChange={e => setPivotBy(e.target.value)} disabled={!groupBy} className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 disabled:opacity-40">
                         <option value="">{t('provenance_pivot_none')}</option>
                         {pivotOptions.map(col => <option key={col} value={col}>{col}</option>)}
                     </select>
                 </div>
                 <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold text-slate-600">{t('provenance_step3_agg_label')}</label>
-                    <select value={agg} onChange={e => setAgg(e.target.value as 'sum' | 'count' | 'avg')} className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800">
+                    <label htmlFor={`${fieldId}-agg`} className="text-xs font-semibold text-slate-600">{t('provenance_step3_agg_label')}</label>
+                    <select id={`${fieldId}-agg`} value={agg} onChange={e => setAgg(e.target.value as 'sum' | 'count' | 'avg')} className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800">
                         <option value="sum">SUM</option>
                         <option value="count">COUNT</option>
                         <option value="avg">AVG</option>
                     </select>
                 </div>
                 <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold text-slate-600">{t('provenance_step3_value_label')}</label>
-                    <select value={valueCol} onChange={e => setValueCol(e.target.value)} className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800">
+                    <label htmlFor={`${fieldId}-value`} className="text-xs font-semibold text-slate-600">{t('provenance_step3_value_label')}</label>
+                    <select id={`${fieldId}-value`} value={valueCol} onChange={e => setValueCol(e.target.value)} className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800">
                         <option value="">—</option>
                         {numeric.map(col => <option key={col} value={col}>{col}</option>)}
                     </select>
@@ -352,17 +376,17 @@ export const GroupByTest: React.FC<GroupByTestProps> = ({ rows, language, accent
             </div>
             <div className="min-h-0 flex-1 overflow-auto">
                 {pivotResult ? (
-                    <PivotTableView pivot={pivotResult} language={language} />
+                    <PivotTableView pivot={pivotResult} language={language} agg={agg} />
                 ) : flatResult ? (
                     <DataTable
                         rows={flatResult.rows}
                         maxRows={30}
                         highlightCols={[groupBy, valueCol]}
-                        totalRow={{ label: t('provenance_step3_total_label'), value: formatNumber(flatResult.total), colSpan: 1 }}
+                        totalRow={{ label: totalLabel, value: formatNumber(flatResult.total), colSpan: 1 }}
                     />
                 ) : (
                     <div className="flex h-32 items-center justify-center text-sm text-slate-400">
-                        {t('provenance_step3_no_numeric_cols')}
+                        {t(numeric.length === 0 ? 'provenance_step3_no_numeric_cols' : 'provenance_step3_select_columns')}
                     </div>
                 )}
             </div>
@@ -373,7 +397,7 @@ export const GroupByTest: React.FC<GroupByTestProps> = ({ rows, language, accent
                         <span>
                             {pivotBy
                                 ? t('provenance_pivot_excel_hint', { group: groupBy, pivot: pivotBy, agg: agg.toUpperCase(), value: valueCol })
-                                : t('provenance_step3_try_excel', { hint: `${agg.toUpperCase()}IF(${groupBy}, "…", ${valueCol}) = ${formatNumber(totalValue)}` })
+                                : t('provenance_step3_try_excel', { hint: excelHint })
                             }
                         </span>
                         {onRequestCard && (
@@ -390,7 +414,7 @@ export const GroupByTest: React.FC<GroupByTestProps> = ({ rows, language, accent
                                         : `Create a new analysis card: ${agg.toUpperCase()}(${valueCol}) grouped by ${groupBy}. ${filterNote}`;
                                     onRequestCard(cardDesc, dataRows);
                                 }}
-                                className="shrink-0 rounded-md border border-blue-300 bg-white px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors"
+                                className="min-h-[44px] shrink-0 rounded-md border border-blue-300 bg-white px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors"
                             >
                                 {t('groupby_create_card')}
                             </button>
@@ -413,14 +437,16 @@ export const ViewModeToggle: React.FC<{
         <button
             type="button"
             onClick={() => onToggle(false)}
-            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${!isGroupBy ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            aria-pressed={!isGroupBy}
+            className={`min-h-[44px] rounded-md px-3 py-1 text-xs font-medium transition-colors ${!isGroupBy ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
         >
             {getTranslation('provenance_view_data', language)}
         </button>
         <button
             type="button"
             onClick={() => onToggle(true)}
-            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${isGroupBy ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            aria-pressed={isGroupBy}
+            className={`min-h-[44px] rounded-md px-3 py-1 text-xs font-medium transition-colors ${isGroupBy ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
         >
             {getTranslation('provenance_view_group_by', language)}
         </button>

@@ -3763,6 +3763,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Mandarin': '{rows} 行 × {cols} 列 | 表头在第 {header} 行',
         'Japanese': '{rows} 行 × {cols} 列 | ヘッダー行: {header}',
     },
+    'provenance_filter_rows_placeholder': {
+        'English': 'Filter rows by any value',
+        'Mandarin': '按任意内容筛选数据行',
+        'Malay': 'Tapis baris mengikut sebarang nilai',
+        'Japanese': '任意の値で行を絞り込む',
+    },
     'provenance_step2_title': {
         'English': 'After Cleaning',
         'Mandarin': '清理后数据',
@@ -3970,10 +3976,22 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Mandarin': '没有可用的数值列',
         'Japanese': '利用可能な数値列がありません',
     },
+    'provenance_step3_select_columns': {
+        'English': 'Select a group and value column to preview results.',
+        'Mandarin': '请选择分组列和数值列以预览结果。',
+        'Malay': 'Pilih lajur kumpulan dan nilai untuk pratonton hasil.',
+        'Japanese': 'グループ列と数値列を選択して結果をプレビューしてください。',
+    },
     'provenance_step3_total_label': {
         'English': 'Total',
         'Mandarin': '合计',
         'Japanese': '合計',
+    },
+    'provenance_step3_average_label': {
+        'English': 'Overall average',
+        'Mandarin': '总体平均值',
+        'Malay': 'Purata keseluruhan',
+        'Japanese': '全体平均',
     },
     'provenance_step3_try_excel': {
         'English': 'Try in Excel: {hint}',

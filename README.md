@@ -42,6 +42,8 @@ History saves reports and analysis evidence without embedding the original CSV r
 
 Data Explorer and other Tabulator tables keep pagination controls inside narrow viewports with touch-sized targets. The `#` column counts across pages, matching the range in the pagination footer.
 
+A card's **Data Provenance** dialog lets you inspect original rows, cleaned rows, the card query, and verification. Its row filter searches local table values; Group By Test can preview sums, counts, averages, and pivots. Average footers show the row-weighted overall average rather than adding group averages. On mobile, the dialog's navigation, mode controls, filters, and group selectors have touch-sized targets.
+
 History search includes titles from previous versions and reveals a matching version. On small screens, sort, storage, version, and row actions use touch-sized controls; the storage inspector and saved records share a scrollable area. Row action menus are positioned within the History dialog so their options remain visible even when the saved-record list is short.
 
 PWA update and offline notices remain available outside dialogs. While a modal is open, its title and controls stay above those notices; close the modal to use the update action.
