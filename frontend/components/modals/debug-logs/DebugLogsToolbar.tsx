@@ -45,7 +45,28 @@ export const DebugLogsToolbar: React.FC<DebugLogsToolbarProps> = ({
     onOpenWorkflow,
     onOpenWorkspace,
     onClose,
-}) => (
+}) => {
+    const exportDetailsRef = React.useRef<HTMLDetailsElement>(null);
+    const exportPanelRef = React.useRef<HTMLDivElement>(null);
+    const [exportMenuLeft, setExportMenuLeft] = React.useState(0);
+
+    // Copy status changes can move the trigger within the wrapped toolbar.
+    const positionExportMenu = React.useCallback(() => {
+        if (!exportDetailsRef.current?.open || !exportPanelRef.current) return;
+        const anchorLeft = exportDetailsRef.current.getBoundingClientRect().left;
+        const menuWidth = exportPanelRef.current.getBoundingClientRect().width;
+        const maximumLeft = Math.max(12, window.innerWidth - menuWidth - 12);
+        const viewportLeft = Math.min(Math.max(12, anchorLeft), maximumLeft);
+        setExportMenuLeft(viewportLeft - anchorLeft);
+    }, []);
+
+    React.useLayoutEffect(positionExportMenu, [copyStatus, positionExportMenu]);
+    React.useEffect(() => {
+        window.addEventListener('resize', positionExportMenu);
+        return () => window.removeEventListener('resize', positionExportMenu);
+    }, [positionExportMenu]);
+
+    return (
     <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/90 backdrop-blur-xl">
         <div className="flex flex-col gap-2 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="max-w-3xl">
@@ -63,11 +84,11 @@ export const DebugLogsToolbar: React.FC<DebugLogsToolbarProps> = ({
                 }`}>
                     {copyStatusLabel[copyStatus]}
                 </span>
-                <details className="relative">
+                <details ref={exportDetailsRef} className="relative" onToggle={positionExportMenu}>
                     <summary className="flex min-h-[44px] cursor-pointer items-center rounded-card border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
                         Advanced exports
                     </summary>
-                    <div className="absolute right-0 z-30 mt-2 grid max-h-[70vh] w-[min(22rem,calc(100vw-2rem))] gap-2 overflow-y-auto rounded-card border border-slate-200 bg-white p-3 shadow-xl">
+                    <div ref={exportPanelRef} style={{ left: exportMenuLeft }} className="absolute z-30 mt-2 grid max-h-[calc(100dvh-180px)] w-[min(22rem,calc(100vw-2rem))] gap-2 overflow-y-auto overscroll-contain rounded-card border border-slate-200 bg-white p-3 shadow-xl">
                         <p className="text-xs text-slate-600">Each action copies the named diagnostic scope only.</p>
                         <button onClick={onCopyAiDebugBundle} className="min-h-[44px] rounded-card border border-indigo-300 bg-indigo-50 px-3 py-2 text-left text-sm font-semibold text-indigo-800">Copy AI debug bundle</button>
                         <button onClick={onCopyRecentPayloads} className="min-h-[44px] rounded-card border border-slate-300 px-3 py-2 text-left text-sm text-slate-700">Copy recent payloads</button>
@@ -79,13 +100,13 @@ export const DebugLogsToolbar: React.FC<DebugLogsToolbarProps> = ({
                 </details>
                 <button
                     onClick={onOpenWorkflow}
-                    className="rounded-card border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+                    className="min-h-[44px] rounded-card border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
                 >
                     Workflow
                 </button>
                 <button
                     onClick={onOpenWorkspace}
-                    className="rounded-card bg-slate-950 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-slate-800"
+                    className="min-h-[44px] rounded-card bg-slate-950 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-slate-800"
                 >
                     Artifacts
                 </button>
@@ -100,4 +121,5 @@ export const DebugLogsToolbar: React.FC<DebugLogsToolbarProps> = ({
             </div>
         </div>
     </header>
-);
+    );
+};

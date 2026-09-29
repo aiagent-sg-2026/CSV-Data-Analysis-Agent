@@ -49,6 +49,8 @@ AI Long-Term Memory search is available only when the current report has saved m
 The Data Preparation Workflow's GitHub support action opens the public issues page for this repository.
 Its Advanced exports menu scrolls within short viewports so every download and copy action remains reachable.
 
+The Debug Logs export menu stays inside the viewport on mobile and short landscape screens. Its Workflow and Artifacts header actions have 44px touch targets.
+
 Modal background controls unlock after the last overlapping dialog closes, including when dialogs close in a different order from opening.
 
 If a saved analysis needs cloud-assisted preparation to reproduce its evidence version, selecting the original CSV while offline leaves that saved analysis intact and asks you to reconnect before trying the restore again.
