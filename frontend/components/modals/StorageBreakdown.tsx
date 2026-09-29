@@ -141,7 +141,7 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
         })),
         {
             key: 'cache',
-            label: 'Cache Storage (ONNX models)',
+            label: 'Cache Storage',
             bytes: data.cacheStorage.estimatedBytes,
             count: data.cacheStorage.cacheCount,
             color: STORE_COLORS.cache,
@@ -152,6 +152,7 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
     ];
 
     const maxBytes = Math.max(...allSegments.map(s => s.bytes), 1);
+    const scannedTotalBytes = Math.max(data.totalWithCacheBytes, 1);
 
     return (
         <div className="space-y-2">
@@ -177,17 +178,22 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
                     <div
                         key={seg.key}
                         className={`${seg.color} transition-all`}
-                        style={{ width: `${Math.max(1, (seg.bytes / data.rawOriginBytes) * 100)}%` }}
+                        style={{ width: `${(seg.bytes / scannedTotalBytes) * 100}%` }}
                         title={`${seg.label}: ${formatBytes(seg.bytes)}`}
                     />
                 ))}
             </div>
 
             {/* Totals */}
-            <div className="flex items-center justify-between text-[10px] text-slate-400">
-                <span>IndexedDB: {formatBytes(data.totalIdbBytes)}</span>
-                <span>Total (with cache): {formatBytes(data.rawOriginBytes)}</span>
+            <div className="flex flex-wrap items-center justify-between gap-x-3 text-[10px] text-slate-500">
+                <span>IndexedDB estimate: {formatBytes(data.totalIdbBytes)}</span>
+                <span>Scanned total: {formatBytes(data.totalWithCacheBytes)}</span>
             </div>
+            {data.rawOriginBytes > 0 && (
+                <p className="text-[10px] text-slate-400">
+                    Browser origin estimate: {formatBytes(data.rawOriginBytes)}. This uses a separate measurement and may differ from the scanned total.
+                </p>
+            )}
 
             {/* Per-store rows */}
             <div className="space-y-0.5">
@@ -201,7 +207,7 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
 
                         {/* Label + count */}
                         <div className="flex-1 min-w-0">
-                            <p className="text-xs text-slate-700 truncate">{seg.label}</p>
+                            <p className="text-xs text-slate-700 truncate" title={seg.isCache ? 'Cached app assets and models' : undefined}>{seg.label}</p>
                             <p className="text-[10px] text-slate-400">
                                 {seg.isCache
                                     ? `${seg.count} cache${seg.count !== 1 ? 's' : ''}`

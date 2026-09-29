@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceModal } from '../components/modals/WorkspaceModal';
 import { HistoryPanel } from '../components/modals/HistoryPanel';
+import { StorageBreakdown } from '../components/modals/StorageBreakdown';
 
 const { useAppStoreMock, buildWorkspaceBundleMock, getStorageBreakdownMock } = vi.hoisted(() => ({
     useAppStoreMock: vi.fn(),
@@ -304,5 +305,26 @@ describe('report artifact action surfaces', () => {
         const storageButton = await screen.findByRole('button', { name: /Local data\s+92\.6 MB/ });
         expect(storageButton).toHaveAttribute('title', 'Local browser data uses 92.6 MB. View details.');
         expect(storageButton.querySelector('[class*="bg-amber"]')).not.toBeInTheDocument();
+    });
+
+    it('separates the scanned storage total from the browser origin estimate', async () => {
+        const mib = 1024 * 1024;
+        getStorageBreakdownMock.mockResolvedValueOnce({
+            stores: [{ storeName: 'reports', label: 'Reports (sessions)', recordCount: 1, estimatedBytes: 17 * mib }],
+            cacheStorage: { cacheCount: 2, estimatedBytes: 39 * mib },
+            totalIdbBytes: 17 * mib,
+            totalWithCacheBytes: 56 * mib,
+            rawOriginBytes: 48 * mib,
+        });
+
+        render(<StorageBreakdown activeSessionId={null} />);
+
+        expect(await screen.findByText('Scanned total: 56.0 MB')).toBeInTheDocument();
+        expect(screen.getByText(/Browser origin estimate: 48\.0 MB/)).toBeInTheDocument();
+        expect(screen.queryByText('Total (with cache): 48.0 MB')).not.toBeInTheDocument();
+        const reportShare = parseFloat(screen.getByTitle('Reports (sessions): 17.0 MB').style.width);
+        const cacheShare = parseFloat(screen.getByTitle('Cache Storage: 39.0 MB').style.width);
+        expect(reportShare).toBeCloseTo((17 / 56) * 100);
+        expect(reportShare + cacheShare).toBeCloseTo(100);
     });
 });
