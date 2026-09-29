@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { openReportArtifact, printReportArtifact } from '../../services/reporting/reportArtifactViewer';
+import { openReportArtifact, printReportArtifact, reserveReportWindow } from '../../services/reporting/reportArtifactViewer';
 
 describe('reportArtifactViewer', () => {
     const originalCreateObjectURL = URL.createObjectURL;
@@ -41,11 +41,21 @@ describe('reportArtifactViewer', () => {
         expect(navigation).toHaveBeenCalledWith('blob:report-artifact#print');
     });
 
-    it('reports a blocked popup and revokes its unused blob URL', () => {
+    it('navigates a window reserved during the click without opening a second tab', () => {
+        const reserved = reserveReportWindow();
+        expect(reserved).toBe(reportWindow);
+        expect(window.open).toHaveBeenCalledTimes(1);
+
+        expect(openReportArtifact('<html>Report</html>', reserved!)).toBe(reportWindow);
+        expect(window.open).toHaveBeenCalledTimes(1);
+        expect(navigation).toHaveBeenCalledWith('blob:report-artifact');
+    });
+
+    it('reports a blocked popup without creating an unused blob URL', () => {
         window.open = vi.fn(() => null);
 
         expect(openReportArtifact('<html>Report</html>')).toBeNull();
-        expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:report-artifact');
+        expect(URL.createObjectURL).not.toHaveBeenCalled();
     });
 
     it('closes the blank tab if report navigation fails', () => {

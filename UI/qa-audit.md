@@ -267,3 +267,9 @@ Focused UI/store tests passed 28/28. Typecheck, lint, full suite (342 files / 2,
 History also discarded failures from **Open Report** and **Export PDF**. A saved-artifact read rejection and a blocked print view produced no inline feedback in red UI tests. The store now returns an explicit success result for missing or blocked artifacts and records unexpected read failures before propagating them. History displays an action-specific error and retries the same report operation. The action menu waits for a pending report operation to finish before accepting another.
 
 Focused UI/store tests passed 18/18. Typecheck, lint, full suite (342 files / 2,856 tests), and production build passed. The report viewer's native popup remains subject to the in-app browser policy, and the Mac was locked for this pass; visual and end-to-end verification of both retry states is pending. Root deployment and public Pages remain unchanged.
+
+## 2026-09-29 History report popup timing QA
+
+The saved-report actions awaited IndexedDB and artifact HTML before calling `window.open`. Browser transient activation can expire during those awaits, so a slow read can make a valid click look like a blocked popup. The store now reserves one opener-isolated blank tab synchronously when the action starts, then loads and navigates it. Failed reads and missing artifacts close the blank tab; an immediately blocked popup stops before storage reads. The normal latest-report viewer still uses the same navigation and Blob URL cleanup path.
+
+A deferred-read test first confirmed no window was reserved before the await, then passed after the change. Focused viewer/store/UI tests passed 25/25; typecheck, lint, full suite (342 files / 2,859 tests), and production build passed. The in-app browser remained unavailable because the Mac was locked, so real popup behavior and the report/print rendering still require browser verification. Root deployment and public Pages remain unchanged.

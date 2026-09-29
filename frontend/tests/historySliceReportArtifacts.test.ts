@@ -8,12 +8,14 @@ const {
     hydrateLatestReportWorkspaceFilesMock,
     openReportArtifactMock,
     printReportArtifactMock,
+    reserveReportWindowMock,
 } = vi.hoisted(() => ({
     getReportMock: vi.fn(),
     loadReportArtifactHtmlMock: vi.fn(),
     hydrateLatestReportWorkspaceFilesMock: vi.fn(async (workspaceFiles: Record<string, string>) => workspaceFiles),
     openReportArtifactMock: vi.fn(() => ({ closed: false })),
     printReportArtifactMock: vi.fn<() => { closed: boolean } | null>(() => ({ closed: false })),
+    reserveReportWindowMock: vi.fn<() => Window | null>(() => ({ close: vi.fn(), opener: null } as unknown as Window)),
 }));
 
 vi.mock('../services/storageService', () => ({
@@ -27,6 +29,7 @@ vi.mock('../services/storageService', () => ({
 vi.mock('../services/reporting/reportArtifactViewer', () => ({
     openReportArtifact: openReportArtifactMock,
     printReportArtifact: printReportArtifactMock,
+    reserveReportWindow: reserveReportWindowMock,
 }));
 
 vi.mock('../services/reporting/reportArtifactStorage', () => ({
@@ -103,8 +106,8 @@ describe('historySlice report artifact actions', () => {
         expect(await harness.getState().exportPersistedReportPdf('report-1')).toBe(true);
 
         expect(loadReportArtifactHtmlMock).toHaveBeenCalledWith('artifact-1');
-        expect(openReportArtifactMock).toHaveBeenCalledWith('<!DOCTYPE html><html><body>Archive</body></html>');
-        expect(printReportArtifactMock).toHaveBeenCalledWith('<!DOCTYPE html><html><body>Archive</body></html>');
+        expect(openReportArtifactMock).toHaveBeenCalledWith('<!DOCTYPE html><html><body>Archive</body></html>', expect.anything());
+        expect(printReportArtifactMock).toHaveBeenCalledWith('<!DOCTYPE html><html><body>Archive</body></html>', expect.anything());
     });
 
     it('reports missing persisted artifacts safely', async () => {
@@ -132,6 +135,8 @@ describe('historySlice report artifact actions', () => {
 
         expect(harness.getState().addProgress).toHaveBeenCalledWith('No saved report artifact was found for report-2.', 'error');
         expect(harness.getState().addProgress).toHaveBeenCalledWith('No saved report artifact was found for missing-report.', 'error');
+        expect(reserveReportWindowMock.mock.results[0].value?.close).toHaveBeenCalledOnce();
+        expect(reserveReportWindowMock.mock.results[1].value?.close).toHaveBeenCalledOnce();
     });
 
     it('reports a failed artifact read and a blocked PDF print view', async () => {
@@ -141,6 +146,7 @@ describe('historySlice report artifact actions', () => {
         await expect(harness.getState().openPersistedReportArtifact('report-1'))
             .rejects.toThrow('IndexedDB unavailable');
         expect(harness.getState().addProgress).toHaveBeenCalledWith('Failed to open the saved report for report-1.', 'error');
+        expect(reserveReportWindowMock.mock.results[0].value?.close).toHaveBeenCalledOnce();
 
         getReportMock.mockResolvedValueOnce({
             id: 'report-1',
@@ -153,5 +159,35 @@ describe('historySlice report artifact actions', () => {
 
         expect(await harness.getState().exportPersistedReportPdf('report-1')).toBe(false);
         expect(harness.getState().addProgress).toHaveBeenCalledWith('Failed to open the saved report for PDF export: report-1.', 'error');
+    });
+
+    it('reserves the report window before waiting for saved artifact data', async () => {
+        let resolveReport!: (report: unknown) => void;
+        getReportMock.mockImplementationOnce(() => new Promise(resolve => { resolveReport = resolve; }));
+        loadReportArtifactHtmlMock.mockResolvedValueOnce('<html>Report</html>');
+        const harness = createHarness();
+
+        const pending = harness.getState().openPersistedReportArtifact('report-1');
+        expect(reserveReportWindowMock).toHaveBeenCalledTimes(1);
+        expect(getReportMock).toHaveBeenCalledWith('report-1');
+        expect(openReportArtifactMock).not.toHaveBeenCalled();
+
+        resolveReport({
+            id: 'report-1',
+            appState: { workspaceFiles: {
+                '/workspace/reports/latest-analyst-report.manifest.json': JSON.stringify({ reportId: 'artifact-1', artifactStatus: 'ready' }),
+            } },
+        });
+        expect(await pending).toBe(true);
+        expect(openReportArtifactMock).toHaveBeenCalledWith('<html>Report</html>', reserveReportWindowMock.mock.results[0].value);
+    });
+
+    it('does not read saved artifacts when the browser blocks the new window', async () => {
+        reserveReportWindowMock.mockReturnValueOnce(null);
+        const harness = createHarness();
+
+        expect(await harness.getState().openPersistedReportArtifact('report-1')).toBe(false);
+        expect(getReportMock).not.toHaveBeenCalled();
+        expect(harness.getState().addProgress).toHaveBeenCalledWith('Failed to open the saved report for report-1.', 'error');
     });
 });

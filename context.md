@@ -568,3 +568,9 @@
 - **Finding and fix**: Open Report and Export PDF in History discarded asynchronous failures and had no inline response to a missing artifact or blocked report/print window. The store now returns success/failure and logs unexpected read errors; the panel shows operation-specific retry feedback.
 - **Checks**: Two failure-injection UI tests failed on the previous behavior. Focused UI/store tests passed 18/18; typecheck, lint, full suite 342 files / 2,856 tests, and production build passed. Existing Vite import warnings remain.
 - **Browser/release status**: The Mac is still locked, so the two recovery states need in-app browser visual/E2E verification. Root generated deployment and public Pages remain unchanged.
+
+## 2026-09-29 History Report Popup Timing QA
+
+- **Finding and fix**: History waited for saved HTML before calling `window.open`, risking loss of transient user activation. It now reserves one opener-isolated tab synchronously on click and navigates after the read. Missing artifacts or read failures close the blank tab; a blocked reservation avoids storage reads.
+- **Checks**: A deferred-read regression failed on the previous ordering. Viewer/store/UI focused tests passed 25/25; typecheck, lint, full suite 342 files / 2,859 tests, and production build passed. Existing Vite import warnings remain.
+- **Browser/release status**: The Mac remains locked, so report popup and print rendering need in-app browser E2E verification. Root generated deployment and public Pages remain unchanged.
