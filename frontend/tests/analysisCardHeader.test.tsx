@@ -1,8 +1,9 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AnalysisCardHeader } from '../components/analysis-card/AnalysisCardHeader';
 
 const baseProps = {
+    cardId: 'test-card',
     plan: {
         title: 'Spend by Project',
         description: 'Compare project spending.',
@@ -38,12 +39,32 @@ describe('AnalysisCardHeader', () => {
         expect(screen.queryByRole('button', { name: /pie/i })).not.toBeInTheDocument();
     });
 
-    it('moves delete into the more menu', () => {
+    it('requires confirmation and preserves the card when cancelled', async () => {
+        const onDelete = vi.fn();
+        render(<AnalysisCardHeader {...baseProps} onDelete={onDelete} />);
+
+        const moreTrigger = screen.getByRole('button', { name: /more actions/i });
+        fireEvent.click(moreTrigger);
+        fireEvent.click(screen.getByRole('menuitem', { name: /delete card/i }));
+
+        expect(screen.getByRole('dialog', { name: /delete this card/i })).toBeInTheDocument();
+        expect(onDelete).not.toHaveBeenCalled();
+        const keepCard = screen.getByRole('button', { name: /keep card/i });
+        await waitFor(() => expect(keepCard).toHaveFocus());
+        fireEvent.click(keepCard);
+
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(onDelete).not.toHaveBeenCalled();
+        await waitFor(() => expect(moreTrigger).toHaveFocus());
+    });
+
+    it('deletes only after the dialog action is confirmed', () => {
         const onDelete = vi.fn();
         render(<AnalysisCardHeader {...baseProps} onDelete={onDelete} />);
 
         fireEvent.click(screen.getByRole('button', { name: /more actions/i }));
         fireEvent.click(screen.getByRole('menuitem', { name: /delete card/i }));
+        fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /delete card/i }));
 
         expect(onDelete).toHaveBeenCalledTimes(1);
     });

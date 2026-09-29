@@ -1,11 +1,13 @@
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ChartType, AnalysisPlan, type CardTrustStatus } from '../../types';
 import { IconExport } from '../../icons/IconExport';
 import { IconMoreHorizontal } from '../../icons/IconMoreHorizontal';
 import { ChartTypeIcon } from './chartTypePresentation';
 import { resolveDisplayPlanDescription, resolveDisplayPlanTitle, resolvePlanGroupLabel, resolvePlanMetricLabel } from '../../services/dashboard/businessLabelResolver';
 import { getTranslation } from '../../utils/localization';
+import { useDialogAccessibility } from '../../hooks/useDialogAccessibility';
 
 interface AnalysisCardHeaderProps {
     cardId?: string;
@@ -57,6 +59,13 @@ const AnalysisCardHeaderComponent: React.FC<AnalysisCardHeaderProps> = ({
     showActions = true,
 }) => {
     const [openMenu, setOpenMenu] = useState<'chart' | 'export' | 'more' | null>(null);
+    const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+    const deleteDialogId = useId();
+    const deleteDialogRef = useDialogAccessibility<HTMLDivElement>(
+        isDeleteConfirmOpen,
+        () => setIsDeleteConfirmOpen(false),
+        cardId ? { restoreFocusSelector: `[data-card-more-trigger="${cardId.replace(/["\\]/g, '\\$&')}"]` } : undefined,
+    );
     const chartMenuRef = useRef<HTMLDivElement>(null);
     const exportMenuRef = useRef<HTMLDivElement>(null);
     const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -165,6 +174,11 @@ const AnalysisCardHeaderComponent: React.FC<AnalysisCardHeaderProps> = ({
 
     const handleDelete = () => {
         closeMenus();
+        setIsDeleteConfirmOpen(true);
+    };
+
+    const confirmDelete = () => {
+        setIsDeleteConfirmOpen(false);
         onDelete();
     };
 
@@ -463,6 +477,48 @@ const AnalysisCardHeaderComponent: React.FC<AnalysisCardHeaderProps> = ({
                 </div>}
             </div>
             <p className="mb-3 text-xs text-slate-500">{displayDescription}</p>
+            {isDeleteConfirmOpen && createPortal(
+                <div
+                    className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+                    onClick={() => setIsDeleteConfirmOpen(false)}
+                >
+                    <div
+                        ref={deleteDialogRef}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby={`${deleteDialogId}-title`}
+                        aria-describedby={`${deleteDialogId}-description`}
+                        tabIndex={-1}
+                        className="w-full max-w-md rounded-card border border-slate-200 bg-white p-5 shadow-2xl"
+                        onClick={event => event.stopPropagation()}
+                    >
+                        <h2 id={`${deleteDialogId}-title`} className="text-lg font-bold text-slate-950">
+                            {getTranslation('card_delete_confirm_title', language)}
+                        </h2>
+                        <p id={`${deleteDialogId}-description`} className="mt-2 text-sm leading-6 text-slate-600">
+                            {getTranslation('card_delete_confirm_description', language)}
+                        </p>
+                        <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                            <button
+                                type="button"
+                                data-dialog-initial-focus
+                                onClick={() => setIsDeleteConfirmOpen(false)}
+                                className="min-h-[44px] rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                                {getTranslation('card_delete_confirm_cancel', language)}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={confirmDelete}
+                                className="min-h-[44px] rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                            >
+                                {getTranslation('card_delete', language)}
+                            </button>
+                        </div>
+                    </div>
+                </div>,
+                document.body,
+            )}
         </>
     );
 };
