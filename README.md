@@ -56,6 +56,8 @@ History search includes titles from previous versions and reveals a matching ver
 
 PWA update and offline notices occupy space above the app header, so they do not cover navigation controls on narrow screens. While a modal is open, its title and controls stay above those notices; close the modal to use the update action.
 
+In Settings, the Smart Auto-Confirm Goal row has a full-width touch target; Cancel discards any unsaved change.
+
 The Assistant activity panel labels an empty session without implying that analysis is running. Its Memory and Dataset Knowledge tabs describe what will be available after a future analysis. Its card review action becomes available only after an analysis card exists; otherwise the panel explains the prerequisite.
 
 AI Long-Term Memory search is available only when the current report has saved memory items. The panel explains missing data or memory, and shows an explicit empty or retry message after a search returns no matches or fails.

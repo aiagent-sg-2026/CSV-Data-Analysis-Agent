@@ -495,3 +495,9 @@
 - **Finding and fix**: At 320px the fixed PWA update notice covered History and Assistant, so their visual tap targets could not be reached. The same overlay class was used by the offline notice. Both notices now occupy layout space above the main scroll area and push the header down, preserving navigation and scroll access.
 - **Browser evidence**: Before: Assistant at y=6–50 was covered by the update notice at y=9–118. After: notice ended at y=115, History and Assistant occupied y=130–174 and opened successfully; document width remained 320px. At 390px and 667×375 no header overlap or document overflow appeared. Simulated offline mode also left the header clear; network was restored and browser error logs were empty. Before, after, and offline screenshots are linked from `UI/qa-audit.md`.
 - **Checks/release**: Typecheck, lint, PWA banner tests 3/3, full suite 341 files / 2,830 tests, production build, and bundle budget passed. Root deployment and public Pages were not updated.
+
+## 2026-09-29 Settings Checkbox Touch QA
+
+- **Finding and fix**: At 320px the Smart Auto-Confirm Goal checkbox measured 12×12px and its adjacent label 13.5px high. The full option title is now a 44px-high label row; the explanatory hint is associated through `aria-describedby`.
+- **Browser evidence**: The rebuilt Settings dialog fitted the 320×568 viewport. The new label measured 270×44px, a click at its far-right edge toggled the checkbox, and Cancel preserved the originally saved checked value when Settings reopened. `UI/qa-audit.md` links the before and after screenshots. No user setting was saved.
+- **Checks/release**: Settings tests 5/5, typecheck, lint, production build, and bundle budget passed. The immediately preceding PWA layout commit passed the full suite (341 files / 2,830 tests); that suite was not rerun after this Settings-only change. Root deployment and public Pages were not updated.

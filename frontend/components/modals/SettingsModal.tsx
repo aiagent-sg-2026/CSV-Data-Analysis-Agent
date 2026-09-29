@@ -412,25 +412,22 @@ export const SettingsModal: React.FC = () => {
                             </p>
                         </div>
                         
-                        <div className="relative flex items-start">
-                            <div className="flex h-6 items-center">
+                        <div>
+                            <label htmlFor="autoConfirmGoal" className="flex min-h-[44px] cursor-pointer items-center gap-3 text-sm font-medium text-slate-900">
                                 <input
                                     id="autoConfirmGoal"
                                     name="autoConfirmGoal"
                                     type="checkbox"
                                     checked={settings.autoConfirmGoal}
                                     onChange={handleCheckboxChange}
-                                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                                    aria-describedby="autoConfirmGoalHint"
+                                    className="h-5 w-5 shrink-0 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
                                 />
-                            </div>
-                            <div className="ml-2 space-y-1 text-sm leading-6">
-                                <label htmlFor="autoConfirmGoal" className="font-medium text-slate-900">
-                                    {getTranslation('settings_auto_confirm_goal', language)}
-                                </label>
-                                <p className="text-xs text-slate-500">
-                                    {getTranslation('settings_auto_confirm_goal_hint', language)}
-                                </p>
-                            </div>
+                                <span>{getTranslation('settings_auto_confirm_goal', language)}</span>
+                            </label>
+                            <p id="autoConfirmGoalHint" className="ml-8 text-xs text-slate-500">
+                                {getTranslation('settings_auto_confirm_goal_hint', language)}
+                            </p>
                         </div>
 
                         <div className="rounded-card border border-slate-200 bg-slate-50 p-4">
