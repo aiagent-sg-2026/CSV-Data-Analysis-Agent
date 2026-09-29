@@ -544,3 +544,9 @@
 - **Finding and fix**: `MemoryPanel` opened with an unhandled `getDocumentsForScope` rejection and incorrectly displayed an empty-memory state. It now shows a retry alert, keeps previously loaded items with a warning on refresh failure, and clears old report items on close. A request sequence prevents an older refresh from overwriting a newer one.
 - **Checks**: The injected worker failure first produced an unhandled rejection and no alert. After the fix, focused tests passed 10/10; typecheck, lint, full suite 341 files / 2,843 tests, production build, and bundle budget passed. Close/reopen and delayed model-activation tests check that old report text and stale asynchronous results do not reappear.
 - **Browser/release status**: The Mac is still locked according to the most recent inventory. Browser visual/E2E remains pending; root output and public Pages are unchanged.
+
+## 2026-09-29 Structure Repair Failure QA
+
+- **Finding and fix**: The guided repair dialog swallowed boundary-save failures into console logging, while the Data Preparation Workflow discarded failures from its two boundary actions. Both dialogs now expose a retryable error. The shared store action also records a progress error before rethrowing, covering failures that occur after the guided dialog closes.
+- **Checks**: Four injected failures first produced no visible alert or progress error. Focused dialog/store tests passed 7/7 after the fix, including retry; typecheck, lint, full suite 342 files / 2,847 tests, production build, and bundle budget passed. The build retained existing static/dynamic import overlap warnings.
+- **Browser/release status**: The latest computer inventory reports the Mac locked. The dialogs still need in-app browser visual/E2E checks. Root output and public Pages are unchanged.

@@ -24,6 +24,7 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
     const [bodyStart, setBodyStart] = useState(0);
     const [summaryStart, setSummaryStart] = useState<number | null>(null);
     const [confirming, setConfirming] = useState(false);
+    const [saveError, setSaveError] = useState(false);
 
     const t = (key: string, params?: Record<string, string | number>) =>
         getTranslation(key, language, params);
@@ -38,6 +39,7 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
             setBodyStart(reportStructureResolution.bodyStartIndex ?? 0);
             setSummaryStart(reportStructureResolution.summaryStartIndex ?? null);
             setConfirming(false);
+            setSaveError(false);
         }
     }, [isOpen, reportStructureResolution]);
 
@@ -74,6 +76,7 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
     const triggerConfirm = async () => {
         if (confirming) return;
         setConfirming(true);
+        setSaveError(false);
         const boundary: ReportBoundary = {
             headerRowIndex: reportStructureResolution.headerRowIndex,
             headerLayerRowIndexes: reportStructureResolution.headerLayerRowIndexes,
@@ -86,6 +89,7 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
             await saveReportStructureBoundaryOverride(boundary);
         } catch (err) {
             console.error('[BoundaryConfirm] save failed:', err);
+            setSaveError(true);
         } finally {
             setConfirming(false);
         }
@@ -319,6 +323,12 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
                         </div>
                     )}
                 </div>
+
+                {saveError && (
+                    <p role="alert" className="mx-6 mb-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                        {t('boundary_confirm_save_failed')}
+                    </p>
+                )}
 
                 {/* Footer */}
                 <div className="px-6 py-4 border-t border-slate-200 flex items-center justify-end gap-3 flex-shrink-0">

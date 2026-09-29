@@ -924,58 +924,63 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
         },
 
         saveReportStructureBoundaryOverride: async (boundary) => {
-            const [
-                { getPreferredAnalysisDataset },
-                { resolveAnalysisDatasetProfiles },
-                { DEFAULT_AUTO_ANALYSIS_GOAL },
-            ] = await Promise.all([
-                import('../../services/agent/reportStructureState'),
-                import('../../services/agent/analysisDatasetProfiles'),
-                import('../../services/agent/analysisDefaults'),
-            ]);
+            try {
+                const [
+                    { getPreferredAnalysisDataset },
+                    { resolveAnalysisDatasetProfiles },
+                    { DEFAULT_AUTO_ANALYSIS_GOAL },
+                ] = await Promise.all([
+                    import('../../services/agent/reportStructureState'),
+                    import('../../services/agent/analysisDatasetProfiles'),
+                    import('../../services/agent/analysisDefaults'),
+                ]);
 
-            await rebuildStructureArtifacts(boundary);
-            // Close the modal immediately after rebuilding — analysis runs in the background.
-            get().setIsReportBoundaryConfirmModalOpen(false);
-            const pipelineOutcome = get().pipelineOutcome;
-            const structureAccepted = pipelineOutcome?.status === 'ready'
-                || pipelineOutcome?.status === 'degraded_but_usable';
-            get().recordAgentEvent({
-                phase: 'file',
-                step: 'structure_confirmation_applied',
-                status: structureAccepted ? 'done' : 'error',
-                message: structureAccepted
-                    ? 'The confirmed report boundary was applied to the prepared dataset.'
-                    : 'The boundary confirmation was saved, but remaining verification issues still limit automatic analysis.',
-                activity: {
-                    kind: 'approval',
-                    lifecycle: structureAccepted ? 'completed' : 'degraded',
-                    source: 'approval',
-                    eventType: 'structure_confirmation_applied',
-                    title: structureAccepted ? 'Structure confirmed' : 'Structure confirmation degraded',
-                    explanation: pipelineOutcome?.message,
-                },
-            });
-            if (pipelineOutcome?.status === 'ready' || pipelineOutcome?.status === 'degraded_but_usable') {
-                const analysisDataset = getPreferredAnalysisDataset(get());
-                if (analysisDataset) {
-                    const resolvedProfiles = resolveAnalysisDatasetProfiles(analysisDataset, get().columnProfiles);
-                    set({
-                        columnProfiles: resolvedProfiles,
-                        columnRegistry: buildRegistryForDataset(analysisDataset, resolvedProfiles, get().datasetSemanticSnapshot),
-                    });
-                    duckDbWorkerClient.initDuckDb(DUCKDB_INIT_TIMEOUT_MS).catch(() => {});
-                    await get().ensureDatasetSemanticSnapshot(analysisDataset, { force: true });
-                    await refreshDuckDbSession();
-                    const goal = get().confirmedAnalysisGoal ?? DEFAULT_AUTO_ANALYSIS_GOAL;
-                    const analysisOutcome = await get().handleInitialAnalysis(analysisDataset, goal, { trigger: 'manual' });
-                    if (analysisOutcome.status !== 'paused' && analysisOutcome.status !== 'error') {
-                        await proposeGoalsAfterAnalysisSummaries(analysisDataset, analysisOutcome);
+                await rebuildStructureArtifacts(boundary);
+                // Close the modal immediately after rebuilding — analysis runs in the background.
+                get().setIsReportBoundaryConfirmModalOpen(false);
+                const pipelineOutcome = get().pipelineOutcome;
+                const structureAccepted = pipelineOutcome?.status === 'ready'
+                    || pipelineOutcome?.status === 'degraded_but_usable';
+                get().recordAgentEvent({
+                    phase: 'file',
+                    step: 'structure_confirmation_applied',
+                    status: structureAccepted ? 'done' : 'error',
+                    message: structureAccepted
+                        ? 'The confirmed report boundary was applied to the prepared dataset.'
+                        : 'The boundary confirmation was saved, but remaining verification issues still limit automatic analysis.',
+                    activity: {
+                        kind: 'approval',
+                        lifecycle: structureAccepted ? 'completed' : 'degraded',
+                        source: 'approval',
+                        eventType: 'structure_confirmation_applied',
+                        title: structureAccepted ? 'Structure confirmed' : 'Structure confirmation degraded',
+                        explanation: pipelineOutcome?.message,
+                    },
+                });
+                if (pipelineOutcome?.status === 'ready' || pipelineOutcome?.status === 'degraded_but_usable') {
+                    const analysisDataset = getPreferredAnalysisDataset(get());
+                    if (analysisDataset) {
+                        const resolvedProfiles = resolveAnalysisDatasetProfiles(analysisDataset, get().columnProfiles);
+                        set({
+                            columnProfiles: resolvedProfiles,
+                            columnRegistry: buildRegistryForDataset(analysisDataset, resolvedProfiles, get().datasetSemanticSnapshot),
+                        });
+                        duckDbWorkerClient.initDuckDb(DUCKDB_INIT_TIMEOUT_MS).catch(() => {});
+                        await get().ensureDatasetSemanticSnapshot(analysisDataset, { force: true });
+                        await refreshDuckDbSession();
+                        const goal = get().confirmedAnalysisGoal ?? DEFAULT_AUTO_ANALYSIS_GOAL;
+                        const analysisOutcome = await get().handleInitialAnalysis(analysisDataset, goal, { trigger: 'manual' });
+                        if (analysisOutcome.status !== 'paused' && analysisOutcome.status !== 'error') {
+                            await proposeGoalsAfterAnalysisSummaries(analysisDataset, analysisOutcome);
+                        }
                     }
+                    get().addProgress('Report structure was confirmed and canonical data is ready for analysis.');
+                } else {
+                    get().addProgress(pipelineOutcome?.message ?? 'Report structure review was saved.', pipelineOutcome?.severity === 'blocked' ? 'warning' : 'system');
                 }
-                get().addProgress('Report structure was confirmed and canonical data is ready for analysis.');
-            } else {
-                get().addProgress(pipelineOutcome?.message ?? 'Report structure review was saved.', pipelineOutcome?.severity === 'blocked' ? 'warning' : 'system');
+            } catch (error) {
+                get().addProgress(getTranslation('boundary_confirm_save_failed', get().settings.language), 'error');
+                throw error;
             }
         },
 

@@ -3664,6 +3664,14 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Mandarin': '处理中…',
         'Japanese': '処理中…',
     },
+    'boundary_confirm_save_failed': {
+        'English': 'Could not finish applying this data structure. Review the current status, then retry.',
+        'Mandarin': '未能完成数据结构应用。请查看当前状态，然后重试。',
+        'Malay': 'Tidak dapat menyelesaikan penggunaan struktur data ini. Semak status semasa, kemudian cuba lagi.',
+        'Spanish': 'No se pudo terminar de aplicar esta estructura de datos. Revisa el estado actual y vuelve a intentarlo.',
+        'Japanese': 'このデータ構造の適用を完了できませんでした。現在の状態を確認してから再試行してください。',
+        'French': 'Impossible de terminer l’application de cette structure de données. Vérifiez l’état actuel, puis réessayez.',
+    },
     'boundary_confirm_auto_confirm_label': {
         'English': 'Auto-confirm after 10 s',
         'Mandarin': '10 秒后自动确认',

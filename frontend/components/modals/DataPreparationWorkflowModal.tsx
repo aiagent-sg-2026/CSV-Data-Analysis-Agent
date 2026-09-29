@@ -18,6 +18,7 @@ import { downloadDatasetBundleZip } from '../../services/data/datasetBundleExpor
 import { readDatasetFileFromOpfs } from '../../services/data/opfsDatasetStorage';
 import { getSandboxTableRows } from '../../services/data/sandboxTableRegistry';
 import { getCsvDataRowCount } from '../../utils/datasetId';
+import type { ReportBoundary } from '../../types';
 
 const PUBLIC_SUPPORT_ISSUES_URL = 'https://github.com/yapweijun1996/CSV-Data-Analysis-Agent/issues';
 
@@ -79,6 +80,8 @@ const OpenDataPreparationWorkflowModal: React.FC = () => {
     const exportMenuRef = useRef<HTMLDetailsElement>(null);
     const workflow = useMemo(() => buildDataPreparationWorkflowBundle(workflowState as AppStore), [workflowState]);
     const [copyStatus, setCopyStatus] = useState<'idle' | 'workflow' | 'failure' | 'download' | 'bundle' | 'support' | 'error'>('idle');
+    const [boundarySaveError, setBoundarySaveError] = useState(false);
+    const boundarySaveInFlight = useRef(false);
     const closeExportMenu = () => {
         if (exportMenuRef.current) exportMenuRef.current.open = false;
     };
@@ -248,12 +251,25 @@ const OpenDataPreparationWorkflowModal: React.FC = () => {
         });
     };
 
+    const handleSaveStructureBoundary = async (boundary: ReportBoundary) => {
+        if (boundarySaveInFlight.current) return;
+        boundarySaveInFlight.current = true;
+        setBoundarySaveError(false);
+        try {
+            await saveReportStructureBoundaryOverride(boundary);
+        } catch {
+            setBoundarySaveError(true);
+        } finally {
+            boundarySaveInFlight.current = false;
+        }
+    };
+
     const handleConfirmStructureBoundary = () => {
         const detectedBoundary = workflow.structureReview?.detectedBoundary;
         if (!detectedBoundary || detectedBoundary.headerRowIndex === null || detectedBoundary.bodyStartIndex === null) {
             return;
         }
-        void saveReportStructureBoundaryOverride({
+        void handleSaveStructureBoundary({
             headerRowIndex: detectedBoundary.headerRowIndex,
             headerLayerRowIndexes: detectedBoundary.headerLayerRowIndexes,
             bodyStartIndex: detectedBoundary.bodyStartIndex,
@@ -365,6 +381,12 @@ const OpenDataPreparationWorkflowModal: React.FC = () => {
                     </div>
                 </header>
 
+                {boundarySaveError && (
+                    <p role="alert" className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 lg:mx-5 xl:mx-6">
+                        {getTranslation('boundary_confirm_save_failed', language)}
+                    </p>
+                )}
+
                 <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 pt-4 lg:px-5 xl:px-6">
                     {!workflow.summary.fileName ? (
                         <div className="h-full flex flex-col items-center justify-center text-center text-slate-500 min-h-[320px] rounded-card border border-slate-200 bg-white">
@@ -384,7 +406,7 @@ const OpenDataPreparationWorkflowModal: React.FC = () => {
                             activityDatasetId={currentDatasetId}
                             onConfirmStructureBoundary={handleConfirmStructureBoundary}
                             onSaveStructureBoundaryOverride={(boundary) => {
-                                void saveReportStructureBoundaryOverride(boundary);
+                                void handleSaveStructureBoundary(boundary);
                             }}
                         />
                     )}

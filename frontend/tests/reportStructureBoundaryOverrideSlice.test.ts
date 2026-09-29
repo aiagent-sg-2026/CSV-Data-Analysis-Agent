@@ -150,4 +150,18 @@ describe('report structure boundary override slice integration', () => {
 
         expect(getState().proposeAnalysisGoals).toHaveBeenCalledTimes(1);
     });
+
+    it('reports an analysis preparation failure after closing the repair dialog', async () => {
+        const { getState, boundary } = createSliceHarness();
+        const addProgress = vi.spyOn(getState(), 'addProgress');
+        getState().ensureDatasetSemanticSnapshot.mockRejectedValue(new Error('Worker unavailable'));
+
+        await expect(getState().saveReportStructureBoundaryOverride(boundary)).rejects.toThrow('Worker unavailable');
+
+        expect(getState().setIsReportBoundaryConfirmModalOpen).toHaveBeenCalledWith(false);
+        expect(addProgress).toHaveBeenCalledWith(
+            expect.stringContaining('Could not finish applying this data structure'),
+            'error',
+        );
+    });
 });

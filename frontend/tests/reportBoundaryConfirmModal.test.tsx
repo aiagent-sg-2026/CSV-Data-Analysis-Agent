@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ReportBoundaryConfirmModal } from '../components/modals/ReportBoundaryConfirmModal';
 import * as useAppStoreModule from '../store/useAppStore';
 
@@ -8,6 +8,7 @@ vi.mock('../store/useAppStore', () => ({
 }));
 
 describe('ReportBoundaryConfirmModal guided repair', () => {
+    afterEach(cleanup);
     it('explains the block, allows field-role correction, and waits for explicit confirmation', async () => {
         const saveBoundary = vi.fn(async () => undefined);
         const setColumnAnnotation = vi.fn();
@@ -77,5 +78,49 @@ describe('ReportBoundaryConfirmModal guided repair', () => {
             bodyStartIndex: 1,
             summaryStartIndex: null,
         })));
+    });
+
+    it('keeps the repair available and explains a failed save before retrying', async () => {
+        const saveBoundary = vi.fn()
+            .mockRejectedValueOnce(new Error('Worker unavailable'))
+            .mockResolvedValueOnce(undefined);
+        const store = {
+            isReportBoundaryConfirmModalOpen: true,
+            setIsReportBoundaryConfirmModalOpen: vi.fn(),
+            reportStructureResolution: {
+                headerRowIndex: 0,
+                headerLayerRowIndexes: [0],
+                bodyStartIndex: 1,
+                summaryStartIndex: null,
+                parameterRowIndexes: [],
+                repeatedHeaderRowIndexes: [],
+                decision: { targetShape: 'row_table', shouldCanonicalize: true, reason: 'Review needed.' },
+            },
+            rawIntakeIr: { normalizedRows: [['Project'], ['Alpha']] },
+            saveReportStructureBoundaryOverride: saveBoundary,
+            isBusy: false,
+            settings: { language: 'English' },
+            pipelineOutcome: null,
+            cleaningRun: null,
+            columnProfiles: [],
+            userColumnAnnotations: {},
+            setColumnAnnotation: vi.fn(),
+        };
+        (useAppStoreModule.useAppStore as unknown as ReturnType<typeof vi.fn>)
+            .mockImplementation((selector: (value: typeof store) => unknown) => selector(store));
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        try {
+            render(<ReportBoundaryConfirmModal />);
+            const confirm = screen.getByRole('button', { name: 'Confirm & Start Analysis' });
+            fireEvent.click(confirm);
+            expect(await screen.findByRole('alert')).toHaveTextContent('Could not finish applying this data structure');
+            expect(confirm).toBeEnabled();
+
+            fireEvent.click(confirm);
+            await waitFor(() => expect(saveBoundary).toHaveBeenCalledTimes(2));
+            await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+        } finally {
+            consoleError.mockRestore();
+        }
     });
 });
