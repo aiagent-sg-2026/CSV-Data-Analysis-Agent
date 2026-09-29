@@ -580,3 +580,9 @@
 - **Finding and fix**: AppHeader previously fired the History list read without catching errors, and the panel could present a failed read as empty history. The panel now owns first load, shows loading/failure states, and retries with a forced refresh while retaining already listed reports.
 - **Checks**: A list failure test first found no alert and the wrong empty message. Focused History/header tests passed 37/37; typecheck, lint, full suite 342 files / 2,862 tests, and production build passed.
 - **Browser/release status**: The Mac remains locked; the new list states and earlier pending UI still need in-app browser visual/E2E verification. Root output and public Pages remain unchanged.
+
+## 2026-09-29 Background Storage Failure QA
+
+- **Finding and fix**: A rejected periodic `checkStorageHealth` call escaped its timer as an unhandled Promise rejection. A failure-injection test reproduced it. Maintenance now contains the rejection, adds a localized warning once per failure period, and keeps its next scheduled retry. The optional startup History list preload also catches a storage rejection; opening History still performs its own load and shows its retry control.
+- **Checks**: The storage-health test failed with an unhandled rejection before the fix and passed afterward. The full suite passed 342 files / 2,863 tests before the final localization addition; final focused autosave/localization tests passed 19/19, with typecheck and lint passing after the addition. Production build and bundle budget passed for the final source state; the build retained existing static/dynamic import overlap warnings.
+- **Browser/release status**: The Mac remains locked, so the maintenance warning and History preload fallback have not been observed in the in-app browser. Root output and public Pages remain unchanged.

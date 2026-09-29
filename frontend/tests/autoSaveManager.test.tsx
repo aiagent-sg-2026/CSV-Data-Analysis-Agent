@@ -6,7 +6,7 @@ import { AutoSaveManager } from '../components/AutoSaveManager';
 type StoreState = Record<string, any>;
 type StoreListener = (state: StoreState) => void;
 
-const { useAppStoreMock, emitStateChange, resetStoreState, saveReportMock, getDocumentsMock } = vi.hoisted(() => {
+const { useAppStoreMock, emitStateChange, resetStoreState, saveReportMock, getDocumentsMock, checkStorageHealthMock } = vi.hoisted(() => {
     const listeners = new Set<StoreListener>();
     const createState = (): StoreState => ({
         sessionId: 'session-1',
@@ -145,6 +145,7 @@ const { useAppStoreMock, emitStateChange, resetStoreState, saveReportMock, getDo
         },
         saveReportMock: vi.fn<(report: Record<string, unknown>) => Promise<void>>(async () => undefined),
         getDocumentsMock: vi.fn(() => []),
+        checkStorageHealthMock: vi.fn<() => Promise<{ evictedReports: number }>>(async () => ({ evictedReports: 0 })),
     };
 });
 
@@ -155,7 +156,7 @@ vi.mock('../store/useAppStore', () => ({
 vi.mock('../services/storageService', () => ({
     CURRENT_SESSION_KEY: 'current_session',
     saveReport: saveReportMock,
-    checkStorageHealth: vi.fn(async () => ({ evictedReports: 0 })),
+    checkStorageHealth: checkStorageHealthMock,
 }));
 
 vi.mock('../services/vectorStore', () => ({
@@ -169,6 +170,8 @@ describe('AutoSaveManager', () => {
         vi.useFakeTimers();
         saveReportMock.mockClear();
         getDocumentsMock.mockClear();
+        checkStorageHealthMock.mockReset();
+        checkStorageHealthMock.mockResolvedValue({ evictedReports: 0 });
         resetStoreState();
         Object.defineProperty(document, 'visibilityState', {
             configurable: true,
@@ -362,6 +365,21 @@ describe('AutoSaveManager', () => {
         expect(useAppStoreMock.getState().addProgress).toHaveBeenCalledWith(
             'Autosave failed: IndexedDB quota exceeded',
             'error',
+        );
+    });
+
+    it('contains a rejected background storage-health check', async () => {
+        checkStorageHealthMock.mockRejectedValueOnce(new Error('IndexedDB cleanup failed'));
+        render(<AutoSaveManager />);
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(5000);
+        });
+
+        expect(checkStorageHealthMock).toHaveBeenCalledWith('session-1');
+        expect(useAppStoreMock.getState().addProgress).toHaveBeenCalledWith(
+            'Storage cleanup could not complete. Review local storage in History.',
+            'warning',
         );
     });
 });

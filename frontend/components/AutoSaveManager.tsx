@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { checkStorageHealth } from '../services/storageService';
+import { getTranslation } from '../utils/localization';
 import {
     buildPersistedAppStateSignature,
 } from '../services/persistence/persistedAppState';
@@ -18,6 +19,7 @@ export const AutoSaveManager: React.FC = () => {
     const isSavingRef = useRef(false);
     const pendingFlushRef = useRef(false);
     const lastSaveErrorRef = useRef<string | null>(null);
+    const storageHealthFailureReportedRef = useRef(false);
 
     useEffect(() => {
         const flushSave = async () => {
@@ -143,12 +145,23 @@ export const AutoSaveManager: React.FC = () => {
             // Maintenance is best-effort and the interval will retry it later.
             if (currentState.isBusy || currentState.isAppInitializing) return;
             const sessionId = currentState.sessionId;
-            const { evictedReports } = await checkStorageHealth(sessionId);
-            if (evictedReports > 0) {
-                useAppStore.getState().addProgress(
-                    `Storage cleanup: removed ${evictedReports} old report(s) to free space.`,
-                    'warning',
-                );
+            try {
+                const { evictedReports } = await checkStorageHealth(sessionId);
+                storageHealthFailureReportedRef.current = false;
+                if (evictedReports > 0) {
+                    useAppStore.getState().addProgress(
+                        `Storage cleanup: removed ${evictedReports} old report(s) to free space.`,
+                        'warning',
+                    );
+                }
+            } catch {
+                if (!storageHealthFailureReportedRef.current) {
+                    useAppStore.getState().addProgress(
+                        getTranslation('storage_health_cleanup_failed', currentState.settings.language),
+                        'warning',
+                    );
+                    storageHealthFailureReportedRef.current = true;
+                }
             }
         };
         const healthCheckInterval = setInterval(() => {

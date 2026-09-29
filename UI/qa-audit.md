@@ -279,3 +279,9 @@ A deferred-read test first confirmed no window was reserved before the await, th
 The header previously started `loadReportsListIfNeeded()` without handling a rejection, while History itself showed its empty state. A failed IndexedDB read could therefore appear to mean no saved reports existed. History now owns the list load, shows a loading state, and exposes an inline **Retry history list** action on failure. Retry performs an unconditional refresh, and previously listed reports stay visible when a refresh fails. Closing the panel invalidates the displayed result of an outstanding request.
 
 A failure-injection UI test first showed the incorrect empty state and no alert. Focused History/header tests passed 37/37; typecheck, lint, full suite (342 files / 2,862 tests), and production build passed. The Mac was still locked, so the loading/error layout and retry have not been verified in the in-app browser. Root deployment and public Pages remain unchanged.
+
+## 2026-09-29 Background storage failure QA
+
+Periodic storage cleanup could reject from a timer without any catch. A rejected IndexedDB cleanup produced an unhandled Promise rejection in the focused test. The background task now warns once per failure period, retries at its next interval, and uses all six supported languages. The optional startup History preload also contains a failed read; the History panel owns the user-visible retry.
+
+The full suite passed 342 files / 2,863 tests before the final localized warning was added. Final autosave/localization tests passed 19/19, and typecheck, lint, production build, and bundle budget passed. The Mac is locked, so browser verification of the warning remains pending. Root deployment and public Pages remain unchanged.

@@ -3005,6 +3005,14 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'history_storage_loading': { 'English': 'Reading storage…', 'Mandarin': '正在读取存储…', 'Japanese': 'ストレージを読み込み中…' },
     'history_storage_unavailable': { 'English': 'Storage is temporarily unavailable.', 'Mandarin': '暂时无法读取存储。', 'Japanese': 'ストレージを一時的に読み取れません。' },
     'history_storage_retry': { 'English': 'Retry', 'Mandarin': '重试', 'Japanese': '再試行' },
+    'storage_health_cleanup_failed': {
+        'English': 'Storage cleanup could not complete. Review local storage in History.',
+        'Mandarin': '存储清理未能完成。请在分析历史中检查本地数据。',
+        'Malay': 'Pembersihan storan tidak dapat diselesaikan. Semak data setempat dalam Sejarah.',
+        'Spanish': 'No se pudo completar la limpieza del almacenamiento. Revise los datos locales en Historial.',
+        'Japanese': 'ストレージのクリーンアップを完了できませんでした。履歴でローカルデータを確認してください。',
+        'French': 'Le nettoyage du stockage n’a pas pu se terminer. Vérifiez les données locales dans l’historique.',
+    },
     'history_list_unavailable': {
         'English': 'Could not load analysis history. Saved reports may still be available; retry the list.',
         'Mandarin': '无法加载分析历史。已保存的报告可能仍在，请重试读取列表。',

@@ -475,7 +475,9 @@ export const useAppStore = createWithEqualityFn<AppStore>()((set, get, store) =>
         setTimeout(() => {
             const state = get();
             if (!state.isBusy && !state.isAppInitializing) {
-                void state.loadReportsList();
+                void state.loadReportsList().catch(() => {
+                    // History retries on open and presents the error there.
+                });
             }
         }, 500);
     },
