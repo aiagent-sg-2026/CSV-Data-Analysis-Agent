@@ -42,6 +42,8 @@ History search includes titles from previous versions and reveals a matching ver
 
 PWA update and offline notices remain available outside dialogs. While a modal is open, its title and controls stay above those notices; close the modal to use the update action.
 
+The Assistant activity panel labels an empty session without implying that analysis is running. Its card review action becomes available only after an analysis card exists; otherwise the panel explains the prerequisite.
+
 If a saved analysis needs cloud-assisted preparation to reproduce its evidence version, selecting the original CSV while offline leaves that saved analysis intact and asks you to reconnect before trying the restore again.
 
 When initial analysis cannot finish, the results page uses the recorded reason for its next action. Offline imports offer **Retry analysis** after reconnecting; provider errors offer **Retry analysis** and **Change provider**; verified structure blocks offer **Review and repair data structure**; missing trusted conclusions offer **Review analysis evidence**. Imported data stays available for retry. A provider failure does not by itself imply a CSV structure or cleaning problem, so the cleaning failure banner is hidden for that case.

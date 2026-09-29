@@ -29,6 +29,7 @@ export const AgentMonitorModal: React.FC = () => {
         liveAgentMemoryRun,
         selectAgentMemoryRun,
         cardEnhancementSuggestions,
+        analysisCards,
         isCardReviewInProgress,
         runCardEnhancementReview,
         applyCardEnhancementSuggestion,
@@ -47,6 +48,7 @@ export const AgentMonitorModal: React.FC = () => {
         liveAgentMemoryRun: state.liveAgentMemoryRun,
         selectAgentMemoryRun: state.selectAgentMemoryRun,
         cardEnhancementSuggestions: state.cardEnhancementSuggestions,
+        analysisCards: state.analysisCards,
         isCardReviewInProgress: state.isCardReviewInProgress,
         runCardEnhancementReview: state.runCardEnhancementReview,
         applyCardEnhancementSuggestion: state.applyCardEnhancementSuggestion,
@@ -119,14 +121,15 @@ export const AgentMonitorModal: React.FC = () => {
                         ))}
                     </div>
                     <div className="flex min-w-0 flex-col text-xs text-slate-500 sm:max-w-[16rem]">
-                        <label className="mb-1 font-semibold">Memory Run</label>
+                        <label htmlFor="agent-memory-run" className="mb-1 font-semibold">Memory Run</label>
                         <select
-                            className="text-sm border border-slate-200 rounded-md px-2 py-1 text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-slate-300"
+                            id="agent-memory-run"
+                            className="min-h-[44px] text-sm border border-slate-200 rounded-md px-2 py-1 text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-slate-300"
                             value={selectedRunValue}
                             onChange={handleRunSelect}
                         >
                             <option value="live">
-                                Live analysis {liveAgentMemoryRun ? '(latest finished)' : '(in progress)'}
+                                {liveAgentMemoryRun ? 'Latest finished analysis' : 'Current session (no finished run)'}
                             </option>
                             {historyOptions.map(run => (
                                 <option key={run.runId} value={run.runId}>
@@ -164,15 +167,19 @@ export const AgentMonitorModal: React.FC = () => {
                                 </div>
                                 <button
                                     onClick={() => runCardEnhancementReview()}
-                                    disabled={isCardReviewInProgress}
-                                    className={`px-4 py-2 rounded-md text-sm font-medium shadow transition ${
-                                        isCardReviewInProgress ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'
+                                    disabled={isCardReviewInProgress || analysisCards.length === 0}
+                                    className={`min-h-[44px] px-4 py-2 rounded-md text-sm font-medium shadow transition ${
+                                        isCardReviewInProgress || analysisCards.length === 0 ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'
                                     }`}
                                 >
                                     {isCardReviewInProgress ? 'Reviewing...' : 'Review Cards'}
                                 </button>
                             </div>
-                            {cardEnhancementSuggestions.length === 0 ? (
+                            {analysisCards.length === 0 ? (
+                                <p className="text-sm text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-4 text-center">
+                                    Upload a CSV and create analysis cards before requesting a review.
+                                </p>
+                            ) : cardEnhancementSuggestions.length === 0 ? (
                                 <p className="text-sm text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-md p-4 text-center">
                                     No AI enhancement suggestions yet. Run a review to generate recommendations.
                                 </p>

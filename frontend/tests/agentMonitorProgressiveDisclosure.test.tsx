@@ -58,7 +58,7 @@ const liveMemoryRun = {
     },
 };
 
-const createState = () => ({
+const createState = (liveRun: typeof liveMemoryRun | null = liveMemoryRun, hasCards = false) => ({
     isAgentModalOpen: true,
     setIsAgentModalOpen: vi.fn(),
     syncTelemetryToStore: vi.fn(),
@@ -75,9 +75,10 @@ const createState = () => ({
     agentMemoryRun: null,
     agentMemoryHistory: [],
     selectedMemoryRunId: null,
-    liveAgentMemoryRun: liveMemoryRun,
+    liveAgentMemoryRun: liveRun,
     selectAgentMemoryRun: vi.fn(),
     cardEnhancementSuggestions: [],
+    analysisCards: hasCards ? [{ id: 'card-1' }] : [],
     isCardReviewInProgress: false,
     runCardEnhancementReview: vi.fn(),
     applyCardEnhancementSuggestion: vi.fn(),
@@ -101,12 +102,51 @@ describe('agent monitor progressive disclosure', () => {
     it('keeps tool payloads collapsed until technical details are requested', () => {
         render(<AgentMonitorModal />);
 
+        expect(screen.getByRole('option', { name: 'Latest finished analysis' })).toBeInTheDocument();
+
         fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
 
         const summary = screen.getByText('Technical payload');
         const details = summary.closest('details');
         expect(details).not.toHaveAttribute('open');
         expect(screen.getByText('Previewed bounded rows.')).toBeInTheDocument();
+    });
+
+    it('does not present an empty session as an analysis in progress', () => {
+        const state = createState(null);
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+        useAppStoreMock.getState.mockReturnValue(state);
+
+        render(<AgentMonitorModal />);
+
+        expect(screen.getByRole('option', { name: 'Current session (no finished run)' })).toBeInTheDocument();
+        expect(screen.getByRole('combobox', { name: 'Memory Run' })).toHaveValue('live');
+        expect(screen.queryByText(/in progress/i)).not.toBeInTheDocument();
+    });
+
+    it('explains why card review is unavailable before any cards exist', () => {
+        render(<AgentMonitorModal />);
+        fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
+
+        const reviewButton = screen.getByRole('button', { name: 'Review Cards' });
+        expect(reviewButton).toBeDisabled();
+        expect(screen.getByText('Upload a CSV and create analysis cards before requesting a review.')).toBeInTheDocument();
+        fireEvent.click(reviewButton);
+        expect(useAppStoreMock.getState().runCardEnhancementReview).not.toHaveBeenCalled();
+    });
+
+    it('enables card review when an analysis card exists', () => {
+        const state = createState(liveMemoryRun, true);
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+        useAppStoreMock.getState.mockReturnValue(state);
+
+        render(<AgentMonitorModal />);
+        fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
+
+        const reviewButton = screen.getByRole('button', { name: 'Review Cards' });
+        expect(reviewButton).toBeEnabled();
+        fireEvent.click(reviewButton);
+        expect(state.runCardEnhancementReview).toHaveBeenCalledOnce();
     });
 
     it('uses the latest finished live run when no historical run is selected', () => {
