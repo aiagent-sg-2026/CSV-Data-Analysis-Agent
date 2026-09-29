@@ -309,3 +309,7 @@ The Data Preparation Workflow's cleaned CSV button awaited an OPFS read without 
 ## 2026-09-29 Backed dataset support-bundle shape QA
 
 The public support bundle reported the in-memory preview length as the dataset row count for DuckDB-backed CSVs. A one-row preview with 982,589 backed rows reproduced the incorrect count. It now uses the backing row count and, when available, backing column-name count while still emitting counts only. The regression verifies that private column names and the source filename stay absent. Focused support/upload/backing tests passed 8/8; typecheck, lint, the full suite (342 files / 2,873 tests), production build, and bundle budget passed. Existing Vite import overlap warnings remain. The public Pages build is unchanged.
+
+## 2026-09-29 Sparse support-bundle column QA
+
+The support bundle also counted only the first row's keys for an in-memory CSV. A two-row sparse fixture reproduced one reported column where the dataset contains two. It now counts the union of column names across in-memory rows; backed datasets continue to use their backing schema. The bundle still reveals only the count. Focused support-bundle tests passed 3/3 after the fix; typecheck and lint passed. The previous full suite and build preceded this small follow-up. The public Pages build remains unchanged.

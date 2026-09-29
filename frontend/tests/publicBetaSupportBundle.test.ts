@@ -129,4 +129,35 @@ describe('buildPublicBetaSupportBundle', () => {
         expect(bundle).not.toContain('Secret Amount');
         expect(bundle).not.toContain('private-large.csv');
     });
+
+    it('counts columns introduced after the first in-memory row', () => {
+        const state = {
+            settings: createTestSettings(),
+            csvData: {
+                fileName: 'private-sparse.csv',
+                data: [
+                    { Town: 'A' },
+                    { Town: 'B', 'Private Note': 'later value' },
+                ],
+            },
+            canonicalCsvData: null,
+            analysisCards: [],
+            agentEvents: [],
+            runtimeEvents: [],
+            runtimeRunHistory: [],
+        } as unknown as AppStore;
+
+        const bundle = buildPublicBetaSupportBundle(state, {
+            appVersion: 'test',
+            releaseCommit: 'local',
+            userAgent: 'Test Browser',
+            language: 'en-SG',
+            generatedAt: '2026-09-29T00:00:00.000Z',
+        });
+
+        expect(bundle).toContain('"rowCount": 2');
+        expect(bundle).toContain('"columnCount": 2');
+        expect(bundle).not.toContain('Private Note');
+        expect(bundle).not.toContain('private-sparse.csv');
+    });
 });

@@ -622,3 +622,9 @@
 - **Finding and fix**: The sanitized support bundle previously used the preview array length as a large backed CSV's row count. A one-row preview with 982,589 backed rows failed the new regression. It now reports the authoritative backing row count and column count where available, without including private file or column names.
 - **Checks**: Focused support/upload/backing tests passed 8/8, typecheck and lint passed, and the full frontend suite passed 342 files / 2,873 tests. Production build and bundle budget passed with existing Vite import overlap warnings.
 - **Browser/release status**: Browser E2E remains unavailable while the Mac is locked. Root deployment and public Pages remain unchanged.
+
+## 2026-09-29 Sparse Support-Bundle Column QA
+
+- **Finding and fix**: The sanitized support bundle still inferred in-memory column count from the first row. A sparse two-row test failed with one reported column instead of two. It now counts the union of in-memory keys; backed datasets use their backing schema. The output contains only counts, not field names.
+- **Checks**: Focused support-bundle tests passed 3/3; typecheck and lint passed. The previous full suite (342 files / 2,873 tests) and production build covered the earlier backing-count change, before this small sparse-column follow-up.
+- **Browser/release status**: Mac lock prevents browser verification. Root deployment and public Pages remain unchanged.

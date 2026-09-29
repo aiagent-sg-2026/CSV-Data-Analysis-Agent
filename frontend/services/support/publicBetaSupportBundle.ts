@@ -1,5 +1,5 @@
 import type { AppStore } from '../../store/useAppStore';
-import type { CardTrustStatus } from '../../types';
+import type { CardTrustStatus, CsvData } from '../../types';
 import { getCurrentAnalysisDatasetVersion } from '../agent/artifactProvenance';
 import { resolveCardTrustDecision } from '../agent/cardTrustDecision';
 import { getCsvDataRowCount } from '../../utils/datasetId';
@@ -54,6 +54,15 @@ const boundedNumber = (value: unknown): number | null =>
     typeof value === 'number' && Number.isFinite(value) && value >= 0
         ? Math.round(value)
         : null;
+
+const countDatasetColumns = (dataset: CsvData): number => {
+    if (dataset.backing?.columnNames) return dataset.backing.columnNames.length;
+    const columns = new Set<string>();
+    for (const row of dataset.data) {
+        for (const column of Object.keys(row)) columns.add(column);
+    }
+    return columns.size;
+};
 
 const runtimeOutcome = (type: string): string => {
     if (type === 'turn_completed') return 'succeeded';
@@ -123,8 +132,7 @@ export const buildPublicBetaSupportBundle = (
         datasetShape: dataset
             ? {
                 rowCount: getCsvDataRowCount(dataset),
-                columnCount: dataset.backing?.columnNames?.length
-                    ?? (dataset.data[0] ? Object.keys(dataset.data[0]).length : 0),
+                columnCount: countDatasetColumns(dataset),
             }
             : null,
         pipeline: state.pipelineOutcome
