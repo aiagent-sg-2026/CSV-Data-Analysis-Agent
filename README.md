@@ -54,7 +54,7 @@ A card's **Data Provenance** dialog lets you inspect original rows, cleaned rows
 
 History search includes titles from previous versions and reveals a matching version. On small screens, sort, storage, version, and row actions use touch-sized controls; the storage inspector and saved records share a scrollable area. Row action menus are positioned within the History dialog so their options remain visible even when the saved-record list is short.
 
-History's Storage Inspector adds its scanned IndexedDB and Cache Storage category estimates for the stacked bar and scanned total. It shows the browser's separate origin usage estimate on its own line because the two measurement methods can differ. Cache Storage includes app assets and models.
+History's Storage Inspector adds its scanned IndexedDB and Cache Storage category estimates for the stacked bar and scanned total. It shows the browser's separate origin usage estimate on its own line because the two measurement methods can differ. Cache Storage includes app assets and models. Clearing a storage category or cache requires a second action in the inspector; Cancel or Escape leaves the data untouched.
 
 PWA update and offline notices occupy space above the app header, so they do not cover navigation controls on narrow screens. While a modal is open, its title and controls stay above those notices; close the modal to use the update action.
 

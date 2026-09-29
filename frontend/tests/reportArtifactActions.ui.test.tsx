@@ -1,13 +1,15 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceModal } from '../components/modals/WorkspaceModal';
 import { HistoryPanel } from '../components/modals/HistoryPanel';
 import { StorageBreakdown } from '../components/modals/StorageBreakdown';
 
-const { useAppStoreMock, buildWorkspaceBundleMock, getStorageBreakdownMock } = vi.hoisted(() => ({
+const { useAppStoreMock, buildWorkspaceBundleMock, getStorageBreakdownMock, clearStoreMock, clearAllCacheStorageMock } = vi.hoisted(() => ({
     useAppStoreMock: vi.fn(),
     buildWorkspaceBundleMock: vi.fn(),
     getStorageBreakdownMock: vi.fn(),
+    clearStoreMock: vi.fn(async () => 1),
+    clearAllCacheStorageMock: vi.fn(async () => undefined),
 }));
 
 vi.mock('../store/useAppStore', () => ({
@@ -21,6 +23,8 @@ vi.mock('../services/agent/buildWorkspaceBundle', () => ({
 vi.mock('../services/storageService', () => ({
     CURRENT_SESSION_KEY: 'current_session',
     getStorageBreakdown: getStorageBreakdownMock,
+    clearStore: clearStoreMock,
+    clearAllCacheStorage: clearAllCacheStorageMock,
 }));
 
 vi.mock('../components/modals/WorkspaceModalEditor', () => ({
@@ -326,5 +330,51 @@ describe('report artifact action surfaces', () => {
         const cacheShare = parseFloat(screen.getByTitle('Cache Storage: 39.0 MB').style.width);
         expect(reportShare).toBeCloseTo((17 / 56) * 100);
         expect(reportShare + cacheShare).toBeCloseTo(100);
+    });
+
+    it('requires an explicit second action before clearing a storage category or browser caches', async () => {
+        getStorageBreakdownMock.mockResolvedValue({
+            stores: [{ storeName: 'agent_memory_runs', label: 'Agent Memory Runs', recordCount: 1, estimatedBytes: 1024 }],
+            cacheStorage: { cacheCount: 1, estimatedBytes: 2048 },
+            totalIdbBytes: 1024,
+            totalWithCacheBytes: 3072,
+            rawOriginBytes: 3072,
+        });
+        render(<StorageBreakdown activeSessionId={null} />);
+        const clearMemory = await screen.findByRole('button', { name: 'Clear Agent Memory Runs' });
+        const clearCache = screen.getByRole('button', { name: 'Clear Cache Storage' });
+
+        fireEvent.click(clearMemory);
+        let confirmation = screen.getByRole('alertdialog');
+        expect(confirmation).toHaveTextContent('Clear Agent Memory Runs?');
+        expect(clearStoreMock).not.toHaveBeenCalled();
+        await waitFor(() => expect(within(confirmation).getByRole('button', { name: 'Cancel' })).toHaveFocus());
+        fireEvent.click(within(confirmation).getByRole('button', { name: 'Cancel' }));
+        expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+        expect(clearStoreMock).not.toHaveBeenCalled();
+
+        fireEvent.click(clearCache);
+        confirmation = screen.getByRole('alertdialog');
+        expect(confirmation).toHaveTextContent('Offline app assets and models may need to be downloaded again.');
+        const parentEscapeHandler = vi.fn();
+        document.addEventListener('keydown', parentEscapeHandler);
+        try {
+            fireEvent.keyDown(confirmation, { key: 'Escape' });
+        } finally {
+            document.removeEventListener('keydown', parentEscapeHandler);
+        }
+        expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+        expect(parentEscapeHandler).not.toHaveBeenCalled();
+        expect(clearAllCacheStorageMock).not.toHaveBeenCalled();
+
+        fireEvent.click(clearMemory);
+        confirmation = screen.getByRole('alertdialog');
+        fireEvent.click(within(confirmation).getByRole('button', { name: 'Clear now' }));
+        await waitFor(() => expect(clearStoreMock).toHaveBeenCalledWith('agent_memory_runs', undefined));
+
+        fireEvent.click(clearCache);
+        confirmation = screen.getByRole('alertdialog');
+        fireEvent.click(within(confirmation).getByRole('button', { name: 'Clear now' }));
+        await waitFor(() => expect(clearAllCacheStorageMock).toHaveBeenCalledTimes(1));
     });
 });

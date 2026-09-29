@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useId, useRef } from 'react';
 import {
     getStorageBreakdown,
     clearStore,
@@ -68,6 +68,15 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
     const [data, setData] = useState<StorageBreakdownResult | null>(null);
     const [loading, setLoading] = useState(true);
     const [clearing, setClearing] = useState<string | null>(null);
+    const [pendingClear, setPendingClear] = useState<{ key: string; label: string; count: number; isCache: boolean } | null>(null);
+    const clearTriggerRef = useRef<HTMLButtonElement>(null);
+    const cancelClearRef = useRef<HTMLButtonElement>(null);
+    const confirmationTitleId = useId();
+    const confirmationDescriptionId = useId();
+
+    useEffect(() => {
+        if (pendingClear) cancelClearRef.current?.focus();
+    }, [pendingClear]);
 
     const refresh = useCallback(async () => {
         setLoading(true);
@@ -115,6 +124,18 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
         } finally {
             setClearing(null);
         }
+    };
+
+    const dismissClear = () => {
+        setPendingClear(null);
+        requestAnimationFrame(() => clearTriggerRef.current?.focus());
+    };
+
+    const confirmClear = () => {
+        if (!pendingClear) return;
+        const { key, isCache } = pendingClear;
+        setPendingClear(null);
+        void (isCache ? handleClearCache() : handleClearStore(key));
     };
 
     if (loading && !data) {
@@ -230,7 +251,10 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
                             {/* Clear button */}
                             {seg.clearable ? (
                                 <button
-                                    onClick={() => void (seg.isCache ? handleClearCache() : handleClearStore(seg.key))}
+                                    onClick={event => {
+                                        clearTriggerRef.current = event.currentTarget;
+                                        setPendingClear({ key: seg.key, label: seg.label, count: seg.count, isCache: seg.isCache });
+                                    }}
                                     disabled={clearing !== null}
                                     className="flex h-[44px] w-[44px] items-center justify-center rounded text-slate-600 transition-opacity hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 disabled:cursor-wait disabled:opacity-50 sm:opacity-0 sm:group-hover/row:opacity-100"
                                     title={`Clear ${seg.label}`}
@@ -248,6 +272,47 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
                     </div>
                 ))}
             </div>
+            {pendingClear && (
+                <div
+                    role="alertdialog"
+                    aria-labelledby={confirmationTitleId}
+                    aria-describedby={confirmationDescriptionId}
+                    className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-slate-700"
+                    onKeyDown={event => {
+                        if (event.key !== 'Escape') return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        dismissClear();
+                    }}
+                >
+                    <h3 id={confirmationTitleId} className="font-semibold text-red-800">
+                        Clear {pendingClear.label}?
+                    </h3>
+                    <p id={confirmationDescriptionId} className="mt-1 leading-relaxed">
+                        {pendingClear.isCache
+                            ? `${pendingClear.count} browser cache${pendingClear.count === 1 ? '' : 's'} will be removed. Offline app assets and models may need to be downloaded again.`
+                            : `${pendingClear.count} saved record${pendingClear.count === 1 ? '' : 's'} will be removed. Current-session records remain protected where applicable.`}
+                        {' '}This cannot be undone.
+                    </p>
+                    <div className="mt-3 flex flex-wrap justify-end gap-2">
+                        <button
+                            ref={cancelClearRef}
+                            type="button"
+                            onClick={dismissClear}
+                            className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={confirmClear}
+                            className="min-h-[44px] rounded-lg bg-red-600 px-3 font-medium text-white hover:bg-red-700"
+                        >
+                            Clear now
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
