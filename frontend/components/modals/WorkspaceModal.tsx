@@ -114,9 +114,7 @@ export const WorkspaceModal: React.FC = () => {
     }, {}), [visibleFiles]);
 
     const selectedFile = visibleFiles.find(file => file.path === selectedPath)
-        ?? bundle.primaryFiles.find(file => file.path === selectedPath)
-        ?? bundle.primaryFiles[0]
-        ?? (showDebugFiles ? bundle.debugFiles[0] : null)
+        ?? visibleFiles[0]
         ?? null;
     const selectedFileWritable = Boolean(selectedFile && isWorkspaceWritablePath(selectedFile.path));
     const selectedFileLineCount = selectedFile ? countLines(selectedFile.content) : 0;
@@ -298,36 +296,38 @@ export const WorkspaceModal: React.FC = () => {
                                 <div className="flex min-h-[44px] items-center justify-between gap-3 px-4">
                                     <div className="flex min-w-0 items-center gap-2">
                                         <div className="rounded-t-md border border-b-0 border-slate-200 bg-white px-3 py-2 text-sm text-slate-800">
-                                            {selectedFile?.label ?? 'untitled'}
+                                            {selectedFile?.label ?? 'No file selected'}
                                         </div>
-                                        <span className="hidden text-xs text-slate-500 md:inline">{selectedFile?.path ?? 'No file selected'}</span>
+                                        {selectedFile && <span className="hidden text-xs text-slate-500 md:inline">{selectedFile.path}</span>}
                                     </div>
-                                    <div className="flex flex-wrap gap-2 text-xs">
+                                    {selectedFile && <div className="flex flex-wrap gap-2 text-xs">
                                         <span className={`inline-flex items-center rounded-full px-2.5 py-1 font-medium ${
                                             selectedFileWritable ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
                                         }`}>
                                             {selectedFileWritable ? 'Agent write path' : 'Read-only path'}
                                         </span>
-                                    </div>
+                                    </div>}
                                 </div>
                             </div>
 
-                            <div className="border-b border-slate-200 bg-white px-4 py-3">
+                            {selectedFile && <div className="border-b border-slate-200 bg-white px-4 py-3">
                                 <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                                     <div className="min-w-0">
                                         <p className="text-xs uppercase tracking-wide text-slate-500">Read-only preview</p>
-                                        <p className="mt-1 break-all text-sm font-semibold text-slate-900">{selectedFile?.path ?? 'No file selected'}</p>
+                                        <p className="mt-1 break-all text-sm font-semibold text-slate-900">{selectedFile.path}</p>
                                         <p className="mt-1 text-xs text-slate-500">
-                                            {selectedFile?.language.toUpperCase() ?? 'TEXT'} · {selectedFileLineCount} line{selectedFileLineCount === 1 ? '' : 's'} · {selectedFileBytes.toLocaleString()} bytes
+                                            {selectedFile.language.toUpperCase()} · {selectedFileLineCount} line{selectedFileLineCount === 1 ? '' : 's'} · {selectedFileBytes.toLocaleString()} bytes
                                         </p>
                                     </div>
                                 </div>
-                            </div>
+                            </div>}
 
                             <div className="flex-1 min-h-0 bg-white">
                                 {!selectedFile ? (
                                     <div className="flex h-full items-center justify-center p-5">
-                                        <p className="text-sm text-slate-500">No workspace file available yet.</p>
+                                        <p className="text-sm text-slate-500">
+                                            {fileFilter.trim() ? 'No files match the current filter.' : 'No workspace file available yet.'}
+                                        </p>
                                     </div>
                                 ) : (
                                     <Suspense fallback={
@@ -345,16 +345,16 @@ export const WorkspaceModal: React.FC = () => {
                                 )}
                             </div>
 
-                            <div className="flex items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-500">
+                            {selectedFile && <div className="flex items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-500">
                                 <div className="flex items-center gap-3">
-                                    <span>{selectedFile?.language.toUpperCase() ?? 'TEXT'}</span>
+                                    <span>{selectedFile.language.toUpperCase()}</span>
                                     <span>{selectedFileLineCount} lines</span>
                                     <span>{selectedFileBytes.toLocaleString()} bytes</span>
                                 </div>
                                 <div className="flex items-center gap-3">
-                                    <span>{selectedFile?.path ?? ''}</span>
+                                    <span>{selectedFile.path}</span>
                                 </div>
-                            </div>
+                            </div>}
                         </section>
                     </div>
                 </div>

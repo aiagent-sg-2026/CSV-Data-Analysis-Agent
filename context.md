@@ -678,3 +678,9 @@
 - A previously generated 90-row synthetic HDB Management Review artifact appeared in History with Resume, Open Report, and Export PDF. Open Report created a titled `blob:` tab, but the in-app browser security policy blocked agent access to its contents. No PDF file or rendered report body was verified.
 - Reselecting the original CSV restored the saved analysis without rerunning nine stages: **Saved analysis restored (1/1)**, two Verified cards, three Needs review cards, and Report Ready actions. The visible 38,013,750 resale-price total and all three Town totals matched independent CSV aggregation. At 390px, the document did not overflow and report controls were at least 44px high. Screenshots and detail are in `UI/qa-audit.md`.
 - A Verified card's CSV export action did not yield a downloadable file path through the in-app browser's download event; file-content E2E remains open. No source code changed, so the earlier 344-file / 2,890-test result was not rerun. Root deployment and Pages remain unchanged; full-site QA is still active.
+
+## 2026-09-29 full-site QA continuation: Artifacts filter selection
+
+- Browser QA found that filtering Session Artifacts to `cleaned.csv` left a hidden `report_context.json` in the preview. The preview now follows the visible selection and clears its content and metadata when there are no matches. A failing UI test reproduced the defect before the fix.
+- The final local production bundle passed the same browser scenario, including clearing the filter after a no-match state, with zero browser errors. Screenshots and reproduction steps are in `UI/qa-audit.md`. Targeted tests passed 21/21; typecheck, lint, build, bundle budget, and full tests passed **345 files / 2,891 tests**.
+- The QA branch remains local. Root generated deployment and public Pages are unchanged; full-site functional coverage and downloadable artifact inspection are still incomplete.
