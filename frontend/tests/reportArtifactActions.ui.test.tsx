@@ -323,7 +323,7 @@ describe('report artifact action surfaces', () => {
 
         render(<StorageBreakdown activeSessionId={null} />);
 
-        expect(await screen.findByText('Scanned total: 56.0 MB')).toBeInTheDocument();
+        expect(await screen.findByRole('group', { name: 'Scanned total: 56.0 MB' })).toBeInTheDocument();
         expect(screen.getByText(/Browser origin estimate: 48\.0 MB/)).toBeInTheDocument();
         expect(screen.queryByText('Total (with cache): 48.0 MB')).not.toBeInTheDocument();
         const reportShare = parseFloat(screen.getByTitle('Reports (sessions): 17.0 MB').style.width);
@@ -392,7 +392,7 @@ describe('report artifact action surfaces', () => {
 
         expect(await screen.findByRole('alert')).toHaveTextContent('Could not read storage details');
         fireEvent.click(screen.getByRole('button', { name: 'Retry storage scan' }));
-        expect(await screen.findByText('Scanned total: 0 B')).toBeInTheDocument();
+        expect(await screen.findByRole('group', { name: 'Scanned total: 0 B' })).toBeInTheDocument();
         expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
 

@@ -54,7 +54,7 @@ A card's **Data Provenance** dialog lets you inspect original rows, cleaned rows
 
 History search includes titles from previous versions and reveals a matching version. On small screens, sort, storage, version, and row actions use touch-sized controls; the storage inspector and saved records share a scrollable area. Row action menus are positioned within the History dialog so their options remain visible even when the saved-record list is short.
 
-History's Storage Inspector adds its scanned IndexedDB and Cache Storage category estimates for the stacked bar and scanned total. It shows the browser's separate origin usage estimate on its own line because the two measurement methods can differ. Cache Storage includes app assets and models. Clearing a storage category or cache requires a second action in the inspector; Cancel or Escape leaves the data untouched. Scan or clear failures show an error and a storage-scan retry action.
+History's Storage Inspector adds its scanned IndexedDB and Cache Storage category estimates for the stacked bar and scanned total. The two primary totals have labeled summary fields, while the browser's separate origin usage estimate has its own explanatory line because the measurement methods can differ. Cache Storage includes app assets and models. Clearing a storage category or cache requires a second action in the inspector; Cancel or Escape leaves the data untouched. Scan or clear failures show an error and a storage-scan retry action.
 
 PWA update and offline notices occupy space above the app header, so they do not cover navigation controls on narrow screens. While a modal is open, its title and controls stay above those notices; close the modal to use the update action.
 
@@ -62,7 +62,7 @@ In Settings, the Smart Auto-Confirm Goal row has a full-width touch target; Canc
 
 The Assistant activity panel labels an empty session without implying that analysis is running. Its Memory and Dataset Knowledge tabs describe what will be available after a future analysis. Its card review action becomes available only after an analysis card exists; otherwise the panel explains the prerequisite.
 
-AI Long-Term Memory search is available only when the current report has saved memory items. The panel explains missing data or memory, and shows an explicit empty or retry message after a search returns no matches or fails.
+AI Long-Term Memory search is available only when the current report has saved memory items. The panel explains missing data or memory, and shows an explicit empty or retry message after a search returns no matches or its worker fails. Clear and per-item delete actions remain visible and touch-sized across screen widths.
 
 The Data Preparation Workflow's GitHub support action opens the public issues page for this repository.
 Its Advanced exports menu scrolls within short viewports so every download and copy action remains reachable.

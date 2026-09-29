@@ -261,7 +261,7 @@ describe('vectorStore facade timeout degradation', () => {
         ])).resolves.toBeUndefined();
     });
 
-    it('search swallows errors and returns empty array', async () => {
+    it('search degrades by default but can report errors to an explicit UI request', async () => {
         vi.doMock('../services/workers/vectorWorkerClient', () => ({
             vectorWorkerClient: {
                 search: vi.fn().mockRejectedValue(new Error('Worker crashed')),
@@ -275,6 +275,8 @@ describe('vectorStore facade timeout degradation', () => {
         const { vectorStore } = await import('../services/vectorStore');
         const results = await vectorStore.search('test', 5);
         expect(results).toEqual([]);
+        await expect(vectorStore.search('test', 5, undefined, { propagateError: true }))
+            .rejects.toThrow('Worker crashed');
     });
 });
 

@@ -278,6 +278,7 @@ class VectorStore {
         queryText: string,
         k: number = 5,
         scope?: ReportMemoryScope,
+        options?: { propagateError?: boolean },
     ): Promise<VectorSearchMatch[]> {
         try {
             return scope
@@ -285,6 +286,7 @@ class VectorStore {
                 : await vectorWorkerClient.search(queryText, k);
         } catch (error) {
             console.error(`${LOG_PREFIX} Search failed:`, error);
+            if (options?.propagateError) throw error;
             return [];
         }
     }

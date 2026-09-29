@@ -226,7 +226,7 @@ export const HistoryPanel: React.FC = () => {
                 aria-modal="true"
                 aria-labelledby="history-dialog-title"
                 tabIndex={-1}
-                className="relative flex h-full max-h-[80vh] w-full max-w-3xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl"
+                className="relative flex h-full max-h-[calc(100dvh-2rem)] w-full max-w-3xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl sm:max-h-[80vh]"
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}

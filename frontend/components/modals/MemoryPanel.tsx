@@ -101,7 +101,7 @@ export const MemoryPanel: React.FC = () => {
         setSearchFeedback('none');
         syncModelState();
         try {
-            const results = await vectorStore.search(searchQuery, 5, activeMemoryScope!);
+            const results = await vectorStore.search(searchQuery, 5, activeMemoryScope!, { propagateError: true });
             setSearchResults(results.map(item => ({
                 text: item.text,
                 score: item.score,
@@ -268,10 +268,10 @@ export const MemoryPanel: React.FC = () => {
 
                     {/* Right Column: All Documents */}
                     <div className="flex flex-col min-h-0">
-                        <div className="mb-2 flex shrink-0 items-center justify-between">
+                        <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
                             <h3 className="font-semibold text-slate-800">All Stored Memories ({documents.length})</h3>
                             {documents.length > 0 && (
-                                <button onClick={handleClearAll} className="text-xs text-red-600 hover:underline">
+                                <button onClick={handleClearAll} className="min-h-[44px] rounded-md px-2 text-xs text-red-600 hover:bg-red-50 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600">
                                     Clear Report Memory
                                 </button>
                             )}
@@ -301,8 +301,9 @@ export const MemoryPanel: React.FC = () => {
                                             </div>
                                             <button
                                                 onClick={() => handleDelete(doc.id)}
-                                                className="p-1 text-slate-400 rounded-full hover:bg-red-100 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0"
+                                                className="flex min-h-[44px] min-w-[44px] flex-shrink-0 items-center justify-center rounded-full text-slate-600 transition-colors hover:bg-red-100 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-600"
                                                 title="Delete Memory"
+                                                aria-label={`Delete memory item: ${doc.text.slice(0, 60)}`}
                                             >
                                                 <IconDelete />
                                             </button>

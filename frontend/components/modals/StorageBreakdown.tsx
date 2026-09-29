@@ -218,6 +218,17 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
                 </button>
             </div>
 
+            <div className="grid grid-cols-2 gap-2">
+                <div role="group" aria-label={`IndexedDB estimate: ${formatBytes(data.totalIdbBytes)}`} className="min-w-0 rounded-md border border-slate-200 bg-white px-2 py-1.5">
+                    <p className="text-[11px] leading-4 text-slate-600">IndexedDB estimate</p>
+                    <p className="text-sm font-semibold text-slate-800">{formatBytes(data.totalIdbBytes)}</p>
+                </div>
+                <div role="group" aria-label={`Scanned total: ${formatBytes(data.totalWithCacheBytes)}`} className="min-w-0 rounded-md border border-slate-200 bg-white px-2 py-1.5">
+                    <p className="text-[11px] leading-4 text-slate-600">Scanned total</p>
+                    <p className="text-sm font-semibold text-slate-800">{formatBytes(data.totalWithCacheBytes)}</p>
+                </div>
+            </div>
+
             {/* Stacked bar */}
             <div className="h-3 w-full rounded-full bg-slate-100 overflow-hidden flex">
                 {allSegments.filter(s => s.bytes > 0).map(seg => (
@@ -230,13 +241,8 @@ export const StorageBreakdown: React.FC<StorageBreakdownProps> = ({ activeSessio
                 ))}
             </div>
 
-            {/* Totals */}
-            <div className="flex flex-wrap items-center justify-between gap-x-3 text-[10px] text-slate-500">
-                <span>IndexedDB estimate: {formatBytes(data.totalIdbBytes)}</span>
-                <span>Scanned total: {formatBytes(data.totalWithCacheBytes)}</span>
-            </div>
             {data.rawOriginBytes > 0 && (
-                <p className="text-[10px] text-slate-400">
+                <p className="text-[11px] leading-4 text-slate-600">
                     Browser origin estimate: {formatBytes(data.rawOriginBytes)}. This uses a separate measurement and may differ from the scanned total.
                 </p>
             )}
