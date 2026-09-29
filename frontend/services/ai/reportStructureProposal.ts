@@ -26,6 +26,7 @@ import {
     reportStructureProposalSystemPrompt,
 } from '../prompts/runtime/reportStructureProposalPrompts';
 import { buildMergedBoundaryHeaders, normalizeReportCellText } from '../agent/reportStructureNormalization';
+import { isBrowserOnline } from '../pwa/networkAvailability';
 
 const LOG_PREFIX = '[ReportStructureProposal]';
 const MAX_HEAD_BODY_ROWS = 18;
@@ -217,7 +218,7 @@ export const shouldRequestReportStructureProposal = (params: {
     runtimeTableAssessment?: RuntimeTableAssessment | null | undefined;
     rowInspection?: RowInspectionBundle | null | undefined;
 }): boolean => {
-    if (!isProviderConfigured(params.settings) || !params.rawIntakeIr || !params.boundary) {
+    if (!isProviderConfigured(params.settings) || !isBrowserOnline() || !params.rawIntakeIr || !params.boundary) {
         return false;
     }
 

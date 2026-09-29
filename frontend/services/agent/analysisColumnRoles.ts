@@ -36,7 +36,14 @@ const CANONICAL_CONTEXT_DIMENSION_NAMES = new Set([
     'carryforwardappliedcolumns', 'carry forward applied columns',
 ]);
 
+// A block code can look numeric in a sample, but summing its identifier values
+// has no business meaning. Keep these common physical names as dimensions.
+const BLOCK_IDENTIFIER_NAMES = new Set(['block', 'blockno', 'blocknumber', 'blockid']);
+
 const normalizeKey = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+export const isBlockIdentifierColumn = (columnName: string): boolean =>
+    BLOCK_IDENTIFIER_NAMES.has(normalizeKey(columnName));
 
 export const isUnnamedHelperColumn = (columnName: string): boolean =>
     UNNAMED_COLUMN_PATTERN.test(columnName) || normalizeKey(columnName).startsWith('unnamedcolumn');
@@ -134,8 +141,12 @@ export const classifyAnalysisColumnRole = (
         return 'repeated_bundle_member';
     }
 
-    // --- AI semantic signals are authoritative (primary) ---
-    // Check AI classification BEFORE regex name-based heuristics so that
+    if (isBlockIdentifierColumn(column.name)) {
+        return 'business_dimension';
+    }
+
+    // --- AI semantic signals are primary after identifier safety checks ---
+    // Check AI classification before general name-based heuristics so that
     // the AI can override naming patterns when the data tells a different
     // story (e.g. "Period" might be a categorical label, not a date).
 

@@ -5,8 +5,8 @@ import { generateAllSummaries } from '../../execution/summaryManager';
 import { enqueueDatasetMemoryDocs } from '../../memory/vectorMemorySync';
 import { resolveAnalysisDatasetProfiles } from '../../analysisDatasetProfiles';
 import { getPreferredAnalysisDataset } from '../../reportStructureState';
-import { applyPreparationPlanToCanonicalDataset } from '../../orchestration/canonicalPreparation';
 import { orchestrateAutonomousAiCleaning } from '../../orchestration/autonomousCleaningPipeline';
+import { resolveAndCommitPreparedStructure } from '../../orchestration/preparedStructureCommit';
 import { resolveReportStructureArtifactsWithProposal } from '../../orchestration/reportStructureOrchestrator';
 import { runDataAnalysisSession } from '../dataAnalysisSessionRunner';
 import { requestDataResearchCancellation } from '../dataResearchCancellation';
@@ -119,40 +119,13 @@ const resolveAndCommitStructure = async (
     bindings: InitialAnalysisStageServiceBindings,
 ) => {
     assertNotAborted(context.signal);
-    const state = context.store.getState();
-    const artifacts = await bindings.resolveStructure({
-        rawCsvData: state.rawCsvData,
-        csvData: state.csvData,
-        rawIntakeIr: state.rawIntakeIr,
-        cleaningRun: state.cleaningRun,
-        dataPreparationPlan: state.dataPreparationPlan,
-        columnProfiles: state.columnProfiles,
-        humanBoundary:
-            state.reportStructureResolution?.source === 'human_confirmed'
-                ? state.reportStructureResolution.humanBoundary
-                : null,
-        settings: state.settings,
-        telemetryTarget: {
-            sessionId: state.sessionId,
-            currentDatasetId: state.currentDatasetId,
-        },
-    });
-    assertNotAborted(context.signal);
-    const canonicalCsvData = applyPreparationPlanToCanonicalDataset(
-        artifacts.canonicalCsvData,
-        state.dataPreparationPlan,
+    const artifacts = await resolveAndCommitPreparedStructure(
+        context.store,
+        bindings.resolveStructure,
+        context.signal,
     );
-    context.store.setState({
-        reportStructureResolution: artifacts.reportStructureResolution,
-        canonicalCsvData,
-        canonicalBuildMeta: artifacts.canonicalBuildMeta,
-        canonicalizationStatus: artifacts.canonicalizationStatus,
-        pipelineOutcome: artifacts.pipelineOutcome,
-    });
-    return {
-        ...artifacts,
-        canonicalCsvData,
-    };
+    assertNotAborted(context.signal);
+    return artifacts;
 };
 
 export const createInitialAnalysisStageExecutors = (

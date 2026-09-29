@@ -83,6 +83,7 @@ describe('analysis panel rendering', () => {
     afterEach(() => {
         cleanup();
         window.sessionStorage.removeItem('csv_agent_results_view');
+        vi.unstubAllGlobals();
     });
 
     it('does not render the legacy data transformation log on analysis dashboard', () => {
@@ -1290,7 +1291,7 @@ describe('analysis panel rendering', () => {
         aiTaskStatus: null,
         dataQualityIssues: [],
         agentMemoryRun: null,
-        cleaningRun: null as { status: 'failed' } | null,
+        cleaningRun: null as { status: 'failed' | 'paused' } | null,
         confirmedAnalysisGoal: 'Summarize resale prices.',
         handleInitialAnalysis: vi.fn(async () => ({ status: 'error' })),
         setIsSettingsModalOpen: vi.fn(),
@@ -1322,6 +1323,39 @@ describe('analysis panel rendering', () => {
         ));
         fireEvent.click(screen.getByRole('button', { name: 'Change provider' }));
         expect(store.setIsSettingsModalOpen).toHaveBeenCalledWith(true);
+    });
+
+    it('offers offline recovery without blaming the provider or data structure', async () => {
+        const store = createRecoveryStore();
+        store.initialAnalysisStatus = 'degraded';
+        store.initialAnalysisFailureKind = 'offline';
+        store.cleaningRun = { status: 'paused' };
+        (useAppStoreModule.useAppStore as unknown as ReturnType<typeof vi.fn>).mockImplementation((selector: (value: typeof store) => unknown) => selector(store));
+
+        render(<AnalysisPanel />);
+
+        expect(screen.getByText(/browser was offline/i)).toBeInTheDocument();
+        expect(screen.queryByText(/selected AI provider did not complete/i)).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Review and repair data structure' })).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Retry analysis' }));
+        await waitFor(() => expect(store.handleInitialAnalysis).toHaveBeenCalledWith(
+            store.csvData, 'Summarize resale prices.', { trigger: 'manual' },
+        ));
+    });
+
+    it('does not start offline recovery until the connection returns', () => {
+        vi.stubGlobal('navigator', { onLine: false });
+        const store = createRecoveryStore();
+        store.initialAnalysisStatus = 'degraded';
+        store.initialAnalysisFailureKind = 'offline';
+        store.cleaningRun = { status: 'paused' };
+        (useAppStoreModule.useAppStore as unknown as ReturnType<typeof vi.fn>).mockImplementation((selector: (value: typeof store) => unknown) => selector(store));
+
+        render(<AnalysisPanel />);
+        fireEvent.click(screen.getByRole('button', { name: 'Retry analysis' }));
+
+        expect(store.handleInitialAnalysis).not.toHaveBeenCalled();
+        expect(store.addProgress).toHaveBeenCalledWith(expect.stringMatching(/reconnect/i), 'warning');
     });
 
     it('opens structure repair only for a verified structure block', () => {

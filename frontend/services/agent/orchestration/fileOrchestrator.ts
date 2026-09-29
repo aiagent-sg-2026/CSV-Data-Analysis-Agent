@@ -17,11 +17,14 @@ import { duckDbWorkerClient } from '../../workers/duckDbWorkerClient';
 import { DEFAULT_AUTO_ANALYSIS_GOAL } from '../analysisDefaults';
 import { getPreferredAnalysisDataset } from '../reportStructureState';
 import { hasDeclinedCloudAiConsent } from '../../privacy/cloudAiConsent';
+import { isBrowserOnline } from '../../pwa/networkAvailability';
 import { isInitialAnalysisProviderFailure } from '../runtime/pi/initialAnalysisFailure';
 import { persistCurrentAppSessionSnapshot } from '../../persistence/currentSessionPersistence';
 import { replayDatasetBundlePrograms } from '../../data/datasetBundleReplay';
 import { canRestoreHistoryAnalysis, getRestoredHistoryAnalysisState, type HistoryAnalysisSnapshot } from './historyAnalysisRestore';
 import { orchestrateAutonomousAiCleaning } from './autonomousCleaningPipeline';
+import { resolveAndCommitPreparedStructure } from './preparedStructureCommit';
+import { resolveReportStructureArtifactsWithProposal } from './reportStructureOrchestrator';
 
 // Define the update types the orchestrator can produce
 export type FileOrchestrationUpdate = 
@@ -359,7 +362,7 @@ export async function* orchestrateFileUpload(
         sourceVerified = true;
         const replay = replayDatasetBundlePrograms({
             bundle: options.restoreBundle,
-            currentData: dataForAnalysis,
+            currentData: canonicalCsvData ?? dataForAnalysis,
         });
         if (replay.status === 'replayed') {
             verifiedReplay = true;
@@ -409,6 +412,11 @@ export async function* orchestrateFileUpload(
     ) && options.restoreSnapshot.analysisDatasetVersion === getCsvDatasetVersion(materialDataset)
         ? options.restoreSnapshot
         : null;
+    if (sourceVerified && options.restoreSnapshot && !restoredAnalysis && !isBrowserOnline()) {
+        throw new Error(
+            'The original CSV matched, but this saved analysis needs cloud-assisted preparation to verify its evidence version. Reconnect and select the original CSV again; the saved results are unchanged.',
+        );
+    }
     const persistOriginalSnapshot = async () => {
         const sessionId = getState().sessionId;
         if (!sessionId || dataForAnalysis.backing?.ephemeral) return;
@@ -518,16 +526,17 @@ export async function* orchestrateFileUpload(
     if (!verifiedAnalysis && sourceVerified && options.restoreSnapshot) {
         try {
             await orchestrateAutonomousAiCleaning(store);
-            // The intake's canonical preview may still point at pre-cleaning
-            // rows. Cleaning commits the verified primary table to csvData.
-            const preparedDataset = getState().csvData;
+            if (getState().cleaningRun?.status === 'completed') {
+                await resolveAndCommitPreparedStructure(store, resolveReportStructureArtifactsWithProposal);
+            }
+            const preparedDataset = getPreferredAnalysisDataset(getState());
             const preparedMatches = (
                 getState().cleaningRun?.status === 'completed'
                 && preparedDataset
                 && canRestoreHistoryAnalysis(
                     options.restoreSnapshot,
                     true,
-                    getCsvDatasetVersion(preparedDataset),
+                    getCsvDatasetVersion(materialDataset),
                 )
             );
             const analysisVersion = options.restoreSnapshot.analysisDatasetVersion;
@@ -537,7 +546,9 @@ export async function* orchestrateFileUpload(
                 && analysisVersion === getCsvDatasetVersion(materialDataset);
             if (cleanedIsAnalysis || importedIsAnalysis) {
                 verifiedAnalysis = options.restoreSnapshot;
-                restoredCanonicalDataset = cleanedIsAnalysis ? null : materialDataset;
+                restoredCanonicalDataset = cleanedIsAnalysis
+                    ? getState().canonicalCsvData
+                    : materialDataset;
                 setState({
                     ...getRestoredHistoryAnalysisState(verifiedAnalysis, getState().workspaceFiles),
                     canonicalCsvData: restoredCanonicalDataset,
@@ -589,10 +600,15 @@ export async function* orchestrateFileUpload(
     // FIX: `isApiKeySet` is not a property on the store state. It must be derived from the `settings` object.
     const settings = getState().settings;
 
-    if (hasDeclinedCloudAiConsent(datasetId, settings.provider)) {
-        const message = getTranslation('cloud_ai_local_only_message', settings.language);
+    const offline = !isBrowserOnline();
+    if (offline || hasDeclinedCloudAiConsent(datasetId, settings.provider)) {
+        const message = getTranslation(
+            offline ? 'cloud_ai_offline_import_message' : 'cloud_ai_local_only_message',
+            settings.language,
+        );
         setState(prev => ({
             initialAnalysisStatus: 'degraded',
+            initialAnalysisFailureKind: offline ? 'offline' : null,
             cleaningRun: {
                 ...createCleaningRun(),
                 status: 'paused',

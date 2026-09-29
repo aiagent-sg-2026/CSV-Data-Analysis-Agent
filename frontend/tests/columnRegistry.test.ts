@@ -7,6 +7,22 @@ import {
 } from '../services/data/columnRegistry';
 
 describe('columnRegistry', () => {
+    it('rejects numeric aggregation of HDB-style block identifiers', () => {
+        const registry = buildColumnRegistry({
+            data: {
+                fileName: 'hdb.csv',
+                data: [{ block: '309', resale_price: 400000 }, { block: '485A', resale_price: 425000 }],
+            },
+            columnProfiles: [
+                { name: 'block', type: 'numerical' },
+                { name: 'resale_price', type: 'currency' },
+            ],
+        });
+
+        expect(registry?.columns.find(entry => entry.physicalName === 'block')?.allowedUsages.aggregationHint).toBe('dimension_only');
+        expect(registry?.columns.find(entry => entry.physicalName === 'resale_price')?.allowedUsages.aggregationHint).toBe('additive');
+    });
+
     it('includes sparse columns discovered after the first row', () => {
         const registry = buildColumnRegistry({
             data: {

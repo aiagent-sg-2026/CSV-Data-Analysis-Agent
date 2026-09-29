@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMultiHeaderIntakeIr } from './reportShapeFixtures/cases';
 import { createTestSettings } from './testSettings';
 
@@ -49,6 +49,8 @@ vi.mock('../services/ai/overflowRetry', () => ({
 }));
 
 describe('reportStructureProposal', () => {
+    afterEach(() => vi.unstubAllGlobals());
+
     beforeEach(() => {
         generateTextMock.mockReset();
         isProviderConfiguredMock.mockReset();
@@ -76,6 +78,29 @@ describe('reportStructureProposal', () => {
         });
 
         expect(proposal).toBeNull();
+    });
+
+    it('skips the optional AI structure proposal while offline', async () => {
+        vi.stubGlobal('navigator', { onLine: false });
+        isProviderConfiguredMock.mockReturnValue(true);
+        const { detectReportStructureProposalWithAi } = await import('../services/ai/reportStructureProposal');
+        const intakeIr = createMultiHeaderIntakeIr();
+        const boundary = {
+            headerRowIndex: intakeIr.provisionalTable!.headerRowIndex,
+            headerLayerRowIndexes: [...intakeIr.provisionalTable!.headerLayerRowIndexes],
+            bodyStartIndex: intakeIr.provisionalTable!.bodyStartIndex,
+            summaryStartIndex: intakeIr.provisionalTable!.summaryStartIndex,
+            parameterRowIndexes: [...intakeIr.provisionalTable!.parameterRowIndexes],
+            repeatedHeaderRowIndexes: [...intakeIr.provisionalTable!.repeatedHeaderRowIndexes],
+        };
+
+        await expect(detectReportStructureProposalWithAi({
+            rawIntakeIr: intakeIr,
+            boundary,
+            settings: createTestSettings(),
+        })).resolves.toBeNull();
+        expect(createProviderModelMock).not.toHaveBeenCalled();
+        expect(generateTextMock).not.toHaveBeenCalled();
     });
 
     it('drops malformed AI proposal payloads', async () => {

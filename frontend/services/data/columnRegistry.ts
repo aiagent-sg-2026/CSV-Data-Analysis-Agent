@@ -9,6 +9,7 @@ import type {
 } from '../../types';
 import { getCsvDatasetLoadVersion } from '../../utils/datasetId';
 import { isStructuralMetadataColumn } from '../agent/structuralMetadata';
+import { isBlockIdentifierColumn } from '../agent/analysisColumnRoles';
 
 type ColumnRegistrySteering = {
     preferGroupBy?: string[];
@@ -197,6 +198,7 @@ const resolveAnalysisRole = (
     if (userRole === 'dimension') return 'business_dimension';
     if (userRole === 'identifier') return 'blocked_dimension';
     if (userRole === 'helper') return 'helper_dimension';
+    if (isBlockIdentifierColumn(physicalName)) return 'business_dimension';
     if (blocked.has(normalized)) {
         return 'blocked_dimension';
     }

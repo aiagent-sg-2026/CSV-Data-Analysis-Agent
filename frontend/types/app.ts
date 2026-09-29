@@ -92,7 +92,7 @@ export interface PendingVectorMemoryDoc {
     metadata?: VectorStoreDocumentMetadata;
 }
 export type InitialAnalysisStatus = 'idle' | 'running' | 'ready' | 'degraded' | 'paused' | 'error';
-export type InitialAnalysisFailureKind = 'provider' | 'analysis';
+export type InitialAnalysisFailureKind = 'provider' | 'analysis' | 'offline';
 export type InitialAnalysisTrigger = 'automatic' | 'manual';
 export type InitialAnalysisReasonCode =
     | 'parse_errors'

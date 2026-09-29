@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CsvData, Settings } from '../types';
 import { extractAiReportContext } from '../services/ai/reportContextExtractor';
 import { createTestSettings } from './testSettings';
@@ -82,6 +82,8 @@ describe('extractAiReportContext', () => {
         });
     });
 
+    afterEach(() => vi.unstubAllGlobals());
+
     it('returns structured AI report context and sanitizes duplicates', async () => {
         const result = await extractAiReportContext(data, settings);
 
@@ -147,6 +149,14 @@ describe('extractAiReportContext', () => {
         const result = await extractAiReportContext(data, settings);
 
         expect(result).toBeNull();
+        expect(generateTextMock).not.toHaveBeenCalled();
+    });
+
+    it('uses deterministic report context immediately while offline', async () => {
+        vi.stubGlobal('navigator', { onLine: false });
+
+        await expect(extractAiReportContext(data, settings)).resolves.toBeNull();
+        expect(createProviderModelMock).not.toHaveBeenCalled();
         expect(generateTextMock).not.toHaveBeenCalled();
     });
 });

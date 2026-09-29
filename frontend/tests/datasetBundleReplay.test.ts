@@ -36,6 +36,37 @@ describe('dataset bundle transformation replay', () => {
         expect(outcome.committedTransformationIds).toHaveLength(1);
     });
 
+    it('reproduces a legacy cleaning output that omitted fully empty columns from its recorded steps', () => {
+        const source = {
+            fileName: 'sales.csv',
+            data: [{ amount: '10', EmptyNote: '' }, { amount: '20', EmptyNote: null }],
+        };
+        const bundle = createSingleTableDatasetBundle({
+            datasetId: 'dataset-1',
+            sourceFingerprint: 'source-1',
+            file: { name: 'sales.csv', size: 10, lastModified: 1 },
+            data: source,
+        });
+        const committed = commitVerifiedPrimaryTableTransformation({
+            bundle,
+            data: { fileName: 'sales.csv', data: [{ amount: 10 }, { amount: 20 }] },
+            operations: [{
+                id: 'cast-amount',
+                type: 'cast_column',
+                reason: 'Numeric measure',
+                column: 'amount',
+                targetType: 'number',
+            }],
+            runId: 'run-1',
+        })!;
+
+        const outcome = replayDatasetBundlePrograms({ bundle: committed, currentData: source });
+
+        expect(outcome.status).toBe('replayed');
+        expect(outcome.data.data).toEqual([{ amount: 10 }, { amount: 20 }]);
+        expect(source.data[0]).toHaveProperty('EmptyNote');
+    });
+
     it('blocks output that does not reproduce the committed version', () => {
         const source = { fileName: 'sales.csv', data: [{ amount: '10' }] };
         const bundle = createSingleTableDatasetBundle({

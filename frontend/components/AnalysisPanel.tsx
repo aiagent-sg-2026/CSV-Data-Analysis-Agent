@@ -20,6 +20,7 @@ import { getCsvDataRowCount } from '../utils/datasetId';
 import { resolveCardTrustDecision } from '../services/agent/cardTrustDecision';
 import { resolveAnalysisCompletionGate } from '../services/agent/analysisCompletionGate';
 import { DEFAULT_AUTO_ANALYSIS_GOAL } from '../services/agent/analysisDefaults';
+import { isBrowserOnline } from '../services/pwa/networkAvailability';
 import { buildDisplayAnalysisIr } from '../services/dashboard/displayAnalysisIr';
 import { hasOpenableLatestReport, isLatestReportPartial, resolveLatestReportBlockedInfo } from '../services/reporting/reportArtifactManifest';
 import type { SqlPrecheckFinding, WorkspacePreviewRowsQueryRequest } from '../types';
@@ -191,6 +192,10 @@ const AnalysisPanelComponent: React.FC = () => {
     const retryAnalysis = useCallback(async () => {
         const dataset = canonicalCsvData ?? csvData;
         if (!dataset || !handleInitialAnalysis || isBusy || isRetryingAnalysis) return;
+        if (!isBrowserOnline()) {
+            addProgress(getTranslation('analysis_results_next_step_outcome_offline', language), 'warning');
+            return;
+        }
         setIsRetryingAnalysis(true);
         try {
             await handleInitialAnalysis(dataset, confirmedAnalysisGoal ?? DEFAULT_AUTO_ANALYSIS_GOAL, { trigger: 'manual' });
@@ -199,7 +204,7 @@ const AnalysisPanelComponent: React.FC = () => {
         } finally {
             setIsRetryingAnalysis(false);
         }
-    }, [addProgress, canonicalCsvData, confirmedAnalysisGoal, csvData, handleInitialAnalysis, isBusy, isRetryingAnalysis]);
+    }, [addProgress, canonicalCsvData, confirmedAnalysisGoal, csvData, handleInitialAnalysis, isBusy, isRetryingAnalysis, language]);
     const handleToggleAllCards = useCallback(() => {
         setExpandOverrideValue(prev => !prev);
         setExpandOverrideKey(prev => prev + 1);
@@ -424,8 +429,10 @@ const AnalysisPanelComponent: React.FC = () => {
         const needsProviderRecovery = !needsStructureRepair
             && initialAnalysisFailureKind === 'provider'
             && (initialAnalysisStatus === 'error' || initialAnalysisStatus === 'degraded');
+        const needsOfflineRecovery = initialAnalysisFailureKind === 'offline'
+            && initialAnalysisStatus === 'degraded';
         const needsEvidenceReview = completionGate.status === 'blocked'
-            && !needsStructureRepair && !needsProviderRecovery;
+            && !needsStructureRepair && !needsProviderRecovery && !needsOfflineRecovery;
         const showHeadlineSections = aiTaskDone;
         const showAnalystReportAction = analysisComplete && cards.length > 0;
         const isArtifactReportGeneration = reportGenerationProgress?.mode === 'artifact';
@@ -613,6 +620,8 @@ const AnalysisPanelComponent: React.FC = () => {
                                         ? 'analysis_results_next_step_reason_structure'
                                         : needsProviderRecovery
                                             ? 'analysis_results_next_step_reason_provider'
+                                            : needsOfflineRecovery
+                                                ? 'analysis_results_next_step_reason_offline'
                                             : needsEvidenceReview
                                                 ? 'analysis_results_next_step_reason_repair'
                                         : initialAnalysisStatus === 'degraded'
@@ -627,6 +636,8 @@ const AnalysisPanelComponent: React.FC = () => {
                                         ? 'analysis_results_next_step_outcome_repair'
                                         : needsProviderRecovery
                                             ? 'analysis_results_next_step_outcome_provider'
+                                            : needsOfflineRecovery
+                                                ? 'analysis_results_next_step_outcome_offline'
                                             : needsEvidenceReview
                                                 ? 'analysis_results_next_step_outcome_evidence'
                                         : 'analysis_results_next_step_outcome_report',
@@ -642,7 +653,7 @@ const AnalysisPanelComponent: React.FC = () => {
                                         } else {
                                             setIsDataPreparationModalOpen(true);
                                         }
-                                    } else if (needsProviderRecovery) {
+                                    } else if (needsProviderRecovery || needsOfflineRecovery) {
                                         void retryAnalysis();
                                     } else if (needsEvidenceReview) {
                                         handleResultsViewChange('explore');
@@ -661,7 +672,7 @@ const AnalysisPanelComponent: React.FC = () => {
                                 {getTranslation(
                                     needsStructureRepair
                                         ? 'analysis_results_repair_action'
-                                        : needsProviderRecovery
+                                        : needsProviderRecovery || needsOfflineRecovery
                                             ? 'analysis_results_retry_action'
                                             : needsEvidenceReview
                                                 ? 'analysis_results_review_evidence_action'

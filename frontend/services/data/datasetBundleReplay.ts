@@ -1,5 +1,6 @@
 import type {
     CsvData,
+    CsvRow,
     DatasetBundle,
     TransformationProgram,
 } from '../../types';
@@ -65,12 +66,16 @@ export const replayVerifiedTransformationProgram = (input: {
     }
 
     const source = cloneData(input.currentData);
-    let nextRows = source.data;
-    try {
+    const applyPendingSteps = (rows: CsvRow[]): CsvRow[] => {
+        let nextRows = rows;
         for (const step of pendingSteps) {
             nextRows = applyDataOperations(nextRows, [step.operation!], { allowEmptyResult: false }).data;
-            existingIds.add(step.idempotencyKey);
         }
+        return nextRows;
+    };
+    let nextRows: CsvRow[];
+    try {
+        nextRows = applyPendingSteps(source.data);
     } catch (error) {
         return {
             status: 'blocked',
@@ -80,8 +85,36 @@ export const replayVerifiedTransformationProgram = (input: {
         };
     }
     const replayedData = { ...source, data: nextRows };
-    const actualVersion = getCsvDatasetVersion(replayedData);
-    if (actualVersion !== input.program.outputVersion) {
+    if (getCsvDatasetVersion(replayedData) !== input.program.outputVersion) {
+        // Earlier cleaning runs dropped fully empty columns before recording
+        // their declarative operations. Recover only when replaying that exact
+        // deterministic step also reproduces the committed output hash.
+        const columns = new Set<string>();
+        if (!source.backing) {
+            source.data.forEach(row => Object.keys(row).forEach(column => columns.add(column)));
+        }
+        const emptyColumns = [...columns]
+            .filter(column => source.data.every(row => row[column] == null || String(row[column]).trim() === ''));
+        if (emptyColumns.length > 0) {
+            const emptyColumnSet = new Set(emptyColumns);
+            const withoutEmptyColumns = source.data.map(row => Object.fromEntries(
+                Object.entries(row).filter(([column]) => !emptyColumnSet.has(column)),
+            ));
+            try {
+                const recoveredData = { ...source, data: applyPendingSteps(withoutEmptyColumns) };
+                if (getCsvDatasetVersion(recoveredData) === input.program.outputVersion) {
+                    pendingSteps.forEach(step => existingIds.add(step.idempotencyKey));
+                    return {
+                        status: 'trusted',
+                        data: recoveredData,
+                        committedTransformationIds: [...existingIds],
+                        reasonCodes: ['transformation_replay_verified'],
+                    };
+                }
+            } catch {
+                // The output hash remains the only acceptance condition.
+            }
+        }
         return {
             status: 'blocked',
             data: source,
@@ -89,6 +122,7 @@ export const replayVerifiedTransformationProgram = (input: {
             reasonCodes: ['transformation_output_version_mismatch'],
         };
     }
+    pendingSteps.forEach(step => existingIds.add(step.idempotencyKey));
     return {
         status: 'trusted',
         data: replayedData,

@@ -27,6 +27,7 @@ import {
     sanitizeAiExtractedReportContext,
 } from '../agent/reportContext';
 import { CloudAiConsentDeclinedError } from '../privacy/cloudAiConsent';
+import { isBrowserOnline } from '../pwa/networkAvailability';
 
 const formatTextRows = (rows: string[][] | undefined, emptyMessage: string) => {
     if (!rows || rows.length === 0) {
@@ -51,7 +52,7 @@ export const extractAiReportContext = async (
     settings: Settings,
     telemetryTarget?: ContextTelemetryTarget,
 ): Promise<AiExtractedReportContext | null> => {
-    if (!isProviderConfigured(settings)) {
+    if (!isProviderConfigured(settings) || !isBrowserOnline()) {
         return null;
     }
 

@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img" aria-labelledby="title desc">
+  <title id="title">Draft illustrative mobile proposal for Data Explorer first open</title>
+  <desc id="desc">A 390 by 844 mobile mockup that puts an automatic bounded local preview of prepared rows before query controls. All displayed row values are illustrative samples, not live results.</desc>
+  <defs>
+    <style>
+      .sans{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      .ink{fill:#111827}.body{fill:#334155}.muted{fill:#64748b}.line{stroke:#e2e8f0}
+      .tiny{font-size:10px}.small{font-size:11px}.body-size{font-size:12px}.medium{font-size:14px}
+      .bold{font-weight:700}.semibold{font-weight:600}
+    </style>
+  </defs>
+
+  <rect width="390" height="844" fill="#f8fafc"/>
+
+  <!-- Header follows the app's white surface, slate divider, and compact eyebrow style. -->
+  <rect width="390" height="94" fill="#ffffff"/>
+  <line x1="0" y1="93.5" x2="390" y2="93.5" stroke="#e2e8f0"/>
+  <text x="16" y="22" class="sans tiny muted" letter-spacing="2.1">DATA EXPLORER</text>
+  <rect x="264" y="7" width="91" height="25" rx="12.5" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="309.5" y="23.5" text-anchor="middle" class="sans tiny bold" fill="#9a3412" letter-spacing=".7">DRAFT · MOCKUP</text>
+  <text x="16" y="52" class="sans" font-size="21" font-weight="700" fill="#0f172a">Data explorer</text>
+  <text x="16" y="73" class="sans small body">Prepared rows first, then refine the query.</text>
+  <rect x="334" y="35" width="44" height="44" rx="10" fill="transparent"/>
+  <path d="M351 49l9 9m0-9-9 9" fill="none" stroke="#475569" stroke-width="1.7" stroke-linecap="round"/>
+
+  <rect x="12" y="103" width="366" height="35" rx="9" fill="#fff7ed" stroke="#fed7aa"/>
+  <path d="M27 114l7 13H20z" fill="#c2410c"/>
+  <text x="27" y="124" text-anchor="middle" class="sans tiny bold" fill="#ffffff">!</text>
+  <text x="40" y="125" class="sans tiny bold" fill="#9a3412" letter-spacing=".2">ILLUSTRATIVE SAMPLE VALUES · NOT LIVE RESULTS</text>
+
+  <rect x="12" y="148" width="366" height="62" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="25" y="173" class="sans body-size bold ink">pi-phase1-hdb-demo-90.csv</text>
+  <text x="25" y="193" class="sans small muted">Prepared dataset</text>
+  <rect x="282" y="162" width="82" height="32" rx="16" fill="#f1f5f9" stroke="#e2e8f0"/>
+  <circle cx="296" cy="178" r="4" fill="#475569"/>
+  <text x="305" y="182" class="sans small semibold body">90 rows</text>
+
+  <rect x="12" y="222" width="366" height="376" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="25" y="246" class="sans tiny bold muted" letter-spacing="1.7">PREPARED ROWS</text>
+  <rect x="269" y="231" width="95" height="25" rx="12.5" fill="#ecfdf5" stroke="#bbf7d0"/>
+  <circle cx="282" cy="243.5" r="3.5" fill="#15803d"/>
+  <text x="291" y="247" class="sans tiny semibold" fill="#166534">Preview ready</text>
+  <text x="25" y="276" class="sans medium bold ink">First 25 rows</text>
+  <text x="25" y="296" class="sans small muted">Local, read-only preview · 25 of 90</text>
+
+  <rect x="24" y="309" width="342" height="249" rx="9" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="25" y="310" width="340" height="31" rx="8" fill="#f8fafc"/>
+  <text x="35" y="330" class="sans tiny bold muted">MONTH</text>
+  <text x="93" y="330" class="sans tiny bold muted">TOWN</text>
+  <text x="202" y="330" class="sans tiny bold muted">FLAT TYPE</text>
+  <text x="307" y="330" class="sans tiny bold muted">BLOCK</text>
+  <line x1="25" y1="341" x2="365" y2="341" class="line"/>
+
+  <text x="35" y="365" class="sans tiny body">Jan '24</text>
+  <text x="93" y="365" class="sans tiny body">Ang Mo Kio</text>
+  <text x="202" y="365" class="sans tiny body">3 ROOM</text>
+  <text x="307" y="365" class="sans tiny body">122A</text>
+  <line x1="25" y1="377" x2="365" y2="377" class="line"/>
+
+  <text x="35" y="405" class="sans tiny body">Feb '24</text>
+  <text x="93" y="405" class="sans tiny body">Bedok</text>
+  <text x="202" y="405" class="sans tiny body">4 ROOM</text>
+  <text x="307" y="405" class="sans tiny body">310B</text>
+  <line x1="25" y1="417" x2="365" y2="417" class="line"/>
+
+  <text x="35" y="445" class="sans tiny body">Mar '24</text>
+  <text x="93" y="445" class="sans tiny body">Jurong West</text>
+  <text x="202" y="445" class="sans tiny body">5 ROOM</text>
+  <text x="307" y="445" class="sans tiny body">672A</text>
+  <line x1="25" y1="457" x2="365" y2="457" class="line"/>
+
+  <text x="35" y="485" class="sans tiny body">Apr '24</text>
+  <text x="93" y="485" class="sans tiny body">Tampines</text>
+  <text x="202" y="485" class="sans tiny body">3 ROOM</text>
+  <text x="307" y="485" class="sans tiny body">418B</text>
+  <line x1="25" y1="497" x2="365" y2="497" class="line"/>
+
+  <text x="35" y="525" class="sans tiny body">May '24</text>
+  <text x="93" y="525" class="sans tiny body">Woodlands</text>
+  <text x="202" y="525" class="sans tiny body">4 ROOM</text>
+  <text x="307" y="525" class="sans tiny body">889C</text>
+  <line x1="25" y1="537" x2="365" y2="537" class="line"/>
+
+  <text x="25" y="578" class="sans tiny muted">Scroll the table for remaining preview rows</text>
+
+  <rect x="12" y="610" width="366" height="106" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="25" y="632" class="sans small bold ink">Refine or revisit</text>
+  <rect x="24" y="643" width="168" height="44" rx="10" fill="#111827"/>
+  <text x="108" y="670" text-anchor="middle" class="sans body-size semibold" fill="#ffffff">Refine query</text>
+  <rect x="198" y="643" width="168" height="44" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="282" y="670" text-anchor="middle" class="sans body-size semibold body">Query history</text>
+  <text x="25" y="704" class="sans tiny muted">Templates, filters, sort and columns are available on demand.</text>
+
+  <rect x="12" y="728" width="366" height="48" rx="11" fill="#ffffff" stroke="#e2e8f0"/>
+  <path d="M28 747l4 4 4-4" fill="none" stroke="#334155" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="45" y="758" class="sans body-size semibold body">Advanced engine status</text>
+
+  <text x="195" y="812" text-anchor="middle" class="sans tiny muted">All illustrated controls meet the 44 px touch target minimum.</text>
+</svg>

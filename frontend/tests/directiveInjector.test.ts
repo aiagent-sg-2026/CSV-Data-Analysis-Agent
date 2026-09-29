@@ -492,6 +492,25 @@ describe('directiveInjector — Rule 6: aggregation governance (AI-first)', () =
         expect(result.validationError).toContain('dimension_only');
     });
 
+    it('rejects SUM(block) at the query boundary even when block was profiled numeric', () => {
+        const registry = govRegistry([
+            { name: 'block', type: 'numerical' },
+            { name: 'resale_price', type: 'numerical' },
+        ]);
+        const invalid = injectDirectivesIntoQueryPlan({
+            select: ['total_block'],
+            aggregates: [{ function: 'sum', column: 'block', as: 'total_block' }],
+        }, { directives: baseDirectives(), columnRegistry: registry });
+        const valid = injectDirectivesIntoQueryPlan({
+            select: ['total_price'],
+            aggregates: [{ function: 'sum', column: 'resale_price', as: 'total_price' }],
+        }, { directives: baseDirectives(), columnRegistry: registry });
+
+        expect(invalid.validationError).toContain('SUM(block) is invalid');
+        expect(invalid.validationError).toContain('dimension_only');
+        expect(valid.validationError).toBeFalsy();
+    });
+
     it('passes SUM on additive metric without error', () => {
         const registry = govRegistry([{ name: 'Revenue', type: 'currency' }]);
         const plan: QueryPlan = {

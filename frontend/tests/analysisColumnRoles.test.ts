@@ -50,6 +50,20 @@ describe('analysisColumnRoles', () => {
         expect(classifyAnalysisColumnRole(dateLikeColumn, [dateLikeColumn], semanticUnderstanding)).toBe('business_dimension');
     });
 
+    it('keeps numeric-looking block codes out of aggregate metrics', () => {
+        const block: ColumnProfile = { name: 'block', type: 'numerical', uniqueValues: 70, missingPercentage: 0 };
+        const price: ColumnProfile = { name: 'resale_price', type: 'currency', uniqueValues: 90, missingPercentage: 0 };
+        const semantic = {
+            ...semanticUnderstanding,
+            candidateMetrics: ['block', 'resale_price'],
+        };
+
+        expect(classifyAnalysisColumnRole(block, [block, price], semantic)).toBe('business_dimension');
+        const directives = buildRuntimeDirectives([block, price], [], [], [], semantic);
+        expect(directives.blockedMetrics).toContain('block');
+        expect(directives.preferredMetrics).toEqual(['resale_price']);
+    });
+
     it('preserves business-safe base columns while blocking repeated family members', () => {
         const roleMap = buildAnalysisColumnRoleMap(columns, semanticUnderstanding);
 

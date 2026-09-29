@@ -23,6 +23,7 @@ import {
 } from '../prompts/runtime/reportIntakePrompts';
 import { runWithOverflowCompaction } from './overflowRetry';
 import { CloudAiConsentDeclinedError } from '../privacy/cloudAiConsent';
+import { isBrowserOnline } from '../pwa/networkAvailability';
 
 const LOG_PREFIX = '[IntakeStructureDetector]';
 
@@ -65,7 +66,7 @@ export const detectIntakeStructureWithAi = async (
     settings: Settings,
     telemetryTarget?: ContextTelemetryTarget,
 ): Promise<AiIntakeStructureBoundary | null> => {
-    if (!isProviderConfigured(settings)) {
+    if (!isProviderConfigured(settings) || !isBrowserOnline()) {
         return null;
     }
 

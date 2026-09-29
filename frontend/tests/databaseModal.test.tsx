@@ -407,8 +407,67 @@ describe('DatabaseModal', () => {
         await waitFor(() => expect(runWorkspaceDataQueryMock).toHaveBeenCalledTimes(2));
     });
 
-    it('shows the analyst empty state when no query activity exists', () => {
+    it('shows a bounded local dataset preview without running or recording a query', () => {
+        const rows = Array.from({ length: 90 }, (_, index) => ({ Code: 501001 + index, Amount: index }));
         const state = createStoreState({
+            activeDataQuery: null,
+            queryHistory: [],
+            csvData: {
+                fileName: 'sample.csv',
+                data: rows,
+                metadataRows: [],
+                summaryRows: [],
+                headerDepth: 1,
+            },
+            columnProfiles: [
+                { name: 'Code', type: 'numerical' as const },
+                { name: 'Amount', type: 'numerical' as const },
+            ],
+        });
+        useAppStoreMock.mockImplementation((selector: any) => selector(state));
+
+        render(<DatabaseModal />);
+
+        expect(screen.getAllByText('Prepared dataset preview').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('25 / 90').length).toBeGreaterThan(0);
+        expect(screen.getByText('No query was run. This is a local preview of the prepared dataset.')).toBeInTheDocument();
+        expect(screen.getByText('No query history yet. Run a template or ask the Assistant to explore this dataset.')).toBeInTheDocument();
+        expect(runWorkspaceDataQueryMock).not.toHaveBeenCalled();
+        expect(tabulatorTableMock.mock.calls.at(-1)?.[0].data).toEqual(rows.slice(0, 25));
+
+        fireEvent.change(screen.getByRole('searchbox', { name: 'Search current result' }), { target: { value: 'not-in-preview' } });
+        expect(tabulatorTableMock.mock.calls.at(-1)?.[0].data).toEqual([]);
+        expect(tabulatorTableMock.mock.calls.at(-1)?.[0].emptyStateText).toBe('No rows match the current search.');
+    });
+
+    it('keeps the local preview visible when the query engine is degraded', async () => {
+        const state = createStoreState({
+            activeDataQuery: null,
+            queryHistory: [],
+            duckDbSessionStatus: {
+                status: 'degraded',
+                engine: 'native',
+                tableName: null,
+                loadVersion: null,
+                fallbackReason: 'duckdb_disabled',
+                lastSyncedAt: null,
+            },
+        });
+        useAppStoreMock.mockImplementation((selector: any) => selector(state));
+
+        render(<DatabaseModal />);
+
+        expect(screen.getAllByText('Prepared dataset preview').length).toBeGreaterThan(0);
+        expect(tabulatorTableMock.mock.calls.at(-1)?.[0].data).toEqual(state.csvData.data);
+        expect(screen.getByRole('button', { name: /Run Query/i })).toBeDisabled();
+        await waitFor(() => expect(refreshDuckDbSessionMock).toHaveBeenCalledTimes(1));
+        expect(runWorkspaceDataQueryMock).not.toHaveBeenCalled();
+    });
+
+    it('shows the analyst empty state when no dataset or query activity exists', () => {
+        const state = createStoreState({
+            csvData: null,
+            canonicalCsvData: null,
             activeDataQuery: null,
             queryHistory: [],
         });
@@ -416,7 +475,6 @@ describe('DatabaseModal', () => {
 
         render(<DatabaseModal />);
 
-        expect(screen.getByText('No query history yet. Run a template or ask the Assistant to explore this dataset.')).toBeInTheDocument();
         expect(screen.getByText('No SQL preview available yet. Run an explorer template or select a query trace from history.')).toBeInTheDocument();
         expect(screen.getAllByText('No query selected').length).toBeGreaterThan(0);
     });

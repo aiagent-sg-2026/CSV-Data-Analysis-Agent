@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppStore } from '../store/useAppStore';
 import type { CsvData, DataPreparationPlan } from '../types';
 import type { StoreApi } from '../services/agent/types';
+import { createSingleTableDatasetBundle } from '../services/data/datasetBundle';
+import type { HistoryAnalysisSnapshot } from '../services/agent/orchestration/historyAnalysisRestore';
+import { getCsvDatasetVersion } from '../utils/datasetId';
 
 const {
     processAndCleanFileMock,
@@ -235,6 +238,123 @@ describe('orchestrateFileUpload post-import pipeline timing', () => {
 
     afterEach(() => {
         vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    it('finishes a local import offline without starting cloud analysis', async () => {
+        vi.stubGlobal('navigator', { onLine: false });
+        const { store, state } = createStore();
+        const generator = (await import('../services/agent/orchestration/fileOrchestrator')).orchestrateFileUpload(
+            { name: 'fr_fin_pl_prj.csv', size: 1 } as File,
+            store,
+        );
+
+        await drainFileOrchestrator(generator, store);
+
+        expect(state.currentView).toBe('analysis_dashboard');
+        expect(state.csvData).toEqual(importReadyData);
+        expect(state.initialAnalysisStatus).toBe('degraded');
+        expect(state.initialAnalysisFailureKind).toBe('offline');
+        expect(state.cleaningRun?.status).toBe('paused');
+        expect(state.chatHistory.at(-1)?.text).toContain('离线期间');
+        expect(state.handleInitialAnalysis).not.toHaveBeenCalled();
+        expect(orchestrateAutonomousAiCleaningMock).not.toHaveBeenCalled();
+    });
+
+    it('defers an offline history restore that needs cloud preparation before replacing saved results', async () => {
+        vi.stubGlobal('navigator', { onLine: false });
+        const bundle = createSingleTableDatasetBundle({
+            datasetId: 'dataset-1',
+            sourceFingerprint: 'source-1',
+            file: { name: 'fr_fin_pl_prj.csv', size: 1, lastModified: 1 },
+            data: importReadyData,
+        });
+        processAndCleanFileMock.mockImplementation(() => (async function* () {
+            return { ...createProcessGeneratorResult(), datasetBundle: bundle };
+        })());
+        const { store, state } = createStore();
+        const generator = (await import('../services/agent/orchestration/fileOrchestrator')).orchestrateFileUpload(
+            { name: 'fr_fin_pl_prj.csv', size: 1 } as File,
+            store,
+            {
+                restoreBundle: bundle,
+                restoreSnapshot: {
+                    datasetVersion: bundle.datasetVersion,
+                    analysisDatasetVersion: 'cleaned-version',
+                } as HistoryAnalysisSnapshot,
+            },
+        );
+
+        await expect(drainFileOrchestrator(generator, store)).rejects.toThrow(/needs cloud-assisted preparation/);
+        expect(orchestrateAutonomousAiCleaningMock).not.toHaveBeenCalled();
+        expect(state.handleInitialAnalysis).not.toHaveBeenCalled();
+    });
+
+    it('restores saved cards when cleaning reproduces the analysis version from the verified source', async () => {
+        vi.stubGlobal('navigator', { onLine: true });
+        const canonicalData: CsvData = {
+            ...importReadyData,
+            data: [{ Project: 'A', Amount: '100', RowRole: 'data' }],
+        };
+        const bundle = createSingleTableDatasetBundle({
+            datasetId: 'dataset-1',
+            sourceFingerprint: 'source-1',
+            file: { name: 'fr_fin_pl_prj.csv', size: 1, lastModified: 1 },
+            data: canonicalData,
+        });
+        const cleanedData: CsvData = {
+            ...canonicalData,
+            data: [{ Project: 'A', Amount: '200', RowRole: 'data' }],
+        };
+        expect(getCsvDatasetVersion(canonicalData)).not.toBe(getCsvDatasetVersion(importReadyData));
+        expect(getCsvDatasetVersion(cleanedData)).not.toBe(getCsvDatasetVersion(canonicalData));
+        processAndCleanFileMock.mockImplementation(() => (async function* () {
+            return { ...createProcessGeneratorResult(), canonicalCsvData: canonicalData, datasetBundle: bundle };
+        })());
+        orchestrateAutonomousAiCleaningMock.mockImplementation(async (activeStore: StoreApi) => {
+            activeStore.setState(prev => ({
+                csvData: cleanedData,
+                cleaningRun: { ...prev.cleaningRun, status: 'completed' },
+            }));
+        });
+        resolveReportStructureArtifactsWithProposalMock.mockResolvedValue({
+            reportStructureResolution: null,
+            canonicalCsvData: cleanedData,
+            canonicalBuildMeta: null,
+            canonicalizationStatus: 'ready',
+            pipelineOutcome: {
+                status: 'ready',
+                canAutoAnalyze: true,
+                severity: 'info',
+                reasonCode: 'ready',
+                message: 'Ready.',
+            },
+        });
+        const { store, state } = createStore();
+        const savedCard = { id: 'restored-card' };
+        const generator = (await import('../services/agent/orchestration/fileOrchestrator')).orchestrateFileUpload(
+            { name: 'fr_fin_pl_prj.csv', size: 1 } as File,
+            store,
+            {
+                restoreBundle: bundle,
+                restoreSnapshot: {
+                    datasetVersion: bundle.datasetVersion,
+                    analysisDatasetVersion: getCsvDatasetVersion(cleanedData),
+                    analysisCards: [savedCard],
+                    workspaceFiles: {},
+                    vectorStoreDocuments: [],
+                } as unknown as HistoryAnalysisSnapshot,
+            },
+        );
+
+        await drainFileOrchestrator(generator, store);
+
+        expect(state.csvData).toEqual(cleanedData);
+        expect(state.canonicalCsvData).toEqual(cleanedData);
+        expect(state.analysisCards).toEqual([savedCard]);
+        expect(state.initialAnalysisStatus).toBe('ready');
+        expect(state.handleInitialAnalysis).not.toHaveBeenCalled();
+        expect(state.proposeAnalysisGoals).not.toHaveBeenCalled();
     });
 
     it('does not call vectorStore.init during the import pipeline (PERF-101)', async () => {

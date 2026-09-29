@@ -18,10 +18,12 @@ import {
 import { createDefaultWorkspaceQueryDrafts } from '../../services/agent/execution/workspaceDataQuery';
 import { createIdleDuckDbSessionStatus } from '../../services/duckdb/sessionStatus';
 import { buildEffectiveColumnRegistryFromState } from '../../services/data/columnRegistry';
+import { resolveDatasetBindingTarget } from '../../services/agent/datasetBinding';
 import { useDialogAccessibility } from '../../hooks/useDialogAccessibility';
 import { getTranslation } from '../../utils/localization';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+const DATASET_PREVIEW_ROW_LIMIT = 25;
 
 const getColumns = (rows: CsvRow[], preferredColumns?: string[]) => {
     if (preferredColumns && preferredColumns.length > 0) {
@@ -100,9 +102,11 @@ export const DatabaseModal: React.FC = () => {
         onClose,
         activeDataQuery,
         csvData,
+        canonicalCsvData,
         columnRegistry,
         columnProfiles,
         datasetSemanticSnapshot,
+        semanticDatasetVersion,
         userColumnAnnotations,
         analysisSteering,
         queryHistory,
@@ -115,9 +119,11 @@ export const DatabaseModal: React.FC = () => {
         onClose: () => state.setIsDatabaseModalOpen(false),
         activeDataQuery: state.activeDataQuery,
         csvData: state.csvData,
+        canonicalCsvData: state.canonicalCsvData,
         columnRegistry: state.columnRegistry,
         columnProfiles: state.columnProfiles,
         datasetSemanticSnapshot: state.datasetSemanticSnapshot,
+        semanticDatasetVersion: state.semanticDatasetVersion,
         userColumnAnnotations: state.userColumnAnnotations,
         analysisSteering: state.latestAnalysisSession?.analysisSteering ?? null,
         queryHistory: state.queryHistory,
@@ -192,6 +198,13 @@ export const DatabaseModal: React.FC = () => {
         () => buildDatabaseModalQueryActivities(activeDataQuery, queryHistory),
         [activeDataQuery, queryHistory],
     );
+    const previewBindingTarget = useMemo(() => resolveDatasetBindingTarget({
+        mode: 'workspace',
+        csvData: canonicalCsvData ?? csvData,
+        snapshot: datasetSemanticSnapshot,
+        semanticDatasetVersion,
+    }), [canonicalCsvData, csvData, datasetSemanticSnapshot, semanticDatasetVersion]);
+    const previewDataset = previewBindingTarget?.dataset ?? null;
     const selectedQueryActivity = useMemo(
         () => queryActivities.find(activity => activity.id === selectedQueryTraceId) ?? null,
         [queryActivities, selectedQueryTraceId],
@@ -204,9 +217,24 @@ export const DatabaseModal: React.FC = () => {
         [queryRunState, selectedQueryTraceId],
     );
     const resolvedQueryActivity = selectedQueryActivity ?? pendingCommittedActivity ?? queryActivities[0] ?? null;
+    const isDatasetPreview = !resolvedQueryActivity && Boolean(previewDataset);
+    const previewRows = useMemo(
+        () => previewDataset?.data.slice(0, DATASET_PREVIEW_ROW_LIMIT) ?? [],
+        [previewDataset],
+    );
+    const previewTotalColumns = getColumns(previewRows).length || availableColumns.length;
+    const defaultPreviewColumns = defaultDrafts.preview_rows.templateId === 'preview_rows'
+        ? defaultDrafts.preview_rows.columns
+        : [];
+    const visiblePreviewColumns = useMemo(
+        () => previewRows.length > 0
+            ? defaultPreviewColumns.filter(column => Object.hasOwn(previewRows[0], column))
+            : defaultPreviewColumns,
+        [defaultPreviewColumns, previewRows],
+    );
     const currentRows = useMemo(() => {
         if (!resolvedQueryActivity) {
-            return [];
+            return previewRows;
         }
 
         if (resolvedQueryActivity.source === 'active' && activeDataQuery) {
@@ -217,10 +245,12 @@ export const DatabaseModal: React.FC = () => {
         }
 
         return resolvedQueryActivity.result.previewRows;
-    }, [activeDataQuery, queryRunState, resolvedQueryActivity]);
+    }, [activeDataQuery, previewRows, queryRunState, resolvedQueryActivity]);
     const currentColumns = useMemo(
-        () => getColumns(currentRows, resolvedQueryActivity?.result.selectedColumns),
-        [currentRows, resolvedQueryActivity?.result.selectedColumns],
+        () => isDatasetPreview
+            ? visiblePreviewColumns
+            : getColumns(currentRows, resolvedQueryActivity?.result.selectedColumns),
+        [currentRows, isDatasetPreview, resolvedQueryActivity?.result.selectedColumns, visiblePreviewColumns],
     );
     const filteredRows = useMemo(
         () => filterRows(currentRows, currentColumns, searchTerm),
@@ -230,15 +260,22 @@ export const DatabaseModal: React.FC = () => {
         ? getSortSummary(sortState)
         : getTranslation('explorer_no_sort_applied', language);
     const emptyStateText = !resolvedQueryActivity
-        ? getTranslation('explorer_empty_run_template', language)
+        ? getTranslation(isDatasetPreview
+            ? previewRows.length > 0 && currentColumns.length === 0
+                ? 'explorer_empty_no_columns'
+                : previewRows.length === 0
+                    ? 'explorer_empty_dataset_preview'
+                    : 'explorer_empty_no_rows'
+            : 'explorer_empty_run_template', language)
         : hasUnavailableQueryPreview(resolvedQueryActivity) && currentRows.length === 0
             ? getTranslation('explorer_empty_preview_unavailable', language)
         : currentColumns.length === 0
             ? getTranslation('explorer_empty_no_columns', language)
             : getTranslation('explorer_empty_no_rows', language);
     const tableKey = [
-        csvData?.fileName ?? 'no-file',
+        previewDataset?.fileName ?? csvData?.fileName ?? 'no-file',
         resolvedQueryActivity?.id ?? 'no-query',
+        isDatasetPreview ? previewBindingTarget?.datasetVersion ?? 'no-version' : 'no-preview',
         resolvedQueryActivity?.appliedAt instanceof Date ? resolvedQueryActivity.appliedAt.toISOString() : 'no-date',
         resolvedQueryActivity?.tableName ?? 'no-table',
         resolvedQueryActivity?.loadVersion ?? 'no-version',
@@ -463,22 +500,6 @@ export const DatabaseModal: React.FC = () => {
 
                     <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] gap-4 overflow-y-auto xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-1 xl:overflow-hidden">
                         <div className="min-w-0 space-y-4 pr-1 xl:min-h-0 xl:overflow-y-auto">
-                            <DatabaseWorkspaceQueryComposer
-                                availableColumns={availableColumns}
-                                groupableColumns={groupableColumns}
-                                templateId={activeTemplateId}
-                                draft={currentDraft}
-                                duckDbSessionStatus={resolvedDuckDbSessionStatus}
-                                onTemplateChange={handleTemplateChange}
-                                onDraftChange={updateDraft}
-                                onRunQuery={() => { void handleRunQuery(); }}
-                                onRefreshSession={() => { void handleRefreshSession(); }}
-                                isSubmitting={isSubmitting}
-                                isRefreshingSession={isRefreshingSession}
-                                errorMessage={formError}
-                                language={language}
-                            />
-
                             <section className="min-w-0 rounded-card border border-slate-200 bg-white shadow-sm">
                                 {queryRunState.status === 'succeeded' ? (
                                     <div role="status" className="border-b border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
@@ -506,10 +527,22 @@ export const DatabaseModal: React.FC = () => {
                                         <div>
                                             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{getTranslation('explorer_current_result', language)}</p>
                                             <h3 className="mt-2 text-lg font-semibold text-slate-900">
-                                                {resolvedQueryActivity?.explanation ?? getTranslation('explorer_no_query_selected', language)}
+                                                {resolvedQueryActivity?.explanation ?? getTranslation(isDatasetPreview ? 'explorer_dataset_preview' : 'explorer_no_query_selected', language)}
                                             </h3>
+                                            {isDatasetPreview && previewDataset ? (
+                                                <p className="mt-1 truncate text-xs text-slate-500 xl:hidden" title={previewDataset.fileName}>
+                                                    {getTranslation('explorer_file', language)}: {previewDataset.fileName}
+                                                </p>
+                                            ) : null}
                                             <p className="mt-1 text-sm text-slate-500">
-                                                {getTranslation('explorer_current_result_hint', language)}
+                                                {isDatasetPreview
+                                                    ? getTranslation('explorer_dataset_preview_hint', language, {
+                                                        rows: previewRows.length,
+                                                        totalRows: previewDataset?.data.length ?? 0,
+                                                        columns: currentColumns.length,
+                                                        totalColumns: previewTotalColumns,
+                                                    })
+                                                    : getTranslation('explorer_current_result_hint', language)}
                                             </p>
                                         </div>
                                         <label className="block xl:max-w-xs">
@@ -523,16 +556,28 @@ export const DatabaseModal: React.FC = () => {
                                             />
                                         </label>
                                     </div>
-                                    <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                                    {resolvedQueryActivity ? (
+                                        <p className="mt-3 text-xs font-medium text-slate-600 sm:hidden">
+                                            {getTranslation('explorer_mobile_query_summary', language, {
+                                                rows: resolvedQueryActivity.result.returnedRows,
+                                                totalRows: resolvedQueryActivity.result.totalMatchedRows,
+                                                columns: currentColumns.length,
+                                                limit: resolvedQueryActivity.result.appliedLimit,
+                                            })}
+                                        </p>
+                                    ) : null}
+                                    <div className="mt-4 hidden gap-2 sm:grid sm:grid-cols-2 xl:grid-cols-5">
                                         <div className="rounded-card border border-slate-200 bg-slate-50 px-3 py-2.5">
                                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{getTranslation('explorer_rows', language)}</p>
                                             <p className="mt-2 text-sm font-semibold text-slate-900">
-                                                {resolvedQueryActivity ? `${resolvedQueryActivity.result.returnedRows} / ${resolvedQueryActivity.result.totalMatchedRows}` : 'N/A'}
+                                                {resolvedQueryActivity
+                                                    ? `${resolvedQueryActivity.result.returnedRows} / ${resolvedQueryActivity.result.totalMatchedRows}`
+                                                    : isDatasetPreview ? `${previewRows.length} / ${previewDataset?.data.length ?? 0}` : 'N/A'}
                                             </p>
                                         </div>
                                         <div className="rounded-card border border-slate-200 bg-slate-50 px-3 py-2.5">
                                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{getTranslation('explorer_columns', language)}</p>
-                                            <p className="mt-2 text-sm font-semibold text-slate-900">{currentColumns.length}</p>
+                                            <p className="mt-2 text-sm font-semibold text-slate-900">{isDatasetPreview ? `${currentColumns.length} / ${previewTotalColumns}` : currentColumns.length}</p>
                                         </div>
                                         <div className="rounded-card border border-slate-200 bg-slate-50 px-3 py-2.5">
                                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{getTranslation('explorer_order', language)}</p>
@@ -540,9 +585,9 @@ export const DatabaseModal: React.FC = () => {
                                         </div>
                                         <div className="rounded-card border border-slate-200 bg-slate-50 px-3 py-2.5">
                                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{getTranslation('explorer_limit', language)}</p>
-                                            <p className="mt-2 text-sm font-semibold text-slate-900">{resolvedQueryActivity?.result.appliedLimit ?? 'N/A'}</p>
+                                            <p className="mt-2 text-sm font-semibold text-slate-900">{resolvedQueryActivity?.result.appliedLimit ?? (isDatasetPreview ? DATASET_PREVIEW_ROW_LIMIT : 'N/A')}</p>
                                         </div>
-                                        <div className="rounded-card border border-slate-200 bg-slate-50 px-3 py-2.5">
+                                        <div className="col-span-2 rounded-card border border-slate-200 bg-slate-50 px-3 py-2.5 xl:col-span-1">
                                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{getTranslation('explorer_local_sort', language)}</p>
                                             <p className="mt-2 text-sm font-semibold text-slate-900">{sortSummary}</p>
                                         </div>
@@ -553,7 +598,9 @@ export const DatabaseModal: React.FC = () => {
                                     <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">{getTranslation('explorer_technical_query_details', language)}</summary>
                                     <div className="mt-3 overflow-hidden rounded-card border border-slate-200 bg-slate-950 text-sm text-slate-100">
                                         <pre className="max-h-[220px] overflow-auto px-3 py-2.5 whitespace-pre-wrap break-words">
-                                            {resolvedQueryActivity?.sqlPreview ?? 'No SQL preview available yet. Run an explorer template or select a query trace from history.'}
+                                            {resolvedQueryActivity?.sqlPreview ?? (isDatasetPreview
+                                                ? getTranslation('explorer_dataset_preview_no_query', language)
+                                                : 'No SQL preview available yet. Run an explorer template or select a query trace from history.')}
                                         </pre>
                                     </div>
                                 </details>
@@ -577,10 +624,30 @@ export const DatabaseModal: React.FC = () => {
                                     />
                                 </div>
                             </section>
+
+                            <DatabaseWorkspaceQueryComposer
+                                availableColumns={availableColumns}
+                                groupableColumns={groupableColumns}
+                                templateId={activeTemplateId}
+                                draft={currentDraft}
+                                duckDbSessionStatus={resolvedDuckDbSessionStatus}
+                                onTemplateChange={handleTemplateChange}
+                                onDraftChange={updateDraft}
+                                onRunQuery={() => { void handleRunQuery(); }}
+                                onRefreshSession={() => { void handleRefreshSession(); }}
+                                isSubmitting={isSubmitting}
+                                isRefreshingSession={isRefreshingSession}
+                                errorMessage={formError}
+                                language={language}
+                            />
+
                         </div>
 
                         <DatabaseModalSidebar
                             csvData={csvData}
+                            datasetPreview={isDatasetPreview && previewDataset
+                                ? { dataset: previewDataset, rowLimit: DATASET_PREVIEW_ROW_LIMIT, columnCount: currentColumns.length, totalColumnCount: previewTotalColumns }
+                                : null}
                             queryActivities={queryActivities}
                             selectedQueryActivity={resolvedQueryActivity}
                             onSelectQueryActivity={setSelectedQueryTraceId}

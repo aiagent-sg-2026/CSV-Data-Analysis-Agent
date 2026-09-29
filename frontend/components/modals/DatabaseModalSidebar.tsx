@@ -6,6 +6,7 @@ import { getTranslation } from '../../utils/localization';
 
 interface DatabaseModalSidebarProps {
     csvData: CsvData | null;
+    datasetPreview?: { dataset: CsvData; rowLimit: number; columnCount: number; totalColumnCount: number } | null;
     queryActivities: DatabaseModalQueryActivity[];
     selectedQueryActivity: DatabaseModalQueryActivity | null;
     onSelectQueryActivity: (id: string) => void;
@@ -51,6 +52,7 @@ const formatOrderBy = (activity: DatabaseModalQueryActivity | null) => {
 
 export const DatabaseModalSidebar: React.FC<DatabaseModalSidebarProps> = ({
     csvData,
+    datasetPreview = null,
     queryActivities,
     selectedQueryActivity,
     onSelectQueryActivity,
@@ -69,7 +71,14 @@ export const DatabaseModalSidebar: React.FC<DatabaseModalSidebarProps> = ({
                 <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{getTranslation('explorer_current_result', language)}</p>
                     <p className="mt-2 text-sm text-slate-600">
-                        {getTranslation('explorer_sidebar_hint', language)}
+                        {datasetPreview
+                            ? getTranslation('explorer_dataset_preview_hint', language, {
+                                rows: Math.min(datasetPreview.dataset.data.length, datasetPreview.rowLimit),
+                                totalRows: datasetPreview.dataset.data.length,
+                                columns: datasetPreview.columnCount,
+                                totalColumns: datasetPreview.totalColumnCount,
+                            })
+                            : getTranslation('explorer_sidebar_hint', language)}
                     </p>
                 </div>
                 <div className="rounded-card border border-slate-200 bg-slate-50 px-3 py-2.5 text-right">
@@ -80,11 +89,13 @@ export const DatabaseModalSidebar: React.FC<DatabaseModalSidebarProps> = ({
             <dl className="mt-4 space-y-3 text-sm text-slate-700">
                 <div className="flex justify-between gap-4">
                     <dt>{getTranslation('explorer_file', language)}</dt>
-                    <dd className="text-right font-medium text-slate-900">{csvData?.fileName ?? getTranslation('explorer_no_dataset', language)}</dd>
+                    <dd className="text-right font-medium text-slate-900">{datasetPreview?.dataset.fileName ?? csvData?.fileName ?? getTranslation('explorer_no_dataset', language)}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
                     <dt>{getTranslation('explorer_origin', language)}</dt>
-                    <dd className="text-right font-medium text-slate-900">{selectedQueryActivity ? formatOriginLabel(selectedQueryActivity.origin, language) : getTranslation('explorer_no_query_selected', language)}</dd>
+                    <dd className="text-right font-medium text-slate-900">{selectedQueryActivity
+                        ? formatOriginLabel(selectedQueryActivity.origin, language)
+                        : getTranslation(datasetPreview ? 'explorer_dataset_preview' : 'explorer_no_query_selected', language)}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
                     <dt>{getTranslation('explorer_template', language)}</dt>
@@ -97,16 +108,18 @@ export const DatabaseModalSidebar: React.FC<DatabaseModalSidebarProps> = ({
                 <div className="flex justify-between gap-4">
                     <dt>{getTranslation('explorer_rows', language)}</dt>
                     <dd className="text-right font-medium text-slate-900">
-                        {selectedQueryActivity ? `${selectedQueryActivity.result.returnedRows} / ${selectedQueryActivity.result.totalMatchedRows}` : 'N/A'}
+                        {selectedQueryActivity
+                            ? `${selectedQueryActivity.result.returnedRows} / ${selectedQueryActivity.result.totalMatchedRows}`
+                            : datasetPreview ? `${Math.min(datasetPreview.dataset.data.length, datasetPreview.rowLimit)} / ${datasetPreview.dataset.data.length}` : 'N/A'}
                     </dd>
                 </div>
                 <div className="flex justify-between gap-4">
                     <dt>{getTranslation('explorer_columns', language)}</dt>
-                    <dd className="text-right font-medium text-slate-900">{selectedQueryActivity?.result.selectedColumns.length ?? 0}</dd>
+                    <dd className="text-right font-medium text-slate-900">{selectedQueryActivity?.result.selectedColumns.length ?? (datasetPreview ? `${datasetPreview.columnCount} / ${datasetPreview.totalColumnCount}` : 0)}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
                     <dt>{getTranslation('explorer_limit', language)}</dt>
-                    <dd className="text-right font-medium text-slate-900">{selectedQueryActivity?.result.appliedLimit ?? 'N/A'}</dd>
+                    <dd className="text-right font-medium text-slate-900">{selectedQueryActivity?.result.appliedLimit ?? datasetPreview?.rowLimit ?? 'N/A'}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
                     <dt>{getTranslation('explorer_order', language)}</dt>
