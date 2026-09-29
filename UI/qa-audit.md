@@ -261,3 +261,9 @@ Focused structure, workflow, and repair tests passed 39/39, including the header
 History previously left `handleLoadReport` rejections unhandled and showed no error or retry control. A rejected IndexedDB read reproduced both symptoms in a failing UI test. The panel now keeps a visible error with a retry action, while the store records a progress error and propagates failures. A report missing between list and load also fails explicitly. The AI-turn guard now rejects instead of silently resolving; the current session remains unchanged for pre-restore failures.
 
 Focused UI/store tests passed 28/28. Typecheck, lint, full suite (342 files / 2,853 tests), production build, and bundle budget passed. The in-app browser remained unavailable because the Mac was locked, so the alert and retry still need real browser verification. Generated root output and public Pages remain unchanged.
+
+## 2026-09-29 History report artifact action recovery QA
+
+History also discarded failures from **Open Report** and **Export PDF**. A saved-artifact read rejection and a blocked print view produced no inline feedback in red UI tests. The store now returns an explicit success result for missing or blocked artifacts and records unexpected read failures before propagating them. History displays an action-specific error and retries the same report operation. The action menu waits for a pending report operation to finish before accepting another.
+
+Focused UI/store tests passed 18/18. Typecheck, lint, full suite (342 files / 2,856 tests), and production build passed. The report viewer's native popup remains subject to the in-app browser policy, and the Mac was locked for this pass; visual and end-to-end verification of both retry states is pending. Root deployment and public Pages remain unchanged.

@@ -562,3 +562,9 @@
 - **Finding and fix**: A failed History load produced an unhandled Promise rejection with no visible recovery. The panel now shows a localized error and retry; the store logs restore errors and rejects missing reports. The running-AI-turn guard also rejects while preserving the current session.
 - **Checks**: The UI failure injection first failed with no alert and an unhandled rejection. Final focused tests passed 28/28; typecheck, lint, full suite 342 files / 2,853 tests, production build, and bundle budget passed. Existing Vite import warnings remain.
 - **Browser/release status**: The in-app browser could not be exercised because the Mac is locked. This recovery UI and earlier pending flows still require live visual/E2E verification. Root generated deployment and public Pages remain unchanged.
+
+## 2026-09-29 History Report Artifact Action Recovery QA
+
+- **Finding and fix**: Open Report and Export PDF in History discarded asynchronous failures and had no inline response to a missing artifact or blocked report/print window. The store now returns success/failure and logs unexpected read errors; the panel shows operation-specific retry feedback.
+- **Checks**: Two failure-injection UI tests failed on the previous behavior. Focused UI/store tests passed 18/18; typecheck, lint, full suite 342 files / 2,856 tests, and production build passed. Existing Vite import warnings remain.
+- **Browser/release status**: The Mac is still locked, so the two recovery states need in-app browser visual/E2E verification. Root generated deployment and public Pages remain unchanged.

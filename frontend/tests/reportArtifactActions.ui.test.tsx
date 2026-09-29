@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceModal } from '../components/modals/WorkspaceModal';
 import { HistoryPanel } from '../components/modals/HistoryPanel';
@@ -138,7 +138,7 @@ describe('report artifact action surfaces', () => {
         expect(exportLatestAnalystReportPdf).toHaveBeenCalledTimes(1);
     });
 
-    it('renders history panel report actions and wires them to the store', () => {
+    it('renders history panel report actions and wires them to the store', async () => {
         const openPersistedReportArtifact = vi.fn(async () => undefined);
         const exportPersistedReportPdf = vi.fn(async () => undefined);
         const handleLoadReport = vi.fn(async () => undefined);
@@ -166,9 +166,9 @@ describe('report artifact action surfaces', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Resume analysis' }));
         fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-        fireEvent.click(screen.getByRole('button', { name: 'Open Report' }));
+        await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Open Report' })));
         fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-        fireEvent.click(screen.getByRole('button', { name: 'Export PDF' }));
+        await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Export PDF' })));
 
         expect(handleLoadReport).toHaveBeenCalledWith('report-1');
         expect(openPersistedReportArtifact).toHaveBeenCalledWith('report-1');
@@ -205,6 +205,66 @@ describe('report artifact action surfaces', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Retry loading report' }));
         await waitFor(() => expect(handleLoadReport).toHaveBeenCalledTimes(2));
         await waitFor(() => expect(screen.queryByText(/Could not load the saved analysis/)).not.toBeInTheDocument());
+    });
+
+    it('offers a retry when opening a saved report fails', async () => {
+        const openPersistedReportArtifact = vi.fn()
+            .mockRejectedValueOnce(new Error('artifact read unavailable'))
+            .mockResolvedValueOnce(true);
+        const state = {
+            isHistoryPanelOpen: true,
+            setIsHistoryPanelOpen: vi.fn(),
+            reportsList: [{
+                id: 'report-1', filename: 'sample.csv',
+                createdAt: new Date('2026-03-14T09:00:00.000Z'),
+                updatedAt: new Date('2026-03-14T09:10:00.000Z'),
+            }],
+            handleLoadReport: vi.fn(async () => undefined),
+            handleDeleteReport: vi.fn(async () => undefined),
+            handlePurgeStorage: vi.fn(async () => ({ deletedReports: 0, freedMB: 0 })),
+            openPersistedReportArtifact,
+            exportPersistedReportPdf: vi.fn(async () => true),
+            sessionId: 'report-1',
+            settings: { language: 'English' },
+            csvData: null,
+        };
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+
+        render(<HistoryPanel />);
+        fireEvent.click(screen.getByRole('button', { name: 'Open Report' }));
+        expect(await screen.findByRole('alert')).toHaveTextContent('Could not open the saved report');
+        fireEvent.click(screen.getByRole('button', { name: 'Retry opening report' }));
+        await waitFor(() => expect(openPersistedReportArtifact).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(screen.queryByText(/Could not open the saved report/)).not.toBeInTheDocument());
+    });
+
+    it('shows a retry when PDF export cannot open a print view', async () => {
+        const exportPersistedReportPdf = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+        const state = {
+            isHistoryPanelOpen: true,
+            setIsHistoryPanelOpen: vi.fn(),
+            reportsList: [{
+                id: 'report-1', filename: 'sample.csv',
+                createdAt: new Date('2026-03-14T09:00:00.000Z'),
+                updatedAt: new Date('2026-03-14T09:10:00.000Z'),
+            }],
+            handleLoadReport: vi.fn(async () => undefined),
+            handleDeleteReport: vi.fn(async () => undefined),
+            handlePurgeStorage: vi.fn(async () => ({ deletedReports: 0, freedMB: 0 })),
+            openPersistedReportArtifact: vi.fn(async () => true),
+            exportPersistedReportPdf,
+            sessionId: 'session-2',
+            settings: { language: 'English' },
+            csvData: null,
+        };
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+
+        render(<HistoryPanel />);
+        fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Export PDF' }));
+        expect(await screen.findByRole('alert')).toHaveTextContent('Could not start PDF export');
+        fireEvent.click(screen.getByRole('button', { name: 'Retry PDF export' }));
+        await waitFor(() => expect(exportPersistedReportPdf).toHaveBeenCalledTimes(2));
     });
 
     it('confirms report deletion inside History before calling the store', async () => {

@@ -13,7 +13,7 @@ const {
     loadReportArtifactHtmlMock: vi.fn(),
     hydrateLatestReportWorkspaceFilesMock: vi.fn(async (workspaceFiles: Record<string, string>) => workspaceFiles),
     openReportArtifactMock: vi.fn(() => ({ closed: false })),
-    printReportArtifactMock: vi.fn(() => ({ closed: false })),
+    printReportArtifactMock: vi.fn<() => { closed: boolean } | null>(() => ({ closed: false })),
 }));
 
 vi.mock('../services/storageService', () => ({
@@ -99,8 +99,8 @@ describe('historySlice report artifact actions', () => {
         loadReportArtifactHtmlMock.mockResolvedValue('<!DOCTYPE html><html><body>Archive</body></html>');
         const harness = createHarness();
 
-        await harness.getState().openPersistedReportArtifact('report-1');
-        await harness.getState().exportPersistedReportPdf('report-1');
+        expect(await harness.getState().openPersistedReportArtifact('report-1')).toBe(true);
+        expect(await harness.getState().exportPersistedReportPdf('report-1')).toBe(true);
 
         expect(loadReportArtifactHtmlMock).toHaveBeenCalledWith('artifact-1');
         expect(openReportArtifactMock).toHaveBeenCalledWith('<!DOCTYPE html><html><body>Archive</body></html>');
@@ -127,10 +127,31 @@ describe('historySlice report artifact actions', () => {
         loadReportArtifactHtmlMock.mockResolvedValueOnce(null);
         const harness = createHarness();
 
-        await harness.getState().openPersistedReportArtifact('report-2');
-        await harness.getState().openPersistedReportArtifact('missing-report');
+        expect(await harness.getState().openPersistedReportArtifact('report-2')).toBe(false);
+        expect(await harness.getState().openPersistedReportArtifact('missing-report')).toBe(false);
 
         expect(harness.getState().addProgress).toHaveBeenCalledWith('No saved report artifact was found for report-2.', 'error');
         expect(harness.getState().addProgress).toHaveBeenCalledWith('No saved report artifact was found for missing-report.', 'error');
+    });
+
+    it('reports a failed artifact read and a blocked PDF print view', async () => {
+        getReportMock.mockRejectedValueOnce(new Error('IndexedDB unavailable'));
+        const harness = createHarness();
+
+        await expect(harness.getState().openPersistedReportArtifact('report-1'))
+            .rejects.toThrow('IndexedDB unavailable');
+        expect(harness.getState().addProgress).toHaveBeenCalledWith('Failed to open the saved report for report-1.', 'error');
+
+        getReportMock.mockResolvedValueOnce({
+            id: 'report-1',
+            appState: { workspaceFiles: {
+                '/workspace/reports/latest-analyst-report.manifest.json': JSON.stringify({ reportId: 'artifact-1', artifactStatus: 'ready' }),
+            } },
+        });
+        loadReportArtifactHtmlMock.mockResolvedValueOnce('<html>Report</html>');
+        printReportArtifactMock.mockReturnValueOnce(null);
+
+        expect(await harness.getState().exportPersistedReportPdf('report-1')).toBe(false);
+        expect(harness.getState().addProgress).toHaveBeenCalledWith('Failed to open the saved report for PDF export: report-1.', 'error');
     });
 });

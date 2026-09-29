@@ -46,8 +46,8 @@ export interface IHistorySlice {
     handleDeleteReport: (id: string) => Promise<void>;
     handlePurgeStorage: () => Promise<{ deletedReports: number; freedMB: number }>;
     handleNewSession: () => Promise<void>;
-    openPersistedReportArtifact: (id: string) => Promise<void>;
-    exportPersistedReportPdf: (id: string) => Promise<void>;
+    openPersistedReportArtifact: (id: string) => Promise<boolean>;
+    exportPersistedReportPdf: (id: string) => Promise<boolean>;
 }
 
 export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> = (set, get) => ({
@@ -253,33 +253,47 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
         }
     },
     openPersistedReportArtifact: async (id) => {
-        const report = await getReport(id);
-        const manifest = parseReportArtifactManifest(report?.appState?.workspaceFiles?.['/workspace/reports/latest-analyst-report.manifest.json']);
-        const html = manifest ? await loadReportArtifactHtml(manifest.reportId) : null;
+        try {
+            const report = await getReport(id);
+            const manifest = parseReportArtifactManifest(report?.appState?.workspaceFiles?.['/workspace/reports/latest-analyst-report.manifest.json']);
+            const html = manifest ? await loadReportArtifactHtml(manifest.reportId) : null;
 
-        if (!html) {
-            get().addProgress(`No saved report artifact was found for ${id}.`, 'error');
-            return;
-        }
+            if (!html) {
+                get().addProgress(`No saved report artifact was found for ${id}.`, 'error');
+                return false;
+            }
 
-        const openedWindow = openReportArtifact(html);
-        if (!openedWindow) {
+            const openedWindow = openReportArtifact(html);
+            if (!openedWindow) {
+                get().addProgress(`Failed to open the saved report for ${id}.`, 'error');
+                return false;
+            }
+            return true;
+        } catch (error) {
             get().addProgress(`Failed to open the saved report for ${id}.`, 'error');
+            throw error;
         }
     },
     exportPersistedReportPdf: async (id) => {
-        const report = await getReport(id);
-        const manifest = parseReportArtifactManifest(report?.appState?.workspaceFiles?.['/workspace/reports/latest-analyst-report.manifest.json']);
-        const html = manifest ? await loadReportArtifactHtml(manifest.reportId) : null;
+        try {
+            const report = await getReport(id);
+            const manifest = parseReportArtifactManifest(report?.appState?.workspaceFiles?.['/workspace/reports/latest-analyst-report.manifest.json']);
+            const html = manifest ? await loadReportArtifactHtml(manifest.reportId) : null;
 
-        if (!html) {
-            get().addProgress(`No saved report artifact was found for ${id}.`, 'error');
-            return;
-        }
+            if (!html) {
+                get().addProgress(`No saved report artifact was found for ${id}.`, 'error');
+                return false;
+            }
 
-        const openedWindow = printReportArtifact(html);
-        if (!openedWindow) {
+            const openedWindow = printReportArtifact(html);
+            if (!openedWindow) {
+                get().addProgress(`Failed to open the saved report for PDF export: ${id}.`, 'error');
+                return false;
+            }
+            return true;
+        } catch (error) {
             get().addProgress(`Failed to open the saved report for PDF export: ${id}.`, 'error');
+            throw error;
         }
     },
     handleNewSession: async () => {

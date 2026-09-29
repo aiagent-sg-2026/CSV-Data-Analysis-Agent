@@ -25,6 +25,7 @@ type SortDirection = 'asc' | 'desc';
 type PendingHistoryDeletion =
     | { kind: 'purge'; count: number }
     | { kind: 'report'; id: string; filename: string };
+type ReportAction = 'open' | 'pdf';
 
 // ── Grouping logic ─────────────────────────────────────────────────────
 
@@ -96,6 +97,8 @@ export const HistoryPanel: React.FC = () => {
     const [collapsedSearchGroups, setCollapsedSearchGroups] = useState<Set<string>>(() => new Set());
     const [loadingId, setLoadingId] = useState<string | null>(null);
     const [loadErrorId, setLoadErrorId] = useState<string | null>(null);
+    const [reportActionError, setReportActionError] = useState<{ id: string; action: ReportAction } | null>(null);
+    const [reportActionBusy, setReportActionBusy] = useState(false);
     const [confirmLoadId, setConfirmLoadId] = useState<string | null>(null);
     const [sortField, setSortField] = useState<SortField>('updatedAt');
     const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -127,6 +130,7 @@ export const HistoryPanel: React.FC = () => {
             setPendingDeletion(null);
             setDeletionError(null);
             setLoadErrorId(null);
+            setReportActionError(null);
         }
     }, [isOpen]);
 
@@ -213,6 +217,22 @@ export const HistoryPanel: React.FC = () => {
             setLoadErrorId(id);
         } finally {
             setLoadingId(null);
+        }
+    };
+
+    const runReportAction = async (action: ReportAction, id: string) => {
+        if (reportActionBusy) return;
+        setReportActionError(null);
+        setReportActionBusy(true);
+        try {
+            const succeeded = action === 'open'
+                ? await onOpenReport(id)
+                : await onExportPdf(id);
+            if (succeeded === false) setReportActionError({ id, action });
+        } catch {
+            setReportActionError({ id, action });
+        } finally {
+            setReportActionBusy(false);
         }
     };
 
@@ -398,6 +418,20 @@ export const HistoryPanel: React.FC = () => {
                     </div>
                 )}
 
+                {reportActionError && (
+                    <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-red-100 bg-red-50 px-5 py-2 text-sm text-red-800">
+                        <span>{getTranslation(reportActionError.action === 'open' ? 'history_open_failed' : 'history_pdf_failed', language)}</span>
+                        <button
+                            type="button"
+                            onClick={() => void runReportAction(reportActionError.action, reportActionError.id)}
+                            disabled={reportActionBusy}
+                            className="min-h-[44px] rounded-lg px-3 font-semibold text-red-800 hover:bg-red-100 disabled:opacity-50"
+                        >
+                            {getTranslation(reportActionError.action === 'open' ? 'history_open_retry' : 'history_pdf_retry', language)}
+                        </button>
+                    </div>
+                )}
+
                 <div data-history-scroll-region className="min-h-0 flex-1 overflow-y-auto">
                     {/* Storage Inspector (expandable) */}
                     {showStorageInspector && (
@@ -448,9 +482,9 @@ export const HistoryPanel: React.FC = () => {
                                         }
                                     }}
                                     onLoad={handleLoad}
-                                    onOpenReport={id => void onOpenReport(id)}
+                                    onOpenReport={id => void runReportAction('open', id)}
                                     onDelete={handleDelete}
-                                    onExportPdf={id => void onExportPdf(id)}
+                                    onExportPdf={id => void runReportAction('pdf', id)}
                                     onOverflowToggle={setOverflowMenuId}
                                     isProtectedReport={isProtectedReport}
                                     formatDate={formatDate}
