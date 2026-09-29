@@ -305,3 +305,7 @@ The cleaned-dataset CSV download still inferred headers from its first row and d
 ## 2026-09-29 Backed CSV download recovery QA
 
 The Data Preparation Workflow's cleaned CSV button awaited an OPFS read without catching rejection. Failure injection produced an unhandled rejection and no user feedback. The button now reports a localized retry or re-import instruction, keeps the action retryable, and revokes its Blob URL even if clicking the download link throws. The same test confirms a subsequent successful download. Focused Workflow tests passed 3/3, localization tests 12/12, typecheck, lint, full suite (342 files / 2,872 tests), production build, and bundle budget passed. Existing Vite import overlap warnings remain. The Mac remains locked, so this failure state has not been observed in the in-app browser.
+
+## 2026-09-29 Backed dataset support-bundle shape QA
+
+The public support bundle reported the in-memory preview length as the dataset row count for DuckDB-backed CSVs. A one-row preview with 982,589 backed rows reproduced the incorrect count. It now uses the backing row count and, when available, backing column-name count while still emitting counts only. The regression verifies that private column names and the source filename stay absent. Focused support/upload/backing tests passed 8/8; typecheck, lint, the full suite (342 files / 2,873 tests), production build, and bundle budget passed. Existing Vite import overlap warnings remain. The public Pages build is unchanged.

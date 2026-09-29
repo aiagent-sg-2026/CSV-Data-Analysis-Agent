@@ -76,6 +76,7 @@ AI Long-Term Memory search is available only when the current report has saved m
 
 The Data Preparation Workflow's GitHub support action opens the public issues page for this repository.
 Its Advanced exports menu scrolls within short viewports so every download and copy action remains reachable.
+The sanitized support bundle reports the full row and column counts for backed datasets without including file or column names.
 
 The Debug Logs export menu stays inside the viewport on mobile and short landscape screens. Its Workflow and Artifacts header actions have 44px touch targets.
 

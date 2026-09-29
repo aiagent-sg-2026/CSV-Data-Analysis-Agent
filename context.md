@@ -616,3 +616,9 @@
 - **Finding and fix**: The Workflow's cleaned CSV action discarded a rejection from its OPFS read, leaving no feedback and an unhandled promise. A red UI test reproduced it. The action now catches read/download failures, shows a localized retry or re-import message, and preserves a retry path. Blob URLs are revoked even if link activation throws. A failed attempt followed by a successful download is covered.
 - **Checks**: Focused Workflow tests passed 3/3, localization tests 12/12, typecheck and lint passed. The full suite passed 342 files / 2,872 tests; production build and bundle budget passed with existing Vite import overlap warnings.
 - **Browser/release status**: The Mac remains locked, so the error layout and actual backed-file download need browser E2E. Root deployment and public Pages remain unchanged.
+
+## 2026-09-29 Backed Dataset Support-Bundle Shape QA
+
+- **Finding and fix**: The sanitized support bundle previously used the preview array length as a large backed CSV's row count. A one-row preview with 982,589 backed rows failed the new regression. It now reports the authoritative backing row count and column count where available, without including private file or column names.
+- **Checks**: Focused support/upload/backing tests passed 8/8, typecheck and lint passed, and the full frontend suite passed 342 files / 2,873 tests. Production build and bundle budget passed with existing Vite import overlap warnings.
+- **Browser/release status**: Browser E2E remains unavailable while the Mac is locked. Root deployment and public Pages remain unchanged.

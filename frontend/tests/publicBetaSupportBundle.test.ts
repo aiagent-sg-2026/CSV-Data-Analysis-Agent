@@ -96,4 +96,37 @@ describe('buildPublicBetaSupportBundle', () => {
         expect(bundle).toContain('"containsRawRows": false');
         expect(bundle).toContain('"automaticUpload": false');
     });
+
+    it('reports the full backed dataset shape without exposing column names', () => {
+        const state = {
+            settings: createTestSettings(),
+            csvData: {
+                fileName: 'private-large.csv',
+                data: [{ 'Sensitive Name': 'sample' }],
+                backing: {
+                    rowCount: 982_589,
+                    columnNames: ['Sensitive Name', 'Secret Amount'],
+                },
+            },
+            canonicalCsvData: null,
+            analysisCards: [],
+            agentEvents: [],
+            runtimeEvents: [],
+            runtimeRunHistory: [],
+        } as unknown as AppStore;
+
+        const bundle = buildPublicBetaSupportBundle(state, {
+            appVersion: 'test',
+            releaseCommit: 'local',
+            userAgent: 'Test Browser',
+            language: 'en-SG',
+            generatedAt: '2026-09-29T00:00:00.000Z',
+        });
+
+        expect(bundle).toContain('"rowCount": 982589');
+        expect(bundle).toContain('"columnCount": 2');
+        expect(bundle).not.toContain('Sensitive Name');
+        expect(bundle).not.toContain('Secret Amount');
+        expect(bundle).not.toContain('private-large.csv');
+    });
 });

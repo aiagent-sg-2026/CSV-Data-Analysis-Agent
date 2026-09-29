@@ -2,6 +2,7 @@ import type { AppStore } from '../../store/useAppStore';
 import type { CardTrustStatus } from '../../types';
 import { getCurrentAnalysisDatasetVersion } from '../agent/artifactProvenance';
 import { resolveCardTrustDecision } from '../agent/cardTrustDecision';
+import { getCsvDataRowCount } from '../../utils/datasetId';
 
 const SUPPORT_BUNDLE_SCHEMA_VERSION = 1;
 const MAX_RECENT_FAILURES = 20;
@@ -121,8 +122,9 @@ export const buildPublicBetaSupportBundle = (
         },
         datasetShape: dataset
             ? {
-                rowCount: dataset.data.length,
-                columnCount: dataset.data[0] ? Object.keys(dataset.data[0]).length : 0,
+                rowCount: getCsvDataRowCount(dataset),
+                columnCount: dataset.backing?.columnNames?.length
+                    ?? (dataset.data[0] ? Object.keys(dataset.data[0]).length : 0),
             }
             : null,
         pipeline: state.pipelineOutcome
