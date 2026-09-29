@@ -26,6 +26,7 @@ export const MemoryPanel: React.FC = () => {
     const [documents, setDocuments] = useState<VectorStoreDocument[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+    const [searchFeedback, setSearchFeedback] = useState<'none' | 'empty' | 'error'>('none');
     const [isSearching, setIsSearching] = useState(false);
     const [highlightedDocText, setHighlightedDocText] = useState<string | null>(null);
     const [modelStatus, setModelStatus] = useState(vectorStore.getStatus());
@@ -34,6 +35,7 @@ export const MemoryPanel: React.FC = () => {
 
     const isModelReady = modelStatus === 'ready';
     const activeMemoryScope = resolveReportMemoryScope(useAppStore.getState());
+    const canSearch = Boolean(activeMemoryScope && documents.length > 0);
 
     const refreshDocuments = useCallback(async () => {
         const scope = resolveReportMemoryScope(useAppStore.getState());
@@ -65,7 +67,7 @@ export const MemoryPanel: React.FC = () => {
             syncModelState();
 
             // Trigger on-demand vector memory activation when the panel opens (PERF-103).
-            if (!activationTriggered.current) {
+            if (activeMemoryScope && !activationTriggered.current) {
                 activationTriggered.current = true;
                 const store = { getState: useAppStore.getState, setState: useAppStore.setState };
                 void vectorStore.ensureVectorMemoryReady(
@@ -86,30 +88,33 @@ export const MemoryPanel: React.FC = () => {
             activationTriggered.current = false;
             setSearchQuery('');
             setSearchResults([]);
+            setSearchFeedback('none');
             setHighlightedDocText(null);
         }
     }, [isOpen, refreshDocuments, syncModelState]);
 
     const handleSearch = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!searchQuery.trim() || modelStatus === 'loading') return;
+        if (!canSearch || !searchQuery.trim() || modelStatus === 'loading') return;
         setIsSearching(true);
         setHighlightedDocText(null);
+        setSearchFeedback('none');
         syncModelState();
-        const scope = resolveReportMemoryScope(useAppStore.getState());
-        if (!scope) {
+        try {
+            const results = await vectorStore.search(searchQuery, 5, activeMemoryScope!);
+            setSearchResults(results.map(item => ({
+                text: item.text,
+                score: item.score,
+                origin: item.metadata?.origin?.label,
+            })));
+            setSearchFeedback(results.length === 0 ? 'empty' : 'none');
+        } catch {
             setSearchResults([]);
+            setSearchFeedback('error');
+        } finally {
+            syncModelState();
             setIsSearching(false);
-            return;
         }
-        const results = await vectorStore.search(searchQuery, 5, scope);
-        setSearchResults(results.map(item => ({
-            text: item.text,
-            score: item.score,
-            origin: item.metadata?.origin?.label,
-        })));
-        syncModelState();
-        setIsSearching(false);
     };
 
     const handleDelete = async (id: string) => {
@@ -120,6 +125,8 @@ export const MemoryPanel: React.FC = () => {
                 vectorStoreDocuments: await vectorStore.getDocuments(),
             });
             await refreshDocuments();
+            setSearchResults([]);
+            setSearchFeedback('none');
         }
     };
 
@@ -133,6 +140,7 @@ export const MemoryPanel: React.FC = () => {
             });
             await refreshDocuments();
             setSearchResults([]);
+            setSearchFeedback('none');
         }
     };
 
@@ -201,21 +209,33 @@ export const MemoryPanel: React.FC = () => {
                         <div className="mb-4 shrink-0 rounded-card border border-slate-200 bg-slate-50 p-4">
                             <h3 className="mb-2 font-semibold text-slate-800">Test Similarity Search</h3>
                             <p className="mb-2 text-xs text-slate-500">
-                                {modelStatus === 'idle' && 'The local memory model will load the first time semantic search runs.'}
-                                {modelStatus === 'loading' && 'Loading the local memory model and WASM assets.'}
-                                {modelStatus === 'ready' && 'Local memory model is ready.'}
-                                {modelStatus === 'error' && `Local memory model failed to load. ${modelError ?? ''}`.trim()}
+                                {!activeMemoryScope
+                                    ? 'Upload and analyze a CSV to create searchable memory.'
+                                    : documents.length === 0
+                                        ? 'No saved memory items are available for this report yet.'
+                                        : modelStatus === 'idle'
+                                            ? 'The local memory model will load the first time semantic search runs.'
+                                            : modelStatus === 'loading'
+                                                ? 'Loading the local memory model and WASM assets.'
+                                                : modelStatus === 'ready'
+                                                    ? 'Local memory model is ready.'
+                                                    : `Local memory model failed to load. ${modelError ?? ''}`.trim()}
                             </p>
                             <form onSubmit={handleSearch} className="flex items-center gap-2">
                                 <input
                                     type="text"
                                     value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    placeholder={isModelReady ? "Enter query to find memories..." : modelStatus === 'loading' ? "Memory model is loading..." : "Run a search to load the memory model"}
-                                    disabled={modelStatus === 'loading' || isSearching}
-                                    className="flex-grow bg-white border border-slate-300 rounded-md py-1.5 px-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+                                    onChange={(e) => {
+                                        setSearchQuery(e.target.value);
+                                        setSearchResults([]);
+                                        setSearchFeedback('none');
+                                    }}
+                                    aria-label="Search saved memories"
+                                    placeholder={!canSearch ? "No saved memories to search" : isModelReady ? "Enter query to find memories..." : modelStatus === 'loading' ? "Memory model is loading..." : "Run a search to load the memory model"}
+                                    disabled={!canSearch || modelStatus === 'loading' || isSearching}
+                                    className="min-h-[44px] min-w-0 flex-grow bg-white border border-slate-300 rounded-md py-1.5 px-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
                                 />
-                                <button type="submit" disabled={modelStatus === 'loading' || isSearching || !searchQuery.trim()} className="px-4 py-1.5 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 transition-colors disabled:bg-blue-300 disabled:cursor-not-allowed">
+                                <button type="submit" disabled={!canSearch || modelStatus === 'loading' || isSearching || !searchQuery.trim()} className="min-h-[44px] px-4 py-1.5 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 transition-colors disabled:bg-blue-300 disabled:cursor-not-allowed">
                                     {isSearching ? '...' : 'Search'}
                                 </button>
                             </form>
@@ -225,7 +245,7 @@ export const MemoryPanel: React.FC = () => {
                                 <div className="space-y-2">
                                     <h4 className="text-sm font-medium text-slate-600">Top Results:</h4>
                                     {searchResults.map((result) => (
-                                        <div key={result.text} onClick={() => handleSearchResultClick(result.text)} className="bg-white p-2.5 border border-slate-200 rounded-card text-xs cursor-pointer hover:border-blue-500 hover:ring-1 hover:ring-blue-500">
+                                        <button key={result.text} type="button" onClick={() => handleSearchResultClick(result.text)} className="w-full bg-white p-2.5 border border-slate-200 rounded-card text-left text-xs cursor-pointer hover:border-blue-500 hover:ring-1 hover:ring-blue-500">
                                             <div className="flex justify-between items-center mb-1">
                                                  <p className="text-slate-700 font-semibold">Match</p>
                                                  <p className="text-blue-600 font-bold">{(result.score * 100).toFixed(1)}%</p>
@@ -237,10 +257,12 @@ export const MemoryPanel: React.FC = () => {
                                             {result.origin && (
                                                 <p className="mt-1 text-[11px] text-slate-500">Origin: {result.origin}</p>
                                             )}
-                                        </div>
+                                        </button>
                                     ))}
                                 </div>
                             )}
+                            {searchFeedback === 'empty' && <p role="status" className="text-sm text-slate-500">No matching memories found for this query.</p>}
+                            {searchFeedback === 'error' && <p role="alert" className="text-sm text-red-700">Memory search failed. Try again.</p>}
                         </div>
                     </div>
 
