@@ -703,3 +703,11 @@
 - **Left in English on purpose**: `residual_noise_candidates` (count), `prepared_data_not_ready` and `reasonCode` outcomes (pipeline message), query-engine `fallbackReason`, and raw error text, because their wording is dynamic.
 - **Checks**: typecheck, lint baseline, helper tests (6) plus Pi runtime and localization tests (45 total) pass; `publish:root` and `test:publish` (4/4) pass. Full suite not re-run (5 known unrelated failures). Not seen in a browser; not pushed or deployed.
 
+## 2026-10-08 PR #22 deployed; three live full-HDB runs reproduce two distinct failures
+
+- **Deploy**: PR #22 merged (`51efe67`); Pages run `37715155277` published it, live `SHA256SUMS.txt` hash equals the checked-in one.
+- **Live runs** (Playwright, Chrome, public site, full 982,589-row HDB, Default gateway, run back to back): run 1 failed, run 2 succeeded (30 gateway requests, 0 x 429), run 3 failed. The new subtitle named both causes.
+- **Failure A (run 1)**: `Stopped at stage 8/9 "Analyse": Your network sent too many requests to the shared AI service. Wait about a minute, then retry.` Only 15 requests, 3 x 429. This is the per-IP per-minute limit, which the gateway boundary does not retry (it only recovers the session-cap and concurrency 429s). Back-to-back runs from one IP make it likelier.
+- **Failure B (run 3)**: `Stopped at stage 8/9 "Analyse": Pi did not complete the governed stage sequence.` No 429, 32 requests. This message is the turn guard in `piInitialAnalysisRuntimeService.ts` (`providerTurns > STAGES.length + 3` aborts the run), so Pi used more provider turns than the allowed 12 for 9 stages, and the host stopped instead of finishing the remaining stages. This is the likeliest match for the user's earlier "Unable to reliably analyze (7/9)", although that run's own subtitle was not captured.
+- **Not fixed yet**: neither failure is changed in code. Candidate fixes: (A) retry or queue on the per-minute 429 using the wait the gateway implies, plus a client request budget; (B) when the turn budget is reached, let the host run the remaining required stages itself (the host already does this after repeated invalid stage requests) instead of aborting.
+
