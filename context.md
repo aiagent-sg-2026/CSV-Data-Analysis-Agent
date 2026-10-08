@@ -735,3 +735,9 @@
 - **Not verified**: not reproduced in a real browser with the real DuckDB worker; a restore of the 983k-row file takes a few seconds (the initial load took about 5 s), which the next query now absorbs. The slow `data.describe` itself and the `SourceRowIndex` binder error are NOT fixed. Branch `claude/duckdb-restore-after-reset`, local only.
 - **Process note**: untracked generated files survive branch switches; a leftover sample CSV leaked into one publish and was removed before this commit (restore the generated files from git, then re-run `publish:root`).
 
+## 2026-10-08 PRs #26 and #27 deployed; first live run of the small sample
+
+- **Deploy**: #26 (restore DuckDB dataset after a worker reset) and #27 (small sample + full buttons) are merged; Pages run `37730899694` published `40e5720`; live `SHA256SUMS.txt` hash equals the checked-in one and the sample CSV is served (HTTP 200, 423,089 bytes). The shared gateway quota is available again.
+- **Live run** (Playwright, public site, Default gateway, "Load Small HDB Sample (fast)", 4,988 rows): finished in about 170 s with "Results available — review recommended: 2 verified, 3 need review". It used 44 gateway `POST /responses` calls and 2 x 429 `DEMO_SESSION_REQUEST_LIMIT` (recovered by the session refresh).
+- **Finding**: the sample is not faster in AI time or request count. The earlier full-HDB runs took about 30 requests, so the AI turns (planner, per-question evidence, summaries), not the row count, drive time and quota. The sample mainly saves local DuckDB and import time. Reducing requests needs a request budget or fewer planner turns, not smaller data.
+
