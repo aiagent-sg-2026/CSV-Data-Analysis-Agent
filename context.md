@@ -703,3 +703,9 @@
 - **Left in English on purpose**: `residual_noise_candidates` (count), `prepared_data_not_ready` and `reasonCode` outcomes (pipeline message), query-engine `fallbackReason`, and raw error text, because their wording is dynamic.
 - **Checks**: typecheck, lint baseline, helper tests (6) plus Pi runtime and localization tests (45 total) pass; `publish:root` and `test:publish` (4/4) pass. Full suite not re-run (5 known unrelated failures). Not seen in a browser; not pushed or deployed.
 
+## 2026-10-08 Turn trace added; live reproduction blocked by the shared daily quota
+
+- **Change** (`piInitialAnalysisRuntimeService.ts`): every governed run now records a per-turn trace (`request:<stage|next>`, `invalid`, `ran:<stage>=<decision>`, `turnN:end` or `turnN:text-only`). When the turn guard (`providerTurns > STAGES.length + 3`) fires, the app logs `[PiInitialAnalysis] Turn budget exhausted ... Trace: ...`, emits a `pi_turn_budget_exhausted` agent event with the trace, and the error text now reads `Pi did not complete the governed stage sequence (N turns used, K/9 stages run).` One new test covers a Pi that never calls the tool.
+- **Why**: failure B (earlier subtitle `Pi did not complete the governed stage sequence.`) has an unconfirmed cause; the trace shows whether the turns went to invalid stage requests, text-only turns or something else.
+- **Live attempt**: a local build cannot call the gateway (no CORS header for local origins), so the runs used a Playwright route that proxies gateway calls with the Pages origin. Run 1 completed (35 requests, 2 x 429 recovered by the session refresh). Runs 2-5 failed with `DEMO_ALL_ROUTES_EXHAUSTED` ("Today's shared AI quota is used up"). My repeated full-dataset test runs on the shared demo gateway very likely contributed to that quota. No turn-budget failure was captured, so failure B's cause is still unconfirmed. Do not run more live tests until the daily quota resets or a personal API key is used.
+

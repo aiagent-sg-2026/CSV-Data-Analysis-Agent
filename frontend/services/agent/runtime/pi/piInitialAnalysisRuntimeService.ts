@@ -158,6 +158,9 @@ const run = async (
     let recoveryEnabled = !store.getState().csvData?.backing?.ephemeral;
     let providerTurns = 0;
     let invalidStageRequests = 0;
+    // Per-turn trace so a run that exhausts its turn budget shows where the turns went.
+    const turnTrace: string[] = [];
+    let toolCallsThisTurn = 0;
     const timer = setTimeout(() => controller.abort(new Error('The Pi initial-analysis time budget expired.')),
         INITIAL_ANALYSIS_BUDGET_MS);
     const persistCheckpoint = async (pendingStageIndex: number | null) => {
@@ -203,6 +206,8 @@ const run = async (
             }
             const requestedName = typeof (args as { stage?: unknown })?.stage === 'string'
                 ? ((args as { stage: string }).stage).trim() : '';
+            toolCallsThisTurn += 1;
+            turnTrace.push(requestedName ? `request:${requestedName}` : 'request:next');
             if (requestedName) {
                 const choices = describeStageChoices(nextStageIndex);
                 const requestedIndex = STAGES.findIndex(candidate => candidate.name === requestedName);
@@ -225,6 +230,7 @@ const run = async (
                     }
                 } else {
                     invalidStageRequests += 1;
+                    turnTrace.push('invalid');
                     // After repeated invalid requests the host runs the next required stage itself, so a
                     // confused model cannot stall the run.
                     if (invalidStageRequests <= MAX_INVALID_STAGE_REQUESTS) {
@@ -264,6 +270,7 @@ const run = async (
                 executors,
             });
             results.push(result);
+            turnTrace.push(`ran:${stage.name}=${result.decision}`);
             // Pi decides what to investigate once the data is ready. This never fails the run:
             // without a usable plan the existing question planner is used.
             if (plannerEnabled && stage.name === 'analysis.researchQuestions' && result.decision === 'pass') {
@@ -325,8 +332,19 @@ const run = async (
         toolExecution: 'sequential',
         finishTurn: () => {
             providerTurns += 1;
+            turnTrace.push(toolCallsThisTurn === 0 ? `turn${providerTurns}:text-only` : `turn${providerTurns}:end`);
+            toolCallsThisTurn = 0;
             if (providerTurns > STAGES.length + 3) {
-                controller.abort(new Error('Pi did not complete the governed stage sequence.'));
+                console.warn(`[PiInitialAnalysis] Turn budget exhausted at stage index ${nextStageIndex}/${STAGES.length}. Trace: ${turnTrace.join(' > ')}`);
+                emitAgentEvent(store, {
+                    runId: runtimeRunId,
+                    phase: 'execution',
+                    step: 'pi_turn_budget_exhausted',
+                    status: 'error',
+                    message: `Pi used ${providerTurns} turns for ${STAGES.length} stages.`,
+                    detail: { runtimeOwner: 'pi', traceId, trace: turnTrace.join(' > ') },
+                });
+                controller.abort(new Error(`Pi did not complete the governed stage sequence (${providerTurns} turns used, ${nextStageIndex}/${STAGES.length} stages run).`));
                 agent.abort();
                 return { action: 'end' };
             }

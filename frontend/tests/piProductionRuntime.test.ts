@@ -639,6 +639,20 @@ describe('Pi production runtime', () => {
         expect(store.getState().initialAnalysisStatus).toBe('ready');
     });
 
+    it('logs where the turns went when Pi exhausts the turn budget without running stages', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const store = createStore();
+        const outcome = await runPiInitialAnalysis({
+            appSessionId: 'session-1', datasetId: 'dataset-1', datasetVersion: 'version-1',
+            researchGoal: 'Find patterns.', provider: { provider: 'openai', modelId: 'gpt-5.4-mini' },
+        }, store as never, answerStream('I will think about it.'));
+
+        expect(outcome.error?.message ?? outcome.warnings.at(-1)?.message).toContain('13 turns used, 0/9 stages run');
+        const traceLine = warn.mock.calls.map(call => String(call[0])).find(line => line.includes('Turn budget exhausted'));
+        expect(traceLine).toContain('turn1:text-only');
+        warn.mockRestore();
+    });
+
     it('records a provider failure when Pi returns an assistant stream error', async () => {
         const stream: StreamFn = model => {
             const output = createAssistantMessageEventStream();
