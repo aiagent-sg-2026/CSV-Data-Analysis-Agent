@@ -72,6 +72,25 @@ const completedExportFixture = async () => {
 };
 
 describe('Pi coding capability admission', () => {
+    it('preserves exact write refs and a bounded plan when authored program text exceeds the observation budget',async()=>{
+        const s=await fixture(),content=`/*${'x'.repeat(6500)}*/\nreturn {value:1};`;let step=0;
+        try {
+            const result=await runPiFollowUpTurn({message:s.message},s.store,scripted(context=>{
+                if(step++===0)return tool('workspace_write',{path:programPath,expectedRevision:0,content});
+                if(step===2){
+                    const message=context.messages.filter(m=>m.role==='toolResult').at(-1)!;
+                    const text=message.content.filter(c=>c.type==='text').map(c=>c.text).join('');
+                    expect(text.length).toBeLessThanOrEqual(6000);
+                    const value=JSON.parse(text);
+                    expect(value.taskPlan.phase).toBe('compute_program');
+                    expect(value.payload.workspace.artifact.sha256).toBe(createHash('sha256').update(content).digest('hex'));
+                    return tool('code_run',runArgs(artifactRef(value.payload.workspace.artifact)));
+                }
+                return reply();
+            }));
+            expect(result.status,result.text).toBe('completed');
+        }finally{finishRun(s.root,s.lease);beginSessionTransition(s.root);}
+    });
     it('requires a current-task exact repair commit before admitting a combined computation', async () => {
         const s = await fixture(realGuest, 'Repair the fact table, then calculate its lower weighted median.', [{Amount:0,Quantity:1}]);
         const scope = {requiresEvidence:true,queries:[],complete:true,unresolved:[],dataPreparation:'canonical_fact_table' as const,

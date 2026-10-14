@@ -33,6 +33,7 @@ export const projectTypedTaskPlan = (task: AgentTaskContract, progress: {
 }): TypedTaskPlan => {
     const repair = task.scope.answer.dataPreparation === 'canonical_fact_table';
     const computation = Boolean(task.scope.answer.computation);
+    const artifactExecution = task.requiredOutputs?.some(output=>output.required&&output.kind==='artifact');
     const kind = repair ? computation ? 'repair_then_computation' : 'repair' : computation ? 'computation' : 'general';
     let phase: TypedTaskPlan['phase'], nextTools: string[];
     if (task.scope.answer.unresolved.length) { phase = 'resolve_scope'; nextTools = ['conversation.request_clarification']; }
@@ -42,10 +43,10 @@ export const projectTypedTaskPlan = (task: AgentTaskContract, progress: {
         else if (!progress.candidateId) { phase = 'stage_candidate'; nextTools = ['candidate.stage']; }
         else if (!progress.candidateValidated) { phase = 'validate_candidate'; nextTools = ['candidate.validate', 'workspace.replace']; }
         else { phase = 'exact_approval'; nextTools = ['candidate.request_approval']; }
-    } else if (computation && !progress.computationAccepted) {
+    } else if (computation && !progress.computationAccepted || artifactExecution && !progress.successfulJobId) {
         if (progress.successfulJobId) { phase = 'validate_computation'; nextTools = ['computation.validate']; }
         else { phase = 'compute_program'; nextTools = ['workspace.write', 'code.run']; }
-    } else { phase = 'answer'; nextTools = computation ? [] : ['data.query']; }
+    } else { phase = 'answer'; nextTools = !computation&&task.scope.answer.requiresEvidence ? ['data.query'] : []; }
     const bindings=task.scope.answer.computation?.tableId
         ? task.inputBindings.filter(binding=>binding.tableId===task.scope.answer.computation!.tableId) : task.inputBindings.slice(0,3);
     return { kind, phase, taskId: task.taskId, taskRevision: task.revision,
