@@ -77,6 +77,10 @@ export interface AnalysisExportMetadata {
   scope: string;
   trustStatus: string;
   datasetVersion: string;
+  presentation?: 'table' | 'chart';
+  returnedRows?: number;
+  totalRows?: number;
+  completeness?: 'full_card' | 'visible_subset' | 'unverified';
 }
 
 export interface ExportToPngOptions {
@@ -123,7 +127,7 @@ const appendExportMetadata = (
     `color:${EXPORT_THEME.textBody}`,
     `background:${EXPORT_THEME.bgHeader}`,
   ].join(';');
-  footer.textContent = `Scope: ${metadata.scope} · Trust: ${metadata.trustStatus} · Dataset: ${metadata.datasetVersion} · Card: ${metadata.cardId}`;
+  footer.textContent = `Scope: ${metadata.scope} · Trust: ${metadata.trustStatus} · Dataset: ${metadata.datasetVersion} · Card: ${metadata.cardId} · Coverage: ${metadata.completeness ?? 'unverified'} (${metadata.returnedRows ?? '?'} / ${metadata.totalRows ?? '?'} rows)`;
   root.appendChild(footer);
   return () => footer.remove();
 };
@@ -140,6 +144,7 @@ const withExportMetadataColumns = (
     _export_trust: metadata.trustStatus,
     _dataset_version: metadata.datasetVersion,
     _source_card_id: metadata.cardId,
+    _export_coverage: metadata.completeness ?? 'unverified',
   }));
 };
 
@@ -170,7 +175,18 @@ const expandOverflowContainers = (root: HTMLElement, selector: string): (() => v
 };
 
 export const exportToPng = async (element: HTMLElement, title: string, options?: ExportToPngOptions): Promise<ExportResult> => {
-  const { includeTable = false, metadata } = options ?? {};
+  const { metadata } = options ?? {};
+  const includeTable = metadata?.presentation === 'table' || Boolean(options?.includeTable);
+  // Capture a stable restricted snapshot. Late UI updates cannot insert a prohibited chart.
+  const restricted = metadata?.presentation === 'table' ? element.cloneNode(true) as HTMLElement : null;
+  const captureHost = restricted ? document.createElement('div') : null;
+  if (restricted) {
+    restricted.querySelectorAll('canvas, svg, [data-export-chart-scroll]').forEach(node => node.remove());
+    restricted.style.width = `${element.getBoundingClientRect().width}px`;
+    captureHost!.style.cssText = 'position:fixed;left:-100000px;top:0;';
+    captureHost!.appendChild(restricted); document.body.appendChild(captureHost!);
+    element = restricted;
+  }
   let restoreCanvases: (() => void) | null = null;
   let restoreExcluded: (() => void) | null = null;
   let restoreTableContent: (() => void) | null = null;
@@ -213,6 +229,7 @@ export const exportToPng = async (element: HTMLElement, title: string, options?:
     restoreChartOverflow?.();
     restoreTableContent?.();
     restoreExcluded?.();
+    captureHost?.remove();
   }
 };
 
@@ -254,7 +271,7 @@ export const exportToHtml = async (
    try {
     // Gracefully handle cards without a chart canvas (e.g. table-first cards)
     let chartSectionHtml = '';
-    const chartCanvas = element.querySelector('canvas');
+    const chartCanvas = metadata?.presentation === 'table' ? null : element.querySelector('canvas');
     if (chartCanvas) {
       try {
         const chartImage = chartCanvas.toDataURL('image/png');
@@ -293,6 +310,7 @@ export const exportToHtml = async (
           <dt>Trust</dt><dd>${escapeHtml(metadata.trustStatus)}</dd>
           <dt>Dataset version</dt><dd>${escapeHtml(metadata.datasetVersion)}</dd>
           <dt>Source card</dt><dd>${escapeHtml(metadata.cardId)}</dd>
+          <dt>Coverage</dt><dd>${escapeHtml(metadata.completeness ?? 'unverified')} (${escapeHtml(metadata.returnedRows ?? '?')} / ${escapeHtml(metadata.totalRows ?? '?')} rows). Downloaded file existence does not certify completeness.</dd>
         </dl>
       </div>
     ` : '';

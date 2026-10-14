@@ -127,4 +127,23 @@ describe('analysis exports', () => {
         expect(chartScroll.style.maxHeight).toBe('');
         expect(chartScroll.style.overflowY).toBe('');
     });
+
+    it('enforces restricted table content at the HTML and PNG boundaries even when chart nodes remain', async () => {
+        const root = document.createElement('div');
+        root.innerHTML = '<canvas></canvas><svg data-chart="prohibited"></svg><div data-export-table><table><tbody><tr><td>October -5</td></tr></tbody></table></div>';
+        const restricted = { ...metadata, presentation: 'table' as const, returnedRows: 1, totalRows: 2, completeness: 'visible_subset' as const };
+        await exportToHtml(root, 'Restricted', [{Month:'October', Amount:-5}], 'Table only.', restricted);
+        const html = await readBlob(downloadedBlobs[0]);
+        expect(html).toContain('October'); expect(html).toContain('-5'); expect(html).toContain('visible_subset');
+        expect(html).not.toContain('<img'); expect(html).not.toContain('<canvas'); expect(html).not.toContain('<svg');
+        toPngMock.mockImplementationOnce(async element => {
+            expect(element).not.toBe(root); expect(element.querySelector('table')?.textContent).toContain('October -5');
+            expect(element.querySelector('canvas, svg')).toBeNull();
+            expect((element.querySelector('[data-export-table]') as HTMLElement).style.display).not.toBe('none');
+            expect(element.textContent).toContain('visible_subset');
+            return 'data:image/png;base64,export';
+        });
+        expect(await exportToPng(root, 'Restricted', {metadata:restricted})).toEqual({success:true});
+        expect(root.querySelector('canvas')).not.toBeNull(); expect(document.querySelector('[data-analysis-export-metadata]')).toBeNull();
+    });
 });

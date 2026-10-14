@@ -1,3 +1,4 @@
+import { captureQueryIdentity } from '../runtime/pi/queryEvidence';
 import type {
     ActiveDataQuery,
     ColumnRegistry,
@@ -33,7 +34,6 @@ import {
 } from '../../workers/workerDiagnostics';
 import { buildEffectiveColumnRegistryFromState, getAllowedColumns, resolveColumnReference } from '../../data/columnRegistry';
 import { getPreferredAnalysisDataset } from '../reportStructureState';
-import { resolveDatasetScopeBinding } from '../../data/datasetBundle';
 
 const normalizeColumnIdentifier = (value: string | null | undefined) => value?.trim().toLowerCase() ?? '';
 
@@ -226,7 +226,11 @@ export const executeStructuredDataQuery = async (
     options: ExecuteStructuredDataQueryOptions,
 ): Promise<ActiveDataQuery> => {
     const { getState, setState } = store;
+    if ((getState().datasetBundle?.acceptedCommit || getState().datasetCommitBindingStatus) && getState().datasetCommitBindingStatus !== 'ready') {
+        throw new Error('committed_dataset_not_bound');
+    }
     const dataset = options.datasetOverride ?? getPreferredAnalysisDataset(getState());
+    const identity = captureQueryIdentity(store);
     const abortSignal = options.abortSignal;
     const activeTurn = getState().activeTurn;
     const activeStep = activeTurn?.steps.at(-1);
@@ -273,6 +277,7 @@ export const executeStructuredDataQuery = async (
             allowedColumns,
             {
                 allowNativeFallback: options.allowNativeFallback,
+                bypassCache: Boolean(store.executionContext),
                 abortSignal,
                 reportDiagnostics,
                 columnRegistry,
@@ -280,11 +285,13 @@ export const executeStructuredDataQuery = async (
                 ...(options.dimensionNormalization ? { dimensionNormalization: options.dimensionNormalization } : {}),
             },
         );
+        identity.assertCurrent();
         throwIfAborted(abortSignal);
     } catch (error) {
         if (isRuntimeAbortError(error, abortSignal)) {
             throw error;
         }
+        identity.assertCurrent();
         setState({
             duckDbSessionStatus: createDuckDbSessionErrorStatus(error, getState().duckDbSessionStatus, new Date(), 'query_failed'),
         });
@@ -292,6 +299,7 @@ export const executeStructuredDataQuery = async (
     }
 
     const normalizedPlan = {
+        ...(executionPlan.postAggregateFilter ? { postAggregateFilter: executionPlan.postAggregateFilter } : {}),
         select: execution.result.selectedColumns,
         ...(executionPlan.where ? { where: executionPlan.where } : {}),
         orderBy: execution.result.appliedOrderBy,
@@ -305,12 +313,14 @@ export const executeStructuredDataQuery = async (
     };
 
     const activeDataQuery: ActiveDataQuery = {
-        ...resolveDatasetScopeBinding(getState().datasetBundle),
+
         sessionId: getState().sessionId,
         runId: activeTurn?.runId,
         turnId: activeTurn?.turnId,
         stepId: activeStep?.stepId,
         toolCallId: activeStep?.toolCallId ?? activeStep?.stepId,
+        ...identity.fields,
+        queryMode: 'structured',
         explanation: options.explanation,
         plan: normalizedPlan,
         result: execution.result,
@@ -326,6 +336,7 @@ export const executeStructuredDataQuery = async (
     };
 
     throwIfAborted(abortSignal);
+    identity.assertCurrent();
     const storeCommitStartedAt = getNowMs();
     setState({
         activeDataQuery,

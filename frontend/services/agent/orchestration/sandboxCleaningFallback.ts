@@ -22,6 +22,10 @@ export const trySandboxCleaningFallback = async (input: {
     previousFailure: Error;
     signal?: AbortSignal;
 }): Promise<SandboxCleaningFallbackResult> => {
+    // The prepared shared path stages candidates. It cannot inherit legacy direct-publication authority.
+    if (input.store.executorPreparation?.entryPoint === 'initial_analysis') {
+        return {status:'retry',error:new Error('shared_executor_requires_candidate_validation')};
+    }
     const state = input.store.getState();
     const inputTableId = state.datasetBundle?.primaryTableId ?? 'input-table';
     state.addProgress?.(

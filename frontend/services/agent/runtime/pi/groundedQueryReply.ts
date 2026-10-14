@@ -1,37 +1,19 @@
+import type { ValidatedQueryEvidence } from './queryEvidence';
 import type { ActiveDataQuery, AppLanguage } from '../../../../types';
 import {
     isDerivedCostPerResultRequest,
     isDerivedMarginRequest,
     isShareOfTotalRequest,
+    resolveDerivedRankingRequest,
 } from '../../derivedMetricIntent';
 
 const ENGLISH_COMPLETE_LIST = /\b(all|every|each|complete|entire)\b[\s\S]{0,80}\b(list|show|include|enumerate|breakdown|result|row|value|category|uom)\b|\b(list|show|include|enumerate)\b[\s\S]{0,80}\b(all|every|each|complete|entire)\b/i;
 const MANDARIN_COMPLETE_LIST = /(全部|所有|每个|每一|逐一|完整).{0,40}(列出|显示|清单|结果|行|数值|类别)|(列出|显示|清单).{0,40}(全部|所有|每个|每一|逐一|完整)/;
 const JAPANESE_COMPLETE_LIST = /(すべて|全て|各|完全).{0,40}(一覧|表示|列挙|結果|行|値|カテゴリ)|(一覧|表示|列挙).{0,40}(すべて|全て|各|完全)/;
-const TOP_N_REQUEST_PATTERNS = [
-    /\btop\s*(\d{1,2})\b/i,
-    /前\s*(\d{1,2})\s*(?:名|个|個|项|項|家)?/,
-    /上位\s*(\d{1,2})/,
-    /(?:teratas|tertinggi)\s*(\d{1,2})/i,
-];
-const ENGLISH_NUMBER_WORDS: Record<string, number> = {
-    one: 1,
-    two: 2,
-    three: 3,
-    four: 4,
-    five: 5,
-    six: 6,
-    seven: 7,
-    eight: 8,
-    nine: 9,
-    ten: 10,
-};
 const PROFIT_MEASURE = /\bprofit\b|gross[\s_-]*margin|利润|利潤|利益|粗利/i;
 const SALES_MEASURE = /sales[\s_-]*amount|net[\s_-]*sales|\brevenue\b|\bturnover\b|销售额|銷售額|营业额|營業額|売上/i;
 const SPEND_MEASURE = /amount[\s_-]*spent|ad[\s_-]*spend|\bspend\b|\bcost\b|花费|花費|支出|消費額/i;
 const RESULT_MEASURE = /\bresults?\b|\bconversions?\b|转化|轉化|结果|結果/i;
-const LOWEST_RANKING_REQUEST = /\blowest\b|\bsmallest\b|\bminimum\b|\bcheapest\b|最低|最小|最少|低い|最小/i;
-const HIGHEST_RANKING_REQUEST = /\bhighest\b|\blargest\b|\bmaximum\b|\btop\b|最高|最大|最多|最も高い|最大/i;
 const QUALITY_CAVEAT_REQUEST = /\b(?:quality|data quality|caveat|warning|limitation|risk)\b|质量|品質|警告|限制|注意点|留意点|リスク/i;
 
 const isCompleteListRequest = (message: string): boolean =>
@@ -105,11 +87,11 @@ const getCopy = (language: AppLanguage, rowCount: number) => {
     }
 };
 
-const getShareOfTotalCopy = (language: AppLanguage) => {
+const getShareOfTotalCopy = (language: AppLanguage, lowest: boolean) => {
     switch (language) {
         case 'Mandarin':
             return {
-                intro: '查询结果中占总额最高的分组是：',
+                intro: lowest ? '查询结果中占总额最低的分组是：' : '查询结果中占总额最高的分组是：',
                 group: '分组',
                 value: '分组总额',
                 overall: '总体总额',
@@ -122,7 +104,7 @@ const getShareOfTotalCopy = (language: AppLanguage) => {
             };
         case 'Japanese':
             return {
-                intro: 'クエリ結果で全体に占める割合が最も高いグループは次のとおりです：',
+                intro: lowest ? 'クエリ結果で全体に占める割合が最も低いグループは次のとおりです：' : 'クエリ結果で全体に占める割合が最も高いグループは次のとおりです：',
                 group: 'グループ',
                 value: 'グループ合計',
                 overall: '全体合計',
@@ -135,7 +117,7 @@ const getShareOfTotalCopy = (language: AppLanguage) => {
             };
         case 'Malay':
             return {
-                intro: 'Kumpulan dengan bahagian tertinggi daripada jumlah keseluruhan ialah:',
+                intro: lowest ? 'Kumpulan dengan bahagian terendah daripada jumlah keseluruhan ialah:' : 'Kumpulan dengan bahagian tertinggi daripada jumlah keseluruhan ialah:',
                 group: 'Kumpulan',
                 value: 'Jumlah kumpulan',
                 overall: 'Jumlah keseluruhan',
@@ -148,7 +130,7 @@ const getShareOfTotalCopy = (language: AppLanguage) => {
             };
         default:
             return {
-                intro: 'The group with the highest share of the overall total is:',
+                intro: lowest ? 'The group with the lowest share of the overall total is:' : 'The group with the highest share of the overall total is:',
                 group: 'Group',
                 value: 'Group Total',
                 overall: 'Overall Total',
@@ -177,16 +159,17 @@ const isCompleteBoundedAggregateQuery = (query: ActiveDataQuery): boolean => {
 
 export const buildGroundedRankedShareReply = (params: {
     userMessage: string;
-    query: ActiveDataQuery | null;
+    query: ValidatedQueryEvidence | null;
     fileName: string | null;
     language: AppLanguage;
     qualityCaveats?: string[] | null;
 }): string | null => {
     const { userMessage, query, fileName, language, qualityCaveats } = params;
+    const ranking = resolveDerivedRankingRequest(userMessage);
     if (
         !query
         || !isShareOfTotalRequest(userMessage)
-        || (!HIGHEST_RANKING_REQUEST.test(userMessage) && !LOWEST_RANKING_REQUEST.test(userMessage))
+        || ranking.direction === null
     ) {
         return null;
     }
@@ -215,14 +198,14 @@ export const buildGroundedRankedShareReply = (params: {
     const overall = rankedRows.reduce((total, entry) => total + entry.value, 0);
     if (rankedRows.length === 0 || overall === 0) return null;
 
-    rankedRows.sort((left, right) => LOWEST_RANKING_REQUEST.test(userMessage)
+    rankedRows.sort((left, right) => ranking.direction === 'asc'
         ? left.value - right.value
         : right.value - left.value);
     const winner = rankedRows[0];
     const share = winner.value / overall;
     if (!Number.isFinite(share)) return null;
 
-    const copy = getShareOfTotalCopy(language);
+    const copy = getShareOfTotalCopy(language, ranking.direction === 'asc');
     const groupColumns = plan.groupBy ?? [];
     const groupLabel = groupColumns
         .map(column => `${humanizeColumn(column)}: ${formatCell(winner.row[column], column, query, language)}`)
@@ -262,14 +245,14 @@ export const buildGroundedRankedShareReply = (params: {
 
 export const buildIncompleteRankedShareReply = (params: {
     userMessage: string;
-    query: ActiveDataQuery | null;
+    query: ValidatedQueryEvidence | null;
     language: AppLanguage;
 }): string | null => {
     const { userMessage, query, language } = params;
     if (
         !query
         || !isShareOfTotalRequest(userMessage)
-        || (!HIGHEST_RANKING_REQUEST.test(userMessage) && !LOWEST_RANKING_REQUEST.test(userMessage))
+        || resolveDerivedRankingRequest(userMessage).direction === null
         || (
             query.result.truncated !== true
             && query.result.returnedRows === query.result.totalMatchedRows
@@ -291,21 +274,12 @@ export const buildIncompleteRankedShareReply = (params: {
     }
 };
 
-const readRequestedTopN = (message: string): number | null => {
-    for (const pattern of TOP_N_REQUEST_PATTERNS) {
-        const match = message.match(pattern);
-        if (!match) continue;
-        const value = Number(match[1]);
-        if (Number.isInteger(value) && value > 0 && value <= 25) return value;
-    }
-    const wordMatch = message.match(new RegExp(
-        `(?:\\b(?:top|bottom|lowest|highest)\\s+(${Object.keys(ENGLISH_NUMBER_WORDS).join('|')})\\b|\\b(${Object.keys(ENGLISH_NUMBER_WORDS).join('|')})\\s+(?:lowest|highest|smallest|largest)\\b)`,
-        'i',
-    ));
-    if (wordMatch) {
-        return ENGLISH_NUMBER_WORDS[(wordMatch[1] ?? wordMatch[2]).toLowerCase()] ?? null;
-    }
-    return null;
+const readRequestedTopN = (message: string): number | null => resolveDerivedRankingRequest(message).limit;
+
+const readFiniteMetric = (value: unknown): number => {
+    if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return NaN;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : NaN;
 };
 
 const isBoundedMarginQuery = (query: ActiveDataQuery, userMessage: string): boolean => {
@@ -359,7 +333,7 @@ const getMarginCopy = (language: AppLanguage, rowCount: number) => {
 
 export const buildGroundedDerivedMarginReply = (params: {
     userMessage: string;
-    query: ActiveDataQuery | null;
+    query: ValidatedQueryEvidence | null;
     fileName: string | null;
     language: AppLanguage;
 }): string | null => {
@@ -381,18 +355,19 @@ export const buildGroundedDerivedMarginReply = (params: {
     const selectedColumns = [...groupColumns, salesAggregate.as, profitAggregate.as];
     if (!selectedColumns.every(column => query.result.selectedColumns.includes(column))) return null;
 
-    const requestedTopN = readRequestedTopN(userMessage);
+    const ranking = resolveDerivedRankingRequest(userMessage);
+    const requestedTopN = ranking.limit;
     const rankedRows = query.result.rows
         .map(row => {
-            const sales = Number(row[salesAggregate.as]);
-            const profit = Number(row[profitAggregate.as]);
+            const sales = readFiniteMetric(row[salesAggregate.as]);
+            const profit = readFiniteMetric(row[profitAggregate.as]);
             const margin = Number.isFinite(sales) && Number.isFinite(profit) && sales !== 0
                 ? profit / sales
                 : null;
             return { row, margin };
         })
-        .filter((entry): entry is { row: typeof entry.row; margin: number } => entry.margin !== null)
-        .sort((left, right) => right.margin - left.margin);
+        .filter((entry): entry is { row: typeof entry.row; margin: number } => entry.margin !== null && Number.isFinite(entry.margin))
+        .sort((left, right) => ranking.direction === 'asc' ? left.margin - right.margin : right.margin - left.margin);
     const displayedRows = requestedTopN === null
         ? rankedRows
         : rankedRows.slice(0, requestedTopN);
@@ -473,7 +448,7 @@ const resolveRatioFractionDigits = (values: number[]): number => {
 
 export const buildGroundedDerivedCostPerResultReply = (params: {
     userMessage: string;
-    query: ActiveDataQuery | null;
+    query: ValidatedQueryEvidence | null;
     fileName: string | null;
     language: AppLanguage;
 }): string | null => {
@@ -499,18 +474,19 @@ export const buildGroundedDerivedCostPerResultReply = (params: {
     const selectedColumns = [...groupColumns, spendAggregate.as, resultAggregate.as];
     if (!selectedColumns.every(column => query.result.selectedColumns.includes(column))) return null;
 
-    const requestedTopN = readRequestedTopN(userMessage);
+    const ranking = resolveDerivedRankingRequest(userMessage);
+    const requestedTopN = ranking.limit;
     const rankedRows = query.result.rows
         .map(row => {
-            const spend = Number(row[spendAggregate.as]);
-            const results = Number(row[resultAggregate.as]);
+            const spend = readFiniteMetric(row[spendAggregate.as]);
+            const results = readFiniteMetric(row[resultAggregate.as]);
             const ratio = Number.isFinite(spend) && Number.isFinite(results) && results > 0
                 ? spend / results
                 : null;
             return { row, ratio };
         })
-        .filter((entry): entry is { row: typeof entry.row; ratio: number } => entry.ratio !== null)
-        .sort((left, right) => LOWEST_RANKING_REQUEST.test(userMessage)
+        .filter((entry): entry is { row: typeof entry.row; ratio: number } => entry.ratio !== null && Number.isFinite(entry.ratio))
+        .sort((left, right) => ranking.direction === 'asc'
             ? left.ratio - right.ratio
             : right.ratio - left.ratio);
     const displayedRows = requestedTopN === null
@@ -548,7 +524,7 @@ export const buildGroundedDerivedCostPerResultReply = (params: {
 
 export const buildGroundedCompleteQueryReply = (params: {
     userMessage: string;
-    query: ActiveDataQuery | null;
+    query: ValidatedQueryEvidence | null;
     fileName: string | null;
     language: AppLanguage;
 }): string | null => {

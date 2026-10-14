@@ -50,7 +50,7 @@ export const EXPLORATION_QUERY_TIMEOUT_MS = 8_000;
 export const runExplorationQuery = (sql: string, selectedColumns: string[], timeout = 8000) =>
     duckDbWorkerClient.executeCompiledQuery({
         sql,
-        countSql: 'SELECT 1 AS total',
+        countSql: `SELECT COUNT(*) AS total FROM (${sql}) AS __counted`,
         selectedColumns,
         appliedOrderBy: [],
         appliedLimit: 100,

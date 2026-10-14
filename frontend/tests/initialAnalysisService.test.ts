@@ -17,6 +17,7 @@ vi.mock('../services/agent/memory/memoryManager', () => ({
 }));
 
 import { handleInitialAnalysis } from '../services/agent/orchestration/initialAnalysisService';
+import { beginRun, canCommitRun, finishRun, scopeRunStore } from '../services/session/sessionOwnership';
 
 const dataset: CsvData = {
     fileName: 'sample.csv',
@@ -109,5 +110,17 @@ describe('initialAnalysisService production ownership', () => {
             message: 'Prepared data needs review.',
         });
         expect(finalizeMock).toHaveBeenCalledOnce();
+    });
+
+    it('reuses a parent follow-up lease for cleaning reanalysis without ending the parent run', async () => {
+        runMock.mockResolvedValue({ status: 'completed', warnings: [] });
+        const store = createStore();
+        const lease = beginRun(store as never, 'follow_up', 'parent-run', 'parent-turn');
+        const owned = scopeRunStore(store as never, lease);
+        await expect(handleInitialAnalysis(dataset, 'Reanalyze cleaned data.', owned)).resolves.toEqual({ status: 'ready' });
+        expect(runMock.mock.calls[0][1].executionContext.lease).toBe(lease);
+        expect(canCommitRun(store as never, lease)).toBe(true);
+        expect(store.getState().activeExecution.runId).toBe('parent-run');
+        finishRun(store as never, lease);
     });
 });

@@ -1,4 +1,4 @@
-import type { Skill } from '@earendil-works/pi-agent-core';
+import type {AppSkill as Skill} from './skillManifest';
 import { parseSkillMarkdown, type SkillParseDiagnostic } from './skillMarkdown';
 import { readDisabledSkillNames, readUserSkillSources } from './userSkillStore';
 
@@ -12,6 +12,7 @@ const builtinSources = import.meta.glob('./builtin/*/SKILL.md', {
     import: 'default',
     eager: true,
 }) as Record<string, string>;
+const builtinSupportSources=import.meta.glob('./builtin/*/{scripts,references}/**/*',{query:'?raw',import:'default',eager:true}) as Record<string,string>;
 
 export type SkillSource = 'builtin' | 'user' | 'workspace';
 
@@ -25,6 +26,9 @@ export interface SkillEntry {
     source: SkillSource;
     /** False when the person switched the skill off in Settings. */
     enabled: boolean;
+    /** Captured bytes stay separate from instructions; the host hashes the complete package. */
+    markdown: string;
+    supportingSources: Record<string,string>;
 }
 
 const loadBuiltinSkills = (): ResolvedSkills => {
@@ -74,9 +78,17 @@ export const resolveSkillEntries = (
     const stored = loadUserSkills(userSkillSources);
     const workspace = loadUserSkills(workspaceFiles);
     const byName = new Map<string, SkillEntry>();
-    for (const skill of builtin.skills) byName.set(skill.name, { skill, source: 'builtin', enabled: !disabledNames.has(skill.name) });
-    for (const skill of stored.skills) byName.set(skill.name, { skill, source: 'user', enabled: !disabledNames.has(skill.name) });
-    for (const skill of workspace.skills) byName.set(skill.name, { skill, source: 'workspace', enabled: !disabledNames.has(skill.name) });
+    const sources:Record<SkillSource,Record<string,string>>={builtin:Object.fromEntries(Object.entries({...builtinSources,...builtinSupportSources})
+        .map(([path,text])=>[`${SKILLS_DIR}${path.replace('./builtin/','')}`,text])),user:userSkillSources,workspace:workspaceFiles??{}};
+    for(const [source,skills] of [['builtin',builtin.skills],['user',stored.skills],['workspace',workspace.skills]] as const){
+        for(const skill of skills){
+            const folder=skill.filePath.slice(0,skill.filePath.lastIndexOf('/')+1);
+            const supportingSources=Object.fromEntries((skill.manifest?.supportingFiles??[]).flatMap(file=>{
+                const text=sources[source][folder+file.path];return typeof text==='string'?[[file.path,text]]:[];
+            }));
+            byName.set(skill.name,{skill,source,enabled:!disabledNames.has(skill.name),markdown:sources[source][skill.filePath],supportingSources});
+        }
+    }
     return {
         entries: Array.from(byName.values()),
         diagnostics: [...builtin.diagnostics, ...stored.diagnostics, ...workspace.diagnostics],

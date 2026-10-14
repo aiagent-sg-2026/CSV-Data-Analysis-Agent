@@ -7,6 +7,8 @@ import { hasOpenableLatestReport } from '../../services/reporting/reportArtifact
 import type { WorkspaceFile } from '../../types';
 import { IconClose } from '../../icons/IconClose';
 import { useDialogAccessibility } from '../../hooks/useDialogAccessibility';
+import { DatasetRecoveryPanel } from '../DatasetRecoveryPanel';
+import { TaskInspectionView } from '../task/TaskInspection';
 
 const splitLines = (value: string): string[] => value.replace(/\r\n/g, '\n').split('\n');
 const countLines = (value: string): number => splitLines(value).length;
@@ -94,6 +96,7 @@ export const WorkspaceModal: React.FC = () => {
     const bundle = useMemo(() => buildWorkspaceBundle(workspaceState as AppStore), [workspaceState]);
 
     const [selectedPath, setSelectedPath] = useState('/dataset/cleaned.json');
+    const [inspectTask, setInspectTask] = useState(false);
     const [fileFilter, setFileFilter] = useState('');
     const [showDebugFiles, setShowDebugFiles] = useState(false);
     const hasLoggedOpenRef = useRef(false);
@@ -124,6 +127,7 @@ export const WorkspaceModal: React.FC = () => {
 
     useEffect(() => {
         if (!isOpen) {
+            setInspectTask(false);
             hasLoggedOpenRef.current = false;
             setShowDebugFiles(false);
             setFileFilter('');
@@ -164,10 +168,10 @@ export const WorkspaceModal: React.FC = () => {
                 onClick={event => event.stopPropagation()}
             >
                 <header className="border-b border-slate-200 bg-white/95 backdrop-blur-xl">
-                    <div className="flex items-center justify-between gap-4 px-4 py-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
                         <div className="min-w-0">
                             <div className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Artifacts</div>
-                            <div className="mt-1 flex items-center gap-3">
+                            <div className="mt-1 flex flex-wrap items-center gap-2">
                                 <h2 id="workspace-dialog-title" className="text-lg font-semibold text-slate-900">Session Artifacts</h2>
                                 <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-600">
                                     {bundle.primaryFiles.length} files
@@ -178,6 +182,10 @@ export const WorkspaceModal: React.FC = () => {
                             </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
+                            <button onClick={() => setInspectTask(current => !current)} aria-expanded={inspectTask}
+                                className="min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
+                                {inspectTask ? 'Browse files' : 'Inspect task'}
+                            </button>
                             {hasLatestAnalystReport ? (
                                 <>
                                     <button
@@ -216,7 +224,14 @@ export const WorkspaceModal: React.FC = () => {
                     </div>
                 </header>
 
+                <p className="border-b border-slate-200 bg-blue-50 px-4 py-2 text-xs text-slate-700">
+                    Task edits are staged. Accepted data changes only after validation and commit. Original CSV bytes are inspected through bounded source ranges; raw.csv is a reconstructed table view.
+                </p>
+
+                {!inspectTask && <DatasetRecoveryPanel />}
+
                 <div className="flex-1 min-h-0 overflow-hidden p-4">
+                    {inspectTask ? <TaskInspectionView onOpenRecovery={() => setInspectTask(false)} /> : (
                     <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden rounded-card border border-slate-200 bg-white shadow-2xl lg:grid-cols-[300px_minmax(0,1fr)]">
                         <aside className="min-h-0 overflow-y-auto border-b border-slate-200 bg-slate-50 lg:border-b-0 lg:border-r">
                             <div className="border-b border-slate-200 px-4 py-3">
@@ -356,6 +371,7 @@ export const WorkspaceModal: React.FC = () => {
                             </div>
                         </section>
                     </div>
+                    )}
                 </div>
             </div>
         </div>

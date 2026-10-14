@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { shallow } from 'zustand/shallow';
 import { ChartRendererHandle } from '../ChartRenderer';
 import { AnalysisExportMetadata, exportToPng, exportToCsv, exportToHtml } from '../../utils/exportUtils';
@@ -27,6 +27,7 @@ import { CompactCardSummary } from './CompactCardSummary';
 import { getCurrentAnalysisDatasetVersion } from '../../services/agent/artifactProvenance';
 import { resolveCardTrustDecision } from '../../services/agent/cardTrustDecision';
 import { isTimeLikeDimensionColumn } from '../../services/agent/analysisColumnRoles';
+import { resolveCardPresentationPlan, isTableOnlyPresentation, shouldHideCardChart } from '../../utils/analysisCardPresentationPolicy';
 
 interface AnalysisCardProps {
     cardId: string;
@@ -63,9 +64,17 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
     }), shallow);
 
     const {
-        cardData, tableDataForDisplay, chartDataForDisplay, stackedChartColumnState, dataForLegend, totalValue,
+        cardData: storedCardData, tableDataForDisplay, chartDataForDisplay, stackedChartColumnState, dataForLegend, totalValue,
         displayedTotalValue, totalRowCount, displayedRowCount, chartHiddenZeroValueRowCount, tableZeroValueRowCount, summary, valueKey, groupByKey, tableSort,
     } = useAnalysisCardData(cardId);
+    // Legacy saved cards may carry only the verdict, without its presentation projection.
+    const cardData = useMemo(() => {
+        if (!storedCardData) return storedCardData;
+        const plan = resolveCardPresentationPlan(storedCardData);
+        return plan === storedCardData.plan ? storedCardData : { ...storedCardData, plan };
+    }, [storedCardData]);
+    const tableOnly = Boolean(cardData && isTableOnlyPresentation(cardData.plan));
+    const hideChartByDefault = Boolean(cardData && shouldHideCardChart(cardData.plan));
 
     const cardRef = useRef<HTMLDivElement>(null);
     const chartRendererRef = useRef<ChartRendererHandle>(null);
@@ -131,9 +140,13 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
             cardId,
             scope: scopeParts.join(' · ') || 'Full card aggregation',
             trustStatus: trustDecision.status,
-            datasetVersion: currentDatasetVersion ?? cardData?.provenance?.datasetVersion ?? 'unverified',
+            datasetVersion: cardData?.provenance?.datasetVersion ?? 'unverified',
+            presentation: hideChartByDefault ? 'table' : 'chart',
+            returnedRows: tableDataForDisplay.length,
+            totalRows: totalRowCount,
+            completeness: !cardData?.provenance ? 'unverified' : scopeParts.length || tableDataForDisplay.length < totalRowCount ? 'visible_subset' : 'full_card',
         };
-    }, [cardData, cardId, currentDatasetVersion, hasAdditiveMeasure, trustDecision.status]);
+    }, [cardData, cardId, totalRowCount, tableDataForDisplay.length, hasAdditiveMeasure, trustDecision.status, hideChartByDefault]);
 
     // Panel-level expand/collapse override
     useEffect(() => {
@@ -145,6 +158,13 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
     const setGlobalErrorToast = useAppStore(state => state.setGlobalErrorToast);
     const handleExport = useCallback(async (format: 'png' | 'png_full' | 'csv' | 'html') => {
         if (!cardRef.current) return;
+        const expandedForExport = !isCardExpanded && (format === 'png_full' || tableOnly && format !== 'csv');
+        const tableShownForExport = format === 'png_full' && !tableOnly && !localDataVisible;
+        // Full-card capture must mount its table even when exploration hid it.
+        if (expandedForExport || tableShownForExport) flushSync(() => {
+            if (expandedForExport) setIsCardExpanded(true);
+            if (tableShownForExport) setLocalDataVisible(true);
+        });
         setIsExporting(true);
         try {
             let result;
@@ -168,9 +188,11 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
                 });
             }
         } finally {
+            if (expandedForExport) setIsCardExpanded(false);
+            if (tableShownForExport) setLocalDataVisible(false);
             setIsExporting(false);
         }
-    }, [cardData?.plan?.title, cardData?.summary, exportMetadata, tableDataForDisplay, language, setGlobalErrorToast]);
+    }, [cardData?.plan?.title, cardData?.summary, exportMetadata, isCardExpanded, localDataVisible, tableOnly, tableDataForDisplay, language, setGlobalErrorToast]);
     const handleChartClick = useCallback((index: number, event: MouseEvent) => {
         const isMultiSelect = event.ctrlKey || event.metaKey;
         setSelectedIndices(prev => {
@@ -213,7 +235,7 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
     // visuallyEvaluated prevents evaluation loop after correction.
     useEffect(() => {
         if (!settings.enableVisualEvaluation) return;
-        if (!isChartVisible || cardData?.visuallyEvaluated) return;
+        if (hideChartByDefault || !isChartVisible || cardData?.visuallyEvaluated) return;
         const timer = setTimeout(async () => {
             const image = chartRendererRef.current?.captureImage();
             if (!image || !cardData) return;
@@ -239,13 +261,13 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
         }, 500);
         return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isChartVisible, cardId, cardData?.visuallyEvaluated, settings.enableVisualEvaluation]);
+    }, [hideChartByDefault, isChartVisible, cardId, cardData?.visuallyEvaluated, settings.enableVisualEvaluation]);
 
     // PERF-311: Sync local toggle from store when agent/external code changes it.
     const storeDataVisible = cardData?.isDataVisible ?? false;
     useEffect(() => { setLocalDataVisible(storeDataVisible); }, [storeDataVisible]);
     // Use local state for rendering — toggles don't trigger global setState.
-    const isDataVisible = localDataVisible;
+    const isDataVisible = tableOnly || localDataVisible;
 
     if (!cardData) return null;
 
@@ -267,17 +289,16 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
     } = cardData;
     const verdictExplanationCache = useRef<VerdictExplanationCache | null>(null);
     const tableFirstArtifact = Boolean(
-        plan.artifactMetadata?.dataTableFirst
+        tableOnly || plan.artifactMetadata?.dataTableFirst
         || ['pivot_matrix', 'cohort_retention', 'period_compare', 'root_cause_breakdown'].includes(plan.artifactType ?? ''),
     );
-    const hideChartByDefault = Boolean(plan.artifactMetadata?.hideChartByDefault);
 
     const availableChartTypes = useMemo(() => getAvailableChartTypes(plan, chartDataForDisplay), [chartDataForDisplay, plan]);
     const renderChartType = availableChartTypes.includes(displayChartType)
         ? displayChartType
         : availableChartTypes[0];
     const showPivotColumnControls = Boolean(
-        plan.artifactType === 'pivot_matrix'
+        !hideChartByDefault && plan.artifactType === 'pivot_matrix'
         && (renderChartType === 'stacked_bar' || renderChartType === 'stacked_column')
         && (stackedChartColumnState?.effectiveMatrixValueColumns.length ?? 0) > 1,
     );
@@ -353,11 +374,11 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
     const displayMetricLabel = useMemo(() => resolvePlanMetricLabel(plan) ?? plan.valueColumn ?? 'Value', [plan]);
 
     useEffect(() => {
-        if (!plan) return;
+        if (!plan || hideChartByDefault) return;
         if (!availableChartTypes.includes(displayChartType) && availableChartTypes[0]) {
             handleChartTypeChange(id, availableChartTypes[0]);
         }
-    }, [availableChartTypes, displayChartType, handleChartTypeChange, id, plan]);
+    }, [availableChartTypes, displayChartType, handleChartTypeChange, hideChartByDefault, id, plan]);
 
     // handleExport, handleChartClick, onTopNChange moved to useCallback block above
     const controls = (
@@ -457,7 +478,7 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
 
                 {hideChartByDefault && (
                     <div className="rounded-card border border-slate-200 bg-slate-50/70 p-3 text-sm text-slate-700">
-                        {getTranslation('card_table_first_hint', language)}
+                        {getTranslation(tableOnly ? 'card_table_only_hint' : 'card_table_first_hint', language)}
                     </div>
                 )}
 
@@ -518,11 +539,11 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
             />
 
             {/* section divider — only when data table will render */}
-            {showExplorationControls && isDataVisible && (
+            {(showExplorationControls || tableOnly) && isDataVisible && (
                 <hr className="border-t border-slate-100" aria-hidden="true" data-export-table />
             )}
 
-            {showExplorationControls && (tableFirstArtifact ? (
+            {(showExplorationControls || tableOnly) && (tableFirstArtifact ? (
                 isDataVisible ? (
                     <div className="rounded-card border border-slate-200 bg-slate-50/70 p-3" data-export-table>
                         <div className="mb-2 text-sm font-semibold text-slate-800">

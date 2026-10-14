@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "coding-agent-synthetic-v1",
+  "manifestSha256": "ddbc67338d0ad56e1f7c426bc67d19c1f689a47527c0e619b2a32bae4fd7b205",
+  "caseCount": 60,
+  "replicateCount": 3
+}

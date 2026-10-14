@@ -82,7 +82,7 @@ describe('chatOrchestrator explicit follow-up handling', () => {
                 message: 'retry',
                 intentFindings: expect.objectContaining({ intent: 'conversation' }),
             }),
-            store,
+            expect.objectContaining({ executionContext: expect.objectContaining({ lease: expect.any(Object) }) }),
         );
     });
 
@@ -111,7 +111,7 @@ describe('chatOrchestrator explicit follow-up handling', () => {
                 message: 'retry',
                 intentFindings: expect.objectContaining({ intent: 'conversation' }),
             }),
-            store,
+            expect.objectContaining({ executionContext: expect.objectContaining({ lease: expect.any(Object) }) }),
         );
     });
 
@@ -146,7 +146,7 @@ describe('chatOrchestrator explicit follow-up handling', () => {
                 message: 'analyze this dataset and show key insights',
                 intentFindings: expect.objectContaining({ intent: 'batch_analysis' }),
             }),
-            store,
+            expect.objectContaining({ executionContext: expect.objectContaining({ lease: expect.any(Object) }) }),
         );
     });
 });

@@ -18,6 +18,8 @@ export interface ClarificationRequest {
     pendingPlan?: PendingPlan;
     targetProperty?: keyof AnalysisPlan | 'merge';
     resumeContext?: {
+        piCandidateApproval?: { reviewId: string; reviewDigest: string };
+        piTaskContinuation?: import('../services/agent/runtime/pi/piCodingTask').PiTaskContinuation;
         turnId?: string;
         resumeMessagePrefix?: string;
         optionLabel?: string;

@@ -13,7 +13,9 @@ import type {
     SemanticColumnRole,
     ReportContextResolution,
     ReportStructureResolution,
+    DatasetBundle,
 } from '../../types';
+import type { DatasetCommitBindingStatus } from '../../types/datasetCommit';
 import { getCsvDatasetVersion } from '../../utils/datasetId';
 import { detectTabularRowRole, inferTabularShapeContext } from './reportShapeTabular';
 import { buildRuntimeSemanticUnderstanding } from './runtimeSemanticUnderstanding';
@@ -673,6 +675,32 @@ const cloneCsvData = (data: CsvData, rows: typeof data.data): CsvData => ({
     headerLayers: [...(data.headerLayers ?? [])].map(row => [...row]),
     summaryRows: [...(data.summaryRows ?? [])].map(row => ({ ...row })),
 });
+
+/** Exact accepted fact membership takes precedence over later row-name heuristics. */
+export const preserveAcceptedFactMembership = (
+    snapshot: DatasetSemanticSnapshot,
+    data: CsvData,
+    state: { datasetBundle?: DatasetBundle | null; datasetCommitBindingStatus?: DatasetCommitBindingStatus },
+): DatasetSemanticSnapshot => {
+    const bundle = state.datasetBundle;
+    const version = getCsvDatasetVersion(data);
+    const primary = bundle?.tables.find(table => table.tableId === bundle.primaryTableId);
+    if (state.datasetCommitBindingStatus !== 'ready' || !bundle?.acceptedCommit
+        || bundle.datasetVersion !== version || snapshot.sourceDatasetVersion !== version
+        || primary?.role !== 'fact' || primary.datasetVersion !== version || primary.rowCount !== data.data.length) {
+        return snapshot;
+    }
+    if (!snapshot.recommendedAnalysisView.excludedRowIndices.length
+        && !snapshot.rowAnnotations.some(row => row.rowRole !== 'detail' || row.excludeFromDefaultAnalysis || row.unsafeForNarrative)) {
+        return snapshot;
+    }
+    const rowAnnotations = snapshot.rowAnnotations.map((row): RowSemanticAnnotation => ({
+        ...row, rowRole: 'detail', confidence: 1, confidenceBand: 'high', labelingSource: 'deterministic',
+        evidenceSources: ['deterministic_pattern'], excludeFromDefaultAnalysis: false, unsafeForNarrative: false,
+        reason: `Membership in the current validated, accepted fact table. Prior annotation: ${row.reason}`,
+    }));
+    return { ...snapshot, rowAnnotations, recommendedAnalysisView: buildRecommendedAnalysisView(data.data.length, rowAnnotations) };
+};
 
 export const buildSemanticDatasetVersion = (data: CsvData): string =>
     getCsvDatasetVersion(data);

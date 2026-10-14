@@ -2,6 +2,14 @@ import type { AppStore } from '../../store/useAppStore';
 import type { AgentPhase, AiAction, CorrelationFields, ToolExecutionResult } from '../../types';
 
 export type StoreApi = {
+    mcpTools?: import('./connectors/httpMcpContract').McpTaskPort;
+    executorPreparation?: import('./runtime/pi/piExecutorPreparation').ExecutorPreparationReference & { stage?: import('./runtime/pi/piExecutorPreparation').InitialExecutorStage };
+    piTask?: import('./runtime/pi/piCodingTask').PiCodingTask;
+    codeExecution?: import('./execution/codeExecutionContract').CodeExecutionPort;
+    candidateStaging?: import('../data/candidateStaging').CandidateStagingPort;
+    candidateValidationContract?: import('../data/candidateValidationBinding').HostCandidateValidationContract;
+    isActive?: () => boolean;
+    executionContext?: import('../session/sessionOwnership').ExecutionContext;
     getState: () => AppStore;
     setState: (partial: Partial<AppStore> | ((state: AppStore) => Partial<AppStore>)) => void;
 };

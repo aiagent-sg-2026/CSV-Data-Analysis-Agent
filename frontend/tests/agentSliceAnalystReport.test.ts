@@ -31,7 +31,8 @@ vi.mock('../services/storageService', () => ({
     saveReport: saveReportMock,
 }));
 
-vi.mock('../services/persistence/persistedAppState', () => ({
+vi.mock('../services/persistence/persistedAppState', async importOriginal => ({
+    ...await importOriginal<typeof import('../services/persistence/persistedAppState')>(),
     buildPersistedReportRecord: buildPersistedReportRecordMock,
 }));
 
@@ -258,10 +259,10 @@ describe('agentSlice generateAnalystReport', () => {
             'Analyst report generated: "Executive Revenue Report Analyst Report".',
             'system',
         );
-        expect(buildPersistedReportRecordMock).toHaveBeenNthCalledWith(1, expect.anything(), expect.objectContaining({
+        expect(saveReportMock).toHaveBeenCalledWith(expect.objectContaining({
             createdAt: new Date('2026-03-14T08:00:00.000Z'),
         }));
-        expect(buildPersistedReportRecordMock).toHaveBeenNthCalledWith(2, expect.anything(), expect.objectContaining({
+        expect(buildPersistedReportRecordMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
             createdAt: new Date('2026-03-14T09:15:00.000Z'),
         }));
         expect(harness.getState().agentEvents.some(event => event.step === 'analyst_report_generated')).toBe(true);

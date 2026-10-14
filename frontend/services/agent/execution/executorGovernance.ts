@@ -4,7 +4,7 @@ import { buildBuiltinToolRegistry, resolveAllowedTools } from '../tools/toolRegi
 import { buildToolAvailabilityContext } from '../tools/toolGovernance';
 
 export const getToolGovernanceMeta = (store: StoreApi, toolName: ToolName) => {
-    const context = buildToolAvailabilityContext(store.getState());
+    const context = buildToolAvailabilityContext(store.getState(), { hasCodeExecution: Boolean(store.codeExecution) });
     const registry = resolveAllowedTools(buildBuiltinToolRegistry(context.columnNames), context);
     return {
         stage: registry.stage,

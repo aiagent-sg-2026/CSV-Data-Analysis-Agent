@@ -1,3 +1,4 @@
+import { captureSessionScope, ownsSessionScope } from '../services/session/sessionOwnership';
 import React, { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { checkStorageHealth } from '../services/storageService';
@@ -22,6 +23,7 @@ export const AutoSaveManager: React.FC = () => {
     useEffect(() => {
         const flushSave = async () => {
             const state = useAppStore.getState();
+            const scope = captureSessionScope(useAppStore);
             const nextSignature = buildPersistedAppStateSignature(state);
 
             if (!nextSignature || nextSignature === lastSavedSignatureRef.current) {
@@ -35,7 +37,8 @@ export const AutoSaveManager: React.FC = () => {
 
             isSavingRef.current = true;
             try {
-                await persistCurrentAppSessionSnapshot(state);
+                const saved = await persistCurrentAppSessionSnapshot(state, { store: useAppStore, scope });
+                if (!saved || !ownsSessionScope(useAppStore, scope)) return;
 
                 lastSavedSignatureRef.current = nextSignature;
                 lastSaveErrorRef.current = null;
@@ -44,6 +47,7 @@ export const AutoSaveManager: React.FC = () => {
                     useAppStore.setState({ sessionCreatedAt: new Date() });
                 }
             } catch (error) {
+                if (!ownsSessionScope(useAppStore, scope)) return;
                 const message = error instanceof Error ? error.message : String(error);
                 if (lastSaveErrorRef.current !== message) {
                     state.addProgress(`Autosave failed: ${message}`, 'error');

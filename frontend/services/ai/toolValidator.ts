@@ -8,7 +8,7 @@ export type ToolValidationContext = ToolAvailabilityContext;
 export const getResolvedToolRegistry = (context: ToolValidationContext): ResolvedToolRegistry => {
     const normalizedContext: ToolValidationContext = normalizeToolAvailabilityContext(context);
 
-    return resolveAllowedTools(buildBuiltinToolRegistry(normalizedContext.columnNames), normalizedContext);
+    return resolveAllowedTools(buildBuiltinToolRegistry(normalizedContext.columnNames, normalizedContext.externalToolManifests), normalizedContext);
 };
 
 const buildError = (code: ToolRegistryError['code'], message: string, toolName?: string): ToolRegistryError => ({

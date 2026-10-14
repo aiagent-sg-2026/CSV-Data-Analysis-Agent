@@ -90,8 +90,7 @@ export const extractRuntimeAbortMetadata = (reason?: unknown): {
     };
 };
 
-export const registerRuntimeTurnAbortController = (turnId: string): AbortController => {
-    const controller = new AbortController();
+export const registerRuntimeTurnAbortController = (turnId: string, controller = new AbortController()): AbortController => {
     turnAbortControllers.set(turnId, controller);
     return controller;
 };
@@ -113,8 +112,8 @@ export const abortRuntimeTurn = (
     return true;
 };
 
-export const clearRuntimeTurnAbortController = (turnId: string) => {
-    turnAbortControllers.delete(turnId);
+export const clearRuntimeTurnAbortController = (turnId: string, controller?: AbortController) => {
+    if (!controller || turnAbortControllers.get(turnId) === controller) turnAbortControllers.delete(turnId);
 };
 
 export const throwIfAborted = (signal?: AbortSignal) => {

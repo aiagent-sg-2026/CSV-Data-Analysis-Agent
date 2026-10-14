@@ -124,6 +124,11 @@ export interface QueryComparisonScope {
  * Backward compatible: includes all IntentClassificationFindings fields.
  */
 export interface QueryUnderstandingArtifact {
+    requestedDataPreparation?: import('./pi/piTaskPlan').TaskDataPreparation;
+    requestedComputationScope?: import('../execution/computationEvidence').RequestedComputationScope;
+    queryCalculation?: import('./pi/queryEvidence').QueryCalculation;
+    requestedQueryScopes?: import('./pi/queryEvidence').RequestedQueryScope[];
+    resultCompleteness?: 'complete' | 'bounded';
     /** Coarse intent category (backward compat with IntentClassificationFindings). */
     intent: ChatIntentCategory;
     /** Confidence level — AI-reported then validated by local completeness check. */

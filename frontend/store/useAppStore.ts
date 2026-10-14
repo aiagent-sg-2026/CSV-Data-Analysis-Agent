@@ -1,5 +1,6 @@
 
 import { createWithEqualityFn } from 'zustand/traditional';
+import { captureSessionScope, ownsSessionScope, scopeStore } from '../services/session/sessionOwnership';
 import { Report, AppState, ReportListItem, MetricMappingValidationArtifact } from '../types';
 import { getReport, getDefaultSettings, getSettings } from '../services/storageService';
 import { vectorStore } from '../services/vectorStore';
@@ -152,6 +153,7 @@ export const initialAppState: AppState = {
     visibleAnalysisTrace: [],
     aiTaskStatus: null,
     initialAnalysisStatus: 'idle',
+    initialAnalysisRecovery: null,
     initialAnalysisFailureKind: null,
     initialAnalysisPlan: null,
     confirmedAnalysisGoal: null,
@@ -455,12 +457,15 @@ export const useAppStore = createWithEqualityFn<AppStore>()((set, get, store) =>
             set({ isAppInitializing: false });
         }
         // Resume a Pi stage checkpoint only after app state and DuckDB are restored.
-        if (get().csvData) {
+        if (get().csvData || get().datasetBundle) {
+            const recoveryScope = captureSessionScope(store);
+            const recoveryStore = scopeStore(store, recoveryScope);
             void import('../services/agent/runtime/pi/piInitialAnalysisRuntimeService')
             .then(async ({ recoverPiInitialAnalysisIfNeeded }) => {
-                await recoverPiInitialAnalysisIfNeeded(store);
+                if (ownsSessionScope(store, recoveryScope)) await recoverPiInitialAnalysisIfNeeded(recoveryStore);
             })
             .catch(error => {
+                if (!ownsSessionScope(store, recoveryScope)) return;
                 get().addProgress(
                     `Could not resume the interrupted AI run: ${
                         error instanceof Error ? error.message : String(error)

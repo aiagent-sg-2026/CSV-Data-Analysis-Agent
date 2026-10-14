@@ -130,9 +130,17 @@ export type MetricMappingValidationRequest =
     | MetricMappingValidationDerivedRequest;
 
 export interface WorkspaceFileAction {
+    startOffset?: number;
+    expectedRevision?: number;
+    revision?: number;
+    startRow?: number;
+    rowCount?: number;
+    byteOffset?: number;
+    byteLength?: number;
     operation: 'list' | 'tree' | 'read' | 'search' | 'grep' | 'head' | 'diff' | 'replace' | 'write' | 'append';
     path?: string;
     comparePath?: string;
+    compareRevision?: number;
     query?: string;
     content?: string;
     oldText?: string;
@@ -260,6 +268,8 @@ export type ToolGroup =
     | 'workspace.inspect.tree'
     | 'workspace.inspect.diff'
     | 'workspace.edit'
+    | 'code.execute'
+    | 'code.inspect'
     | 'conversation.clarification'
     | 'cleaning.inspect'
     | 'cleaning.edit'
@@ -268,6 +278,18 @@ export type ToolGroup =
     | 'analysis.presentation';
 
 export type ToolName =
+    | `mcp.${string}.${string}`
+    | 'computation.validate'
+    | 'code.run'
+    | 'code.inspect'
+    | 'code.cancel'
+    | 'candidate.stage'
+    | 'candidate.infer_meaning'
+    | 'candidate.read'
+    | 'candidate.diff'
+    | 'candidate.abandon'
+    | 'candidate.validate'
+    | 'candidate.request_approval'
     | 'analysis.create_plan'
     | 'analysis.correlation'
     | 'analysis.pivot_matrix'
@@ -334,6 +356,8 @@ export interface RuntimeAccessControlSettings {
 }
 
 export interface ToolAvailabilityContext {
+    externalToolManifests?: readonly ToolManifest[];
+    hasCodeExecution?: boolean;
     cardIds: string[];
     columnNames: string[];
     csvData?: CsvData | null;

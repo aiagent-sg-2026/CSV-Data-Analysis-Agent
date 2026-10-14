@@ -21,6 +21,19 @@ vi.mock('../services/data/arqueroEngine', () => ({
 }));
 
 describe('dataQueryEngine', () => {
+    it('retires only the exact diagnostic binding and preserves a later dataset',async()=>{
+        const config=await import('../config/runtimeConfig');vi.mocked(config.shouldEnableDuckDbQueryEngine).mockReturnValue(true);
+        const worker=await import('../services/workers/duckDbWorkerClient');
+        vi.mocked(worker.duckDbWorkerClient.initDuckDb).mockResolvedValue({initialized:true});
+        vi.mocked(worker.duckDbWorkerClient.loadCleanDataset).mockImplementation(async args=>({loaded:true,loadVersion:args.loadVersion,tableName:args.tableName}));
+        const engine=await import('../services/duckdb/queryEngine');
+        const old=await engine.primeDuckDbDataset({fileName:'old.csv',data:[{Amount:1}]});
+        const fresh=await engine.primeDuckDbDataset({fileName:'fresh.csv',data:[{Amount:2}]});
+        await engine.retireDuckDbQueryBinding(old);
+        expect(worker.duckDbWorkerClient.disposeDuckDbSession).not.toHaveBeenCalled();
+        await engine.retireDuckDbQueryBinding(fresh);
+        expect(worker.duckDbWorkerClient.disposeDuckDbSession).toHaveBeenCalledOnce();
+    });
     beforeEach(() => {
         vi.resetModules();
         vi.clearAllMocks();

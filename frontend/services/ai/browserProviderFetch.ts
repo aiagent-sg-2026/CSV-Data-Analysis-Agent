@@ -10,6 +10,7 @@ import {
     invalidateDemoGatewaySession,
     readGatewayErrorBody,
 } from './demoGatewaySession';
+import { awaitGatewayOperation, createGatewayDeadline, discardGatewayResponse, throwIfGatewayAborted, waitForGatewayRetry } from './demoGatewayAbort';
 
 /**
  * Normalizes browser provider requests across Chromium and WebKit.
@@ -34,19 +35,21 @@ export const fetchWithoutForbiddenUserAgent: typeof fetch = (
 };
 
 const sendWithSession = async (request: Request, body: Record<string, unknown>) => {
-    const session = await getDemoGatewaySession();
+    const session = await getDemoGatewaySession(request.signal);
+    throwIfGatewayAborted(request.signal);
     const headers = new Headers(request.headers);
     headers.set('Authorization', `Bearer ${session.token}`);
-    const response = await fetchWithoutForbiddenUserAgent(new Request(request, {
+    const response = await awaitGatewayOperation(fetchWithoutForbiddenUserAgent(new Request(request, {
         headers,
         // The wire model is the alias the session was issued for.
         body: JSON.stringify({ ...body, model: session.model }),
-    }));
+    })), request.signal, discardGatewayResponse);
     return { response, token: session.token };
 };
 
 const SESSION_LIMIT_MESSAGE = 'demo session request limit reached';
 const CONCURRENCY_RETRY_DELAYS_MS = [400, 1200];
+export const DEMO_GATEWAY_REQUEST_TIMEOUT_MS = 45_000;
 
 let requestLimiter = createConcurrencyLimiter(DEMO_SESSION_MAX_CONCURRENT_REQUESTS);
 
@@ -57,17 +60,15 @@ export const resetDemoGatewayRequestLimiterForTests = (): void => {
 type Rejection = 'refresh_session' | 'wait_for_slot' | null;
 
 /** Classifies gateway rejections the client can recover from by itself. */
-const classifyRejection = async (response: Response): Promise<Rejection> => {
+const classifyRejection = async (response: Response, signal: AbortSignal): Promise<Rejection> => {
     if (response.status === 401) return 'refresh_session';
     if (response.status !== 429) return null;
-    const { code, message } = await readGatewayErrorBody(response);
+    const { code, message } = await readGatewayErrorBody(response, signal);
     if (code === 'DEMO_SESSION_REQUEST_LIMIT' || message?.toLowerCase().includes(SESSION_LIMIT_MESSAGE)) {
         return 'refresh_session';
     }
     return code === 'DEMO_SESSION_CONCURRENCY_LIMIT' ? 'wait_for_slot' : null;
 };
-
-const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 /**
  * Enforce the demo gateway's request contract at the final browser boundary:
@@ -76,53 +77,68 @@ const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
  * one session refresh (plus short waits for a free slot) on recoverable 4xx.
  */
 export const fetchDefaultGateway: typeof fetch = async (input, init) => {
-    const request = new Request(input, init);
-    if (request.method.toUpperCase() !== 'POST') {
-        return fetchWithoutForbiddenUserAgent(request);
+    const original = new Request(input, init);
+    if (original.method.toUpperCase() !== 'POST') {
+        return fetchWithoutForbiddenUserAgent(original);
     }
-
-    let payload: unknown;
+    const deadline = createGatewayDeadline(original.signal, DEMO_GATEWAY_REQUEST_TIMEOUT_MS, 'Demo gateway request timed out.');
+    const request = new Request(original, { signal: deadline.signal });
     try {
-        payload = JSON.parse(await request.clone().text());
-    } catch {
-        throw new Error('The demo gateway requires a JSON request body.');
-    }
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-        throw new Error('The demo gateway requires a JSON object request body.');
-    }
-
-    const body = sanitizeDemoGatewayInput(payload as Record<string, unknown>);
-    delete body.max_output_tokens;
-    if (endsWithAssistantMessage(body.input)) {
-        console.warn('[DemoGateway] Request history ends with an assistant message; the upstream model may reject it.');
-    }
-
-    recordDemoGatewayRequest(body);
-    let refreshed = false;
-    let slotWaits = 0;
-    for (;;) {
-        const release = await requestLimiter.acquire();
-        let outcome: { response: Response; token: string };
+        throwIfGatewayAborted(request.signal);
+        let payload: unknown;
         try {
-            outcome = await sendWithSession(request.clone(), body);
-        } catch (error) {
-            release();
-            throw error;
+            payload = JSON.parse(await awaitGatewayOperation(request.clone().text(), request.signal));
+        } catch {
+            throwIfGatewayAborted(request.signal);
+            throw new Error('The demo gateway requires a JSON request body.');
+        }
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+            throw new Error('The demo gateway requires a JSON object request body.');
         }
 
-        const rejection = await classifyRejection(outcome.response);
-        const canRefresh = rejection === 'refresh_session' && !refreshed;
-        const canWait = rejection === 'wait_for_slot' && slotWaits < CONCURRENCY_RETRY_DELAYS_MS.length;
-        if (!canRefresh && !canWait) return releaseWhenBodyDone(outcome.response, release);
-
-        await outcome.response.body?.cancel().catch(() => undefined);
-        release();
-        if (canRefresh) {
-            refreshed = true;
-            invalidateDemoGatewaySession(outcome.token);
-        } else {
-            await sleep(CONCURRENCY_RETRY_DELAYS_MS[slotWaits]);
-            slotWaits += 1;
+        const body = sanitizeDemoGatewayInput(payload as Record<string, unknown>);
+        delete body.max_output_tokens;
+        if (endsWithAssistantMessage(body.input)) {
+            console.warn('[DemoGateway] Request history ends with an assistant message; the upstream model may reject it.');
         }
+
+        recordDemoGatewayRequest(body);
+        let refreshed = false;
+        let slotWaits = 0;
+        for (;;) {
+            const release = await requestLimiter.acquire(request.signal);
+            let transferred = false;
+            let outcome: { response: Response; token: string } | undefined;
+            let rejection: Rejection;
+            try {
+                throwIfGatewayAborted(request.signal);
+                outcome = await sendWithSession(request.clone(), body);
+                rejection = await classifyRejection(outcome.response, request.signal);
+                throwIfGatewayAborted(request.signal);
+                const canRetry = (rejection === 'refresh_session' && !refreshed)
+                    || (rejection === 'wait_for_slot' && slotWaits < CONCURRENCY_RETRY_DELAYS_MS.length);
+                if (!canRetry) {
+                    deadline.clearDeadline();
+                    const response = releaseWhenBodyDone(outcome.response, () => { release(); deadline.dispose(); }, undefined, request.signal);
+                    transferred = true;
+                    return response;
+                }
+            } finally {
+                if (!transferred) {
+                    if (outcome) discardGatewayResponse(outcome.response);
+                    release();
+                }
+            }
+            if (rejection === 'refresh_session') {
+                refreshed = true;
+                invalidateDemoGatewaySession(outcome.token);
+            } else {
+                await waitForGatewayRetry(CONCURRENCY_RETRY_DELAYS_MS[slotWaits], request.signal);
+                slotWaits += 1;
+            }
+        }
+    } catch (error) {
+        deadline.dispose();
+        throw error;
     }
 };

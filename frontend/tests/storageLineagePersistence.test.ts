@@ -33,10 +33,12 @@ const fakeDb = {
     }),
     transaction: vi.fn((names: string[] | string) => ({
         objectStore: (name: string) => ({
+            get: async (key: string) => store(name).get(key),
             put: (value: any) => put(name, value),
             openCursor: vi.fn(async () => null),
         }),
         done: Promise.resolve(),
+        abort: vi.fn(),
         names,
     })),
 };

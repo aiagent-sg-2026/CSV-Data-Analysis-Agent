@@ -104,4 +104,15 @@ describe('dataset bundle transformation replay', () => {
         expect(outcome.data.data).toEqual(source.data);
         expect(outcome.data.data).not.toBe(source.data);
     });
+
+    it('rejects a mismatched input version even when a no-op reproduces the output', () => {
+        const source = { fileName: 'synthetic.csv', data: [{ Amount: '10' }] };
+        const original = createSingleTableDatasetBundle({ datasetId: 'source', sourceFingerprint: 'source',
+            file: { name: source.fileName, size: 10, lastModified: 1 }, data: source });
+        const bundle = commitVerifiedPrimaryTableTransformation({ bundle: original, data: source,
+            inputVersion: 'wrong-input', operations: [{ id: 'trim', type: 'trim_whitespace', columns: '*', reason: 'Trim' }], runId: 'cleaning' })!;
+        expect(replayDatasetBundlePrograms({ bundle, currentData: source })).toMatchObject({
+            status: 'fresh_import_required', reasonCodes: ['transformation_input_version_mismatch'],
+        });
+    });
 });

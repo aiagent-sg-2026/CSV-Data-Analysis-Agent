@@ -53,6 +53,54 @@ const createState = (targetShape: 'row_table' | 'long_fact_table' = 'row_table')
 });
 
 describe('initial analysis evidence executor', () => {
+    it.each(['qualified', 'staging_only', 'missing_port', 'missing_input', 'missing_resolution'] as const)(
+        'keeps dirty input inspectable only by a qualified repair executor: %s', async mode => {
+            const state = {
+                ...createState(),
+                csvData: mode === 'missing_input' ? null : { fileName: 'dirty.csv', data: [{ Name: 'Subtotal', Amount: '-5' }] },
+            };
+            const originalRows = structuredClone(state.csvData);
+            const artifacts = {
+                canonicalCsvData: null, canonicalBuildMeta: null, canonicalizationStatus: 'blocked',
+                reportStructureResolution: mode === 'missing_resolution' ? null : {
+                    ...state.reportStructureResolution, requiresHumanReview: true, source: 'runtime_resolved',
+                },
+                pipelineOutcome: { ...state.pipelineOutcome, reasonCode: 'hierarchy_depth_retention_rate' },
+            };
+            const store = {
+                getState: () => state,
+                setState: (update: object) => Object.assign(state, update),
+                executorPreparation: { entryPoint: 'initial_analysis', mode: mode === 'staging_only' ? mode : 'qualified' },
+                codeExecution: mode === 'missing_port' ? undefined : {}, candidateStaging: {},
+            } as unknown as StoreApi;
+            const executors = createInitialAnalysisStageExecutors({ resolveStructure: vi.fn(async () => artifacts) as never });
+            const context = { request, store, signal: new AbortController().signal };
+            const result = await executors['dataset.profileStructure'](context, {});
+            expect(result.decision).toBe(mode === 'qualified' ? 'warn' : 'fail');
+            if (mode === 'qualified') expect(result.warningCodes).toEqual(['coding_repair_required']);
+            expect(state.canonicalCsvData).toBeNull();
+            expect(state.csvData).toEqual(originalRows);
+            // Inspection permission cannot satisfy the later mandatory analysis admission gate.
+            expect((await executors['dataset.validatePreparedData'](context, {})).decision).toBe('fail');
+        },
+    );
+
+    it('blocks legacy cleaning before any write when shared initial preparation owns the stage', async () => {
+        const state = { ...createState(), csvData: { fileName: 'synthetic.csv', data: [{ Town: 'A', Amount: 1 }] } };
+        const setState = vi.fn();
+        const runCleaning = vi.fn(async () => { state.csvData.data[0].Amount = 999; });
+        const store = { getState: () => state, setState,
+            executorPreparation: { entryPoint: 'initial_analysis', mode: 'staging_only' },
+        } as unknown as StoreApi;
+        const result = await createInitialAnalysisStageExecutors({ runCleaning: runCleaning as never })['dataset.applyTransform']({
+            request, store, signal: new AbortController().signal,
+        }, {});
+        expect(result).toMatchObject({ decision: 'fail', warningCodes: ['shared_initial_cleaning_not_qualified'], transformationIds: [] });
+        expect(runCleaning).not.toHaveBeenCalled();
+        expect(setState).not.toHaveBeenCalled();
+        expect(state.csvData.data).toEqual([{ Town: 'A', Amount: 1 }]);
+    });
+
     it('uses an extended bounded evidence budget for million-row file-backed datasets', () => {
         const state = createState();
         state.csvData.backing.rowCount = 1_000_000;

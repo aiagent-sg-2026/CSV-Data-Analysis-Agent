@@ -7,6 +7,7 @@ import type {
     DatasetQualitySignal,
     AnalysisArtifactType,
     ChartType,
+    PresentationMode,
     DisplayAnalysisIrHelperExposureLevel,
     DisplayAnalysisIrSemanticRole,
 } from './analysis';
@@ -68,6 +69,7 @@ export interface ReportCardEvidence {
     description: string;
     artifactType: AnalysisArtifactType | null;
     chartType: ChartType;
+    presentationMode?: PresentationMode;
     groupByColumn: string | null;
     valueColumn: string | null;
     aggregation: AggregationType | null;

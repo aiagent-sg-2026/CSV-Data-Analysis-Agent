@@ -34,6 +34,7 @@ import { isRuntimeAbortError, throwIfAborted } from '../runtime/runtimeAbort';
 type StoreApi = {
     getState: () => AppStore;
     setState: (partial: Partial<AppStore> | ((state: AppStore) => Partial<AppStore>)) => void;
+    piTask?:import('../runtime/pi/piCodingTask').PiCodingTask;
 };
 
 interface DuckDbAnalysisBinding {
@@ -290,7 +291,7 @@ export const processSingleTopic = async (
                         options?.explorationContext,
                         options?.harnessSummary,
                         options?.planningIntent,
-                        { abortSignal: options?.abortSignal },
+                        { abortSignal: options?.abortSignal,skillStore:store },
                     );
                 }
             } else {
@@ -306,7 +307,7 @@ export const processSingleTopic = async (
                     options?.explorationContext,
                     options?.harnessSummary,
                     options?.planningIntent,
-                    { abortSignal: options?.abortSignal },
+                    { abortSignal: options?.abortSignal,skillStore:store },
                 );
             }
             console.log(_elapsed('plan_generated'));

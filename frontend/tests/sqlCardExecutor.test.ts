@@ -61,6 +61,39 @@ describe('sqlCardExecutor', () => {
         });
     });
 
+    it.each(['stable', 'source_changed', 'view_changed'] as const)(
+        'fences source and semantic-view versions independently: %s', async mode => {
+            const { executeEvidenceQuery } = await import('../services/agent/execution/sqlCardExecutor');
+            const { beginRun, finishRun } = await import('../services/session/sessionOwnership');
+            const { resolveSemanticDefaultCsvData } = await import('../services/agent/datasetSemantics');
+            const csvData = { fileName: 'facts.csv', data: [{ Name: 'Grand Total', Amount: 5 }, { Name: 'Detail', Amount: 5 }] };
+            const version = buildSemanticDatasetVersion(csvData);
+            const snapshot = { sourceDatasetVersion: version, recommendedAnalysisView: { includedRowIndices: [1] } } as any;
+            const view = resolveSemanticDefaultCsvData(csvData, snapshot, version)!;
+            expect(buildSemanticDatasetVersion(view)).not.toBe(version);
+            const state: any = { sessionId: `view-${mode}`, csvData, canonicalCsvData: null, queryHistory: [], activeDataQuery: null,
+                columnProfiles: [{ name: 'Name', type: 'categorical' }, { name: 'Amount', type: 'numerical' }],
+                datasetSemanticSnapshot: snapshot, semanticDatasetVersion: version, logAgentToolUsage: vi.fn(), recordAgentEvent: vi.fn() };
+            const store: any = { getState: () => state, setState: (patch: any) => Object.assign(state, typeof patch === 'function' ? patch(state) : patch) };
+            const lease = beginRun(store, 'initial_analysis', 'current');
+            store.executionContext = { lease, toolCallId: 'query', stepId: 'stage' };
+            let release!: (value: unknown) => void, entered!: () => void;
+            const started = new Promise<void>(resolve => { entered = resolve; });
+            executeManagedDataQueryMock.mockImplementationOnce(() => { entered(); return new Promise(resolve => { release = resolve; }); });
+            const running = executeEvidenceQuery({ title: 'Current total', intentSummary: 'Current detail total', queryMode: 'aggregate',
+                query: { aggregates: [{ function: 'sum', column: 'Amount', as: 'Total' }] } }, store, null, { dataset: view });
+            await started;
+            if (mode === 'source_changed') state.csvData = { ...csvData, data: [{ Name: 'New', Amount: 9 }] };
+            if (mode === 'view_changed') state.datasetSemanticSnapshot = { ...snapshot, recommendedAnalysisView: { includedRowIndices: [0, 1] } };
+            release({ result: { rows: [{ Total: 5 }], totalMatchedRows: 1, returnedRows: 1, truncated: false,
+                selectedColumns: ['Total'], appliedOrderBy: [], appliedLimit: 100, durationMs: 1 }, engine: 'native',
+                sqlPreview: null, tableName: null, loadVersion: buildSemanticDatasetVersion(view), fallbackReason: null, fallbackStage: null });
+            if (mode === 'stable') expect((await running).result.rows).toEqual([{ Total: 5 }]);
+            else { await expect(running).rejects.toThrow('query_dataset_binding_changed'); expect(state.activeDataQuery).toBeNull(); }
+            finishRun(store, lease);
+        },
+    );
+
     it('executes a DuckDB-backed SQL plan and appends query history', async () => {
         const csvData = { fileName: 'sales.csv', data: [{ Region: 'East', Revenue: 100 }, { Region: 'West', Revenue: 80 }] };
         const datasetVersion = buildSemanticDatasetVersion(csvData as never);

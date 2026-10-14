@@ -123,6 +123,8 @@ export interface ResearchPlan {
 
 export interface AnalysisPlan {
     chartType: ChartType;
+    /** Host-owned presentation constraint; chart bindings remain available for query provenance. */
+    presentationMode?: PresentationMode;
     title: string;
     description: string;
     aggregation?: AggregationType;

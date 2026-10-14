@@ -60,7 +60,8 @@ vi.mock('../services/storageService', () => ({
     }),
 }));
 
-vi.mock('../services/persistence/persistedAppState', () => ({
+vi.mock('../services/persistence/persistedAppState', async importOriginal => ({
+    ...await importOriginal<typeof import('../services/persistence/persistedAppState')>(),
     buildPersistedReportRecord: buildPersistedReportRecordMock,
 }));
 

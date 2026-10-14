@@ -138,8 +138,9 @@ const executeStructuredQuery = async (
         ...(normalizationOverride ? { dimensionNormalization: normalizationOverride } : {}),
     });
     const result = await duckDbWorkerClient.executeCompiledQuery(
-        compiled,
+        {...compiled, expectedBinding: options.binding},
         intentOptions?.timeout ?? DEFAULT_DIAGNOSTIC_TIMEOUT_MS,
+        options.abortSignal,
     );
     return {
         rows: result.rows,
@@ -205,8 +206,9 @@ const executeDiagnosticQuery = async (
             maxOrderBy: 3,
         });
         const result = await duckDbWorkerClient.executeCompiledQuery(
-            compiled,
+            {...compiled, expectedBinding: options.binding},
             intent.options?.timeout ?? DEFAULT_DIAGNOSTIC_TIMEOUT_MS,
+            options.abortSignal,
         );
         return {
             rows: result.rows,
@@ -224,8 +226,9 @@ const executeDiagnosticQuery = async (
     if (template.toCompiledQuery) {
         const compiled = template.toCompiledQuery(intent.params ?? {}, templateContext);
         const result = await duckDbWorkerClient.executeCompiledQuery(
-            compiled,
+            {...compiled, expectedBinding: options.binding},
             intent.options?.timeout ?? DEFAULT_DIAGNOSTIC_TIMEOUT_MS,
+            options.abortSignal,
         );
         return {
             rows: result.rows,
@@ -277,8 +280,9 @@ const executeUnpivotQuery = async (
     });
 
     const result = await duckDbWorkerClient.executeCompiledQuery(
-        compiled,
+        {...compiled, expectedBinding: options.binding},
         intent.options?.timeout ?? DEFAULT_DIAGNOSTIC_TIMEOUT_MS,
+        options.abortSignal,
     );
 
     return {

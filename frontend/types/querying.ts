@@ -150,9 +150,19 @@ export interface DataQueryResult {
     appliedOrderBy: QueryOrderByClause[];
     appliedLimit: number;
     durationMs: number;
+    /** Actual local SQL boundary proof; historical/non-SQL records may omit it. */
+    executionBoundary?: {policyVersion: string; engineVersion: string; locked: true; memoryBytes: number;
+        resourceGeneration: number; tableName: string; loadVersion: string; diagnostic?: boolean};
 }
 
 export interface ActiveDataQuery {
+    taskId?: string;
+    taskRevision?: number;
+    answerScopeDigest?: string;
+    queryId?: string;
+    queryMode?: 'structured' | 'raw_sql' | 'unpivot' | 'fallback';
+    datasetId?: string | null;
+    sessionEpoch?: number;
     sessionId?: string;
     runId?: string;
     turnId?: string;

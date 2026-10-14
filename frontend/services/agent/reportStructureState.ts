@@ -16,8 +16,9 @@ import { resolvePipelineOutcome } from './pipelineOutcomeResolver';
 import { verifyCleanedDatasetShape } from './cleaningVerification';
 
 export const getPreferredAnalysisDataset = (
-    state: Pick<AppState, 'canonicalCsvData' | 'csvData'>,
-): CsvData | null => state.canonicalCsvData ?? state.csvData ?? null;
+    state: Pick<AppState, 'canonicalCsvData' | 'csvData'> & Partial<Pick<AppState, 'datasetBundle' | 'datasetCommitBindingStatus'>>,
+): CsvData | null => (state.datasetBundle?.acceptedCommit || state.datasetCommitBindingStatus) && state.datasetCommitBindingStatus !== 'ready'
+    ? null : state.canonicalCsvData ?? state.csvData ?? null;
 
 export const resolveReportStructureArtifacts = (params: {
     rawCsvData: CsvData | null | undefined;

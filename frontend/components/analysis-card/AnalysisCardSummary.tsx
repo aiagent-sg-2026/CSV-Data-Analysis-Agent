@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AnalysisPlan, LocalizedText, Settings } from '../../types';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { getTranslation } from '../../utils/localization';
+import { shouldHideCardChart } from '../../utils/analysisCardPresentationPolicy';
 import { PivotCardQualitySummary, formatAnalysisMeasureValue, formatAnalysisValue, isAdditiveAggregation, normalizeCategoryLabel } from '../../utils/analysisCardPresentation';
 
 interface AnalysisCardSummaryProps {
@@ -122,7 +123,7 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
                 })
                 : getTranslation('analysis_card_view_line_focus_non_additive', language, params));
         } else {
-            lines.push(getTranslation(plan.artifactMetadata?.hideChartByDefault
+            lines.push(getTranslation(shouldHideCardChart(plan)
                 ? 'analysis_card_view_line_ready_table_only'
                 : hasAdditiveMeasure
                     ? 'analysis_card_view_line_ready'
@@ -142,6 +143,8 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
         language,
         overallTotalValue,
         plan.aggregation,
+        plan.presentationMode,
+        plan.artifactMetadata?.tableOnlyPresentation,
         plan.artifactMetadata?.hideChartByDefault,
         scopeLabel,
         topN,

@@ -3,6 +3,9 @@ import { createAnalysisToolManifests } from './manifests/analysisToolManifests';
 import { createDataToolManifests } from './manifests/dataToolManifests';
 import { createRuntimeToolManifests } from './manifests/runtimeToolManifests';
 import { createWorkspaceToolManifests } from './manifests/workspaceToolManifests';
+import { createCodeToolManifests, createComputationToolManifest } from './manifests/codeToolManifests';
+import { createCandidateToolManifests } from './manifests/candidateToolManifests';
+import { createCandidateMeaningManifest } from './manifests/candidateMeaningManifest';
 import { createPresentationToolManifests } from './manifests/presentationToolManifests';
 import { clarificationSchema } from './toolManifestSchemas';
 import { validateClarification } from './toolManifestSupport';
@@ -36,6 +39,10 @@ export const buildBuiltinToolManifests = (columnNames: string[]): ToolManifest[]
     ...createDataToolManifests(),
     ...createRuntimeToolManifests(),
     ...createWorkspaceToolManifests(),
+    ...createCodeToolManifests(),
+    createComputationToolManifest(),
+    ...createCandidateToolManifests(),
+    createCandidateMeaningManifest(),
     ...createConversationToolManifests(),
     ...createPresentationToolManifests(),
 ]);

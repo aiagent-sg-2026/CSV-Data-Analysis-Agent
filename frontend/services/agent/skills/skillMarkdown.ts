@@ -1,4 +1,4 @@
-import type { Skill } from '@earendil-works/pi-agent-core';
+import {parseSkillManifest,type AppSkill} from './skillManifest';
 
 export interface SkillParseDiagnostic {
     path: string;
@@ -7,7 +7,7 @@ export interface SkillParseDiagnostic {
 
 /** Exactly one of `skill` and `diagnostic` is set. */
 export interface SkillParseResult {
-    skill: Skill | null;
+    skill: AppSkill | null;
     diagnostic: SkillParseDiagnostic | null;
 }
 
@@ -39,7 +39,9 @@ export const parseSkillMarkdown = (text: string, filePath: string): SkillParseRe
     for (const line of lines.slice(1, closingIndex)) {
         const separator = line.indexOf(':');
         if (separator <= 0) continue;
-        fields.set(line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim());
+        const key=line.slice(0,separator).trim().toLowerCase();
+        if(fields.has(key))return fail('Duplicate skill frontmatter field.');
+        fields.set(key, line.slice(separator + 1).trim());
     }
 
     const name = fields.get('name') ?? '';
@@ -50,6 +52,10 @@ export const parseSkillMarkdown = (text: string, filePath: string): SkillParseRe
 
     const content = lines.slice(closingIndex + 1).join('\n').trim();
     if (!content) return fail('The skill has no instructions after the frontmatter.');
+    const restriction=fields.get('disable-model-invocation');
+    if(restriction!==undefined&&!/^(true|false)$/i.test(restriction))return fail('Invalid model-invocation restriction.');
+    let manifest:AppSkill['manifest'];
+    try {manifest=parseSkillManifest(fields.get('manifest'));}catch{return fail('skill_manifest_invalid');}
 
     return {
         diagnostic: null,
@@ -58,17 +64,19 @@ export const parseSkillMarkdown = (text: string, filePath: string): SkillParseRe
             description,
             content,
             filePath,
+            ...(manifest?{manifest}:{}),
             ...(parseBoolean(fields.get('disable-model-invocation')) ? { disableModelInvocation: true } : {}),
         },
     };
 };
 
 /** The `SKILL.md` text for a skill, so it can be exported or edited and parses back to the same skill. */
-export const serializeSkillMarkdown = (skill: Skill): string => [
+export const serializeSkillMarkdown = (skill: AppSkill): string => [
     '---',
     `name: ${skill.name}`,
     `description: ${skill.description}`,
     ...(skill.disableModelInvocation ? ['disable-model-invocation: true'] : []),
+    ...(skill.manifest?['manifest: '+JSON.stringify(skill.manifest)]:[]),
     '---',
     '',
     skill.content,

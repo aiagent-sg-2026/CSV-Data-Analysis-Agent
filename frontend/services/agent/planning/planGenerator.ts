@@ -561,7 +561,7 @@ export const generateEvidenceQueryPlanWithRetry = async (
     explorationContext?: string | null,
     harnessSummary?: string | null,
     planningIntent?: PlannerSemanticIntent | null,
-    _options?: { timeoutMs?: number; abortSignal?: AbortSignal },
+    _options?: { timeoutMs?: number; abortSignal?: AbortSignal;skillStore?:import('../types').StoreApi },
 ): Promise<SqlEvidenceQueryPlan> => {
     const effectiveTimeout = _options?.timeoutMs ?? PLAN_GENERATION_TIMEOUT_MS;
     const abortSignal = _options?.abortSignal;
@@ -580,7 +580,7 @@ export const generateEvidenceQueryPlanWithRetry = async (
             .map(column => column.name),
     };
     let lastError: string | undefined = retryFeedback;
-    const skillGuidance = buildEvidenceSkillGuidance();
+    const skillGuidance = buildEvidenceSkillGuidance(undefined,_options?.skillStore);
     const planningIntentSummary = [
         planningIntent?.preferredGroupBy ? `Preferred groupBy from runtime hypothesis: ${planningIntent.preferredGroupBy}` : '',
         planningIntent?.preferredMetric ? `Preferred metric from runtime hypothesis: ${planningIntent.preferredMetric}` : '',

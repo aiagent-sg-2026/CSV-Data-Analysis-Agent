@@ -14,6 +14,7 @@ import {
 import { resolveClarificationOriginalUserRequest } from '../runtimeClarificationPolicy';
 
 export interface PiClarificationCompatibilityRequest {
+    taskContinuation?: import('./piCodingTask').PiTaskContinuation;
     message: string;
     queryUnderstandingArtifact?: QueryUnderstandingArtifact;
     groundingResult?: GroundingResult;
@@ -96,6 +97,7 @@ export const preparePiClarificationCompatibilityRequest = async (
     }));
 
     return {
+        taskContinuation: clarification.resumeContext?.piTaskContinuation,
         message: [
             'Continue the original request using the user clarification below.',
             `Original user request: ${originalRequest.trim()}`,

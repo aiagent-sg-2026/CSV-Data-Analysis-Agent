@@ -26,7 +26,10 @@ const modalState = {
 };
 
 vi.mock('../store/useAppStore', () => ({
-    useAppStore: (selector: (state: typeof modalState) => unknown) => selector(modalState),
+    useAppStore: Object.assign((selector: (state: typeof modalState) => unknown) => selector(modalState), {
+        getState: () => modalState,
+        setState: (patch: Partial<typeof modalState>) => Object.assign(modalState, patch),
+    }),
 }));
 
 describe('SettingsModal', () => {
@@ -109,7 +112,7 @@ describe('SettingsModal', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Delete everything' }));
 
         await waitFor(() => expect(clearAllLocalBrowserDataMock).toHaveBeenCalledOnce());
-        expect(screen.getByRole('alert')).toHaveTextContent(
+        expect(await screen.findByRole('alert')).toHaveTextContent(
             'Local data could not be fully cleared. Close other app tabs and retry.',
         );
     });

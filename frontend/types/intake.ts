@@ -237,3 +237,8 @@ export interface CsvData {
     /** High-confidence analysis-view header renames applied after intake. */
     autoNamedColumns?: Array<{ from: string; to: string; reason: string }>;
 }
+
+export interface CsvSourceMetadata {
+    sourceId: string; sha256: string; byteSize: number; fileName: string; recordCount: number;
+    dialect: Pick<CsvIntakeDetectionResult, 'delimiter' | 'quoteChar'>; diagnostics: readonly string[];
+}

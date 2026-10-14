@@ -80,7 +80,7 @@ describe('chat row delete runtime wiring', () => {
 
         await orchestrateChatResponse('remove rows where Code = 501001', store as never);
 
-        expect(runRowDeletePreflightMock).toHaveBeenCalledWith('remove rows where Code = 501001', store);
+        expect(runRowDeletePreflightMock).toHaveBeenCalledWith('remove rows where Code = 501001', expect.objectContaining({ executionContext: expect.objectContaining({ lease: expect.any(Object) }) }));
         expect(runPiFollowUpTurnMock).not.toHaveBeenCalled();
     });
 
@@ -91,7 +91,7 @@ describe('chat row delete runtime wiring', () => {
 
         await orchestrateChatResponse('confirm delete', store as never);
 
-        expect(tryHandlePendingMutationConfirmationMock).toHaveBeenCalledWith('confirm delete', store);
+        expect(tryHandlePendingMutationConfirmationMock).toHaveBeenCalledWith('confirm delete', expect.objectContaining({ executionContext: expect.objectContaining({ lease: expect.any(Object) }) }));
         expect(runRowDeletePreflightMock).not.toHaveBeenCalled();
         expect(runPiFollowUpTurnMock).not.toHaveBeenCalled();
         expect(store.getState().chatHistory).toHaveLength(0);
@@ -102,14 +102,14 @@ describe('chat row delete runtime wiring', () => {
 
         await orchestrateChatResponse('confirm delete', store as never);
 
-        expect(tryHandlePendingMutationConfirmationMock).toHaveBeenCalledWith('confirm delete', store);
+        expect(tryHandlePendingMutationConfirmationMock).toHaveBeenCalledWith('confirm delete', expect.objectContaining({ executionContext: expect.objectContaining({ lease: expect.any(Object) }) }));
         expect(runRowDeletePreflightMock).not.toHaveBeenCalled();
         expect(runPiFollowUpTurnMock).toHaveBeenCalledWith(
             expect.objectContaining({
                 message: 'confirm delete',
                 intentFindings: expect.objectContaining({ intent: 'conversation' }),
             }),
-            store,
+            expect.objectContaining({ executionContext: expect.objectContaining({ lease: expect.any(Object) }) }),
         );
     });
 });

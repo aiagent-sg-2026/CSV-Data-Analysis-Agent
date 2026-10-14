@@ -1,3 +1,4 @@
+import { sha256Bytes } from './sourceDigest';
 import type {
     CsvCellValue,
     CsvData,
@@ -360,6 +361,10 @@ export const verifyDatasetBundleSource = async (input: {
     if (input.file.name !== input.bundle.source.fileName || input.file.size !== input.bundle.source.byteSize) {
         return { matches: false, fingerprint: null, reasonCode: 'source_metadata_mismatch' };
     }
+    if (input.bundle.source.inspection?.sha256) {
+        const digest = await sha256Bytes(new Uint8Array(await input.file.arrayBuffer()));
+        if (digest !== input.bundle.source.inspection.sha256) return { matches: false, fingerprint: null, reasonCode: 'source_sha256_mismatch' };
+    }
     const expected = input.bundle.source.fingerprint;
     const fingerprint = expected.startsWith('dataset-file-')
         ? (await buildDuckDbFileIdentity(input.file)).loadVersion
@@ -377,6 +382,8 @@ export const commitVerifiedPrimaryTableTransformation = (input: {
     data: CsvData;
     operations: NonNullable<TransformationProgramStep['operation']>[];
     runId: string | null;
+    /** The actual prepared input can differ from the bundle's canonical analysis view. */
+    inputVersion?: string;
     now?: string;
 }): DatasetBundle | null => {
     if (!input.bundle) return null;
@@ -394,7 +401,7 @@ export const commitVerifiedPrimaryTableTransformation = (input: {
     const program: TransformationProgram = existingProgram ?? {
         programId: `program-${stableHash(idempotencyKey)}`,
         bundleId: input.bundle.bundleId,
-        inputVersion: input.bundle.datasetVersion,
+        inputVersion: input.inputVersion ?? input.bundle.datasetVersion,
         outputVersion,
         idempotencyKey,
         status: 'committed',

@@ -6,6 +6,7 @@ import { evaluateEvidenceValue, type ExistingAcceptedEvidence } from '../../evid
 import { buildEvidenceResultSummary } from '../../execution/sqlCardExecutor';
 import { emitSilentFailure } from '../../monitoring/silentFailureTracker';
 import type { StoreApi } from '../../types';
+import { resolveCardPresentationPlan, isTableOnlyPresentation } from '../../../../utils/analysisCardPresentationPolicy';
 
 export interface PiCardGateRejection {
     cardId: string;
@@ -22,8 +23,8 @@ export interface PiCardGateOutcome {
  * Re-run the topic pipeline's evidence value gate on cards Pi created.
  *
  * Pi saves the card inside `analysis.create_plan`, so the gate runs after the
- * fact: `reject` removes the card, `table_only` keeps it and is stored on the
- * card so the automatic quality evaluator and trust labels see it. A card is
+ * fact: `reject` removes the card, `table_only` forces table presentation and
+ * stores its reason for the quality evaluator and trust labels. A card is
  * left untouched when the gate cannot be evaluated (no semantic understanding
  * from an initial analysis, or no query trace) or throws.
  */
@@ -79,16 +80,19 @@ export const gatePiCreatedCards = (store: StoreApi, cardIds: string[]): PiCardGa
             }
             if (gate.decision === 'table_only') outcome.tableOnlyIds.push(cardId);
             store.setState(current => ({
-                analysisCards: current.analysisCards.map(candidate => candidate.id === cardId
-                    ? {
+                analysisCards: current.analysisCards.map(candidate => {
+                    if (candidate.id !== cardId) return candidate;
+                    const settled = {
                         ...candidate,
                         evidenceValueGate: {
                             ...gate,
                             evaluatedAt: new Date().toISOString(),
-                            source: 'evidence_value_gate_v1',
+                            source: 'evidence_value_gate_v1' as const,
                         },
-                    }
-                    : candidate),
+                    };
+                    const plan = resolveCardPresentationPlan(settled);
+                    return { ...settled, plan, isDataVisible: isTableOnlyPresentation(plan) || settled.isDataVisible };
+                }),
             }));
         } catch (error) {
             // The card stays visible with the automatic quality verdict only.

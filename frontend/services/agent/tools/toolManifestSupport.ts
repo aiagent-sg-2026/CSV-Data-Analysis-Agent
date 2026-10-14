@@ -161,5 +161,8 @@ export const validateWorkspacePayload = (operation: WorkspaceFileAction['operati
     if (operation === 'replace' && (args.oldText === undefined || args.newText === undefined)) {
         errors.push('"oldText" and "newText" are required for "replace".');
     }
+    if (['write', 'append', 'replace'].includes(operation) && (!Number.isSafeInteger(args.expectedRevision) || args.expectedRevision < 0)) {
+        errors.push('expectedRevision is required: read the current revision first (0 for a new task file).');
+    }
     return errors;
 };

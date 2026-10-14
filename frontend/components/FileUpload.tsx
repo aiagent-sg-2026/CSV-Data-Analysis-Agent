@@ -8,6 +8,7 @@ import { ImportProgressCard } from './ImportProgressCard';
 import { shouldAllowLogsSurface, shouldAllowSettingsSurface, shouldShowNewSessionButton } from '../config/runtimeConfig';
 import { getCloudAiProviderLabel } from '../utils/cloudAiProviderLabel';
 import { getTranslation } from '../utils/localization';
+import { DatasetRecoveryPanel } from './DatasetRecoveryPanel';
 
 interface FileUploadProps {
     isWorkspaceRestoring?: boolean;
@@ -22,6 +23,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({ isWorkspaceRestoring = f
         aiTaskStatus,
         setIsDebugLogsModalOpen,
         datasetBundle,
+        candidateRecovery,
+        initialAnalysisRecovery,
         fileName,
         language,
         cleaningRunStatus,
@@ -34,6 +37,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({ isWorkspaceRestoring = f
         aiTaskStatus: state.aiTaskStatus,
         setIsDebugLogsModalOpen: state.setIsDebugLogsModalOpen,
         datasetBundle: state.datasetBundle,
+        candidateRecovery: state.candidateRecovery,
+        initialAnalysisRecovery: state.initialAnalysisRecovery,
         fileName: state.csvData?.fileName ?? null,
         language: state.settings.language,
         cleaningRunStatus: state.cleaningRun?.status ?? null,
@@ -140,6 +145,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({ isWorkspaceRestoring = f
     };
 
 
+    if (datasetBundle?.acceptedCommit || candidateRecovery) return <div className="flex h-full items-center justify-center p-4"><DatasetRecoveryPanel /></div>;
+
     if (isBusy && fileName) {
         const busyCard = resolveBusyCard();
         const analysing = Boolean(aiTaskStatus && aiTaskStatus.status !== 'done' && aiTaskStatus.status !== 'error')
@@ -236,10 +243,15 @@ export const FileUpload: React.FC<FileUploadProps> = ({ isWorkspaceRestoring = f
             )}
             {!isWorkspaceRestoring && datasetBundle && !fileName && (
                 <div role="status" className="mb-6 w-full max-w-xl rounded-card border border-amber-300 bg-amber-50 p-4 text-left">
-                    <p className="font-semibold text-amber-950">Re-select the original CSV to restore this analysis</p>
+                    <p className="font-semibold text-amber-950">{initialAnalysisRecovery ? 'Re-select the original CSV to resume the interrupted analysis' : 'Re-select the original CSV to restore this analysis'}</p>
                     <p className="mt-1 text-sm leading-6 text-amber-900">
                         History keeps the source fingerprint and transformation lineage, not the CSV rows. Select {datasetBundle.source.fileName}; the app will verify its fingerprint before replaying any transformation.
                     </p>
+                    {initialAnalysisRecovery && <p className="mt-2 text-sm leading-6 text-amber-900">
+                        Recovery: {initialAnalysisRecovery.status}. {initialAnalysisRecovery.reason
+                            ? `Cannot resume: ${initialAnalysisRecovery.reason}. Saved results are preserved.`
+                            : `After verification, continue from stage ${initialAnalysisRecovery.nextStageIndex + 1}; completed stages will not run again.`}
+                    </p>}
                 </div>
             )}
             <IconFileUpload />

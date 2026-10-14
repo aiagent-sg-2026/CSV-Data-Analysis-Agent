@@ -193,6 +193,8 @@ const mapToolNameToPhase = (toolName: ToolName | 'assistant_message' | 'unknown_
 
 const buildValidationContext = (store: StoreApi, options?: ActionExecutionOptions) =>
     buildToolAvailabilityContext(store.getState(), {
+        hasCodeExecution: Boolean(store.codeExecution),
+        externalToolManifests: store.mcpTools?.manifests,
         toolStage: options?.toolStage,
         allowOverrides: options?.allowOverrides,
         denyOverrides: options?.denyOverrides,

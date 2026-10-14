@@ -1,3 +1,4 @@
+import { orderedPredicateValue } from './queryPredicateValue';
 import {
     CastColumnOperation,
     CsvCellValue,
@@ -237,15 +238,15 @@ const comparePredicate = (row: CsvRow, predicate: FilterPredicate): boolean => {
         case 'lt':
         case 'lte':
         case 'between': {
-            const left = robustParseFloat(value);
+            const left = orderedPredicateValue(value);
             if (predicate.operator === 'between') {
                 const values = Array.isArray(predicate.value) ? predicate.value : [];
-                const lower = robustParseFloat(values[0]);
-                const upper = robustParseFloat(values[1]);
+                const lower = orderedPredicateValue(values[0]);
+                const upper = orderedPredicateValue(values[1]);
                 if (left === null || lower === null || upper === null) return false;
                 return left >= lower && left <= upper;
             }
-            const right = robustParseFloat(predicate.value);
+            const right = orderedPredicateValue(predicate.value);
             if (left === null || right === null) return false;
             if (predicate.operator === 'gt') return left > right;
             if (predicate.operator === 'gte') return left >= right;

@@ -1,3 +1,5 @@
+import { normalizeEvidenceQueryPlan } from './queryEvidencePolicy';
+import { captureQueryIdentity } from '../runtime/pi/queryEvidence';
 import type { ActiveDataQuery, AiAction, DataOperation, DeriveMetricByLabelOperation, StatisticalAnalysisRequest, ToolExecutionResult } from '../../../types';
 import {
     applyDataOperations,
@@ -39,8 +41,6 @@ import {
     validateDerivedMetricOperation,
 } from './derivedMetricValidation';
 import { buildDatasetVersionId } from '../../../utils/datasetId';
-import { resolveDatasetScopeBinding } from '../../data/datasetBundle';
-import { requiresCompleteAggregateEvidence } from '../derivedMetricIntent';
 
 const LOG_PREFIX = '[ExecutorAgent]';
 
@@ -353,6 +353,7 @@ export const executeDataQueryAction = async (
 ): Promise<ToolExecutionResult> => {
     const { getState, setState } = store;
     const state = getState();
+    const identity = captureQueryIdentity(store);
     const preferredDataset = getPreferredAnalysisDataset(state);
     if (action.type !== 'tool_call' || !action.args?.plan || !preferredDataset) {
         return {
@@ -435,17 +436,7 @@ export const executeDataQueryAction = async (
         }
     }
 
-    const needsCompleteDerivedEvidence = requiresCompleteAggregateEvidence(
-        activeTurn?.userMessage ?? '',
-    )
-        && (augmentedPlan.groupBy?.length ?? 0) > 0
-        && (augmentedPlan.aggregates?.length ?? 0) >= 1;
-    if (needsCompleteDerivedEvidence && (augmentedPlan.limit ?? 0) < 500) {
-        augmentedPlan = {
-            ...augmentedPlan,
-            limit: 500,
-        };
-    }
+    augmentedPlan = normalizeEvidenceQueryPlan(augmentedPlan, activeTurn?.userMessage ?? '');
 
     const aggregateAliasMismatch = validateAggregateAliasSemantics(augmentedPlan);
     if (aggregateAliasMismatch) {
@@ -471,6 +462,7 @@ export const executeDataQueryAction = async (
     }
 
     try {
+        identity.assertCurrent();
         throwIfAborted(abortSignal);
 
         // --- Raw SQL passthrough: when the AI provides valid SQL (e.g., UNPIVOT/UNION ALL) ---
@@ -482,16 +474,19 @@ export const executeDataQueryAction = async (
                 augmentedPlan.select ?? [],
                 {
                     limit: augmentedPlan.limit ?? 500,
+                    bypassCache: Boolean(store.executionContext),
                     abortSignal,
                     reportDiagnostics: createWorkerDiagnosticsTelemetryReporter(store),
                     columnRegistry,
                 },
             );
+            identity.assertCurrent();
             throwIfAborted(abortSignal);
 
             // Store as activeDataQuery so subsequent create_plan can bind to these columns
             const rawActiveDataQuery: ActiveDataQuery = {
-                ...resolveDatasetScopeBinding(getState().datasetBundle),
+                queryMode: 'raw_sql',
+                ...identity.fields,
                 explanation: normalizedPayload.explanation,
                 plan: augmentedPlan,
                 result: rawExecution.result,
@@ -527,12 +522,9 @@ export const executeDataQueryAction = async (
         if (normalizedPayload.unpivotParams) {
             console.log(`${LOG_PREFIX} Structured unpivot detected.`);
             const { executeUnifiedQuery } = await import('../../duckdb/unifiedQueryExecutor');
-            const { primeDuckDbDataset } = await import('../../duckdb/queryEngine');
-            const prime = await primeDuckDbDataset(preferredDataset, abortSignal);
-            if (prime.engine !== 'duckdb') {
-                throw new Error('UNPIVOT requires DuckDB to be available.');
-            }
-            const unpivotResult = await executeUnifiedQuery(
+            const { executeBoundDuckDbQuery } = await import('../../duckdb/queryEngine');
+            identity.assertCurrent();
+            const unpivotResult = await executeBoundDuckDbQuery(preferredDataset, prime => executeUnifiedQuery(
                 {
                     kind: 'unpivot',
                     purpose: normalizedPayload.explanation,
@@ -553,11 +545,13 @@ export const executeDataQueryAction = async (
                         recommendedTopN: null,
                     } as import('../../duckdb/directiveInjector').RuntimeDirectives : null,
                 },
-            );
+            ), abortSignal);
+            identity.assertCurrent();
             throwIfAborted(abortSignal);
 
             const unpivotActiveDataQuery: ActiveDataQuery = {
-                ...resolveDatasetScopeBinding(getState().datasetBundle),
+                queryMode: 'unpivot',
+                ...identity.fields,
                 explanation: normalizedPayload.explanation,
                 plan: augmentedPlan,
                 result: {
@@ -574,8 +568,8 @@ export const executeDataQueryAction = async (
                 source: 'execute_data_query',
                 engine: unpivotResult.engine,
                 sqlPreview: unpivotResult.sqlPreview,
-                tableName: prime.tableName!,
-                loadVersion: prime.loadVersion!,
+                tableName: 'session_clean_dataset',
+                loadVersion: null,
             };
             setState({ activeDataQuery: unpivotActiveDataQuery });
 
@@ -620,6 +614,7 @@ export const executeDataQueryAction = async (
                 shouldNormalize: buildColumnTypeGate(state.columnProfiles),
             },
         });
+        identity.assertCurrent();
         throwIfAborted(abortSignal);
 
         const semanticMismatch = validateGroupedQuerySemantics({
@@ -705,6 +700,7 @@ export const executeDataQueryAction = async (
         const errorMessage = error instanceof Error ? error.message : String(error);
         if (fallbackOperation && !preferredDataset.backing?.readOnly) {
             const fallbackPlan = createQueryPlanFromFilterOperation(fallbackOperation, { limit: action.args.plan.limit });
+            identity.assertCurrent();
             throwIfAborted(abortSignal);
             const fallbackResult = await executeDataQueryWithWorker(queryInput, fallbackPlan, {
                 allowedColumns: actualDataColumns,
@@ -715,12 +711,12 @@ export const executeDataQueryAction = async (
                 abortSignal,
                 reportDiagnostics: createWorkerDiagnosticsTelemetryReporter(store),
             });
+            identity.assertCurrent();
             throwIfAborted(abortSignal);
             const activeDataQuery: ActiveDataQuery = {
-                ...resolveDatasetScopeBinding(getState().datasetBundle),
-                sessionId: getState().sessionId,
-                turnId: activeTurn?.turnId,
-                stepId: activeStep?.stepId,
+                queryMode: 'fallback',
+                ...identity.fields,
+
                 explanation: `${action.args.explanation} (fallback filter)`,
                 plan: {
                     select: fallbackResult.selectedColumns,
@@ -738,6 +734,7 @@ export const executeDataQueryAction = async (
                 fallbackReason: errorMessage,
                 fallbackFilterOperation: fallbackOperation,
             };
+            identity.assertCurrent();
             throwIfAborted(abortSignal);
             setState({
                 activeDataQuery,
@@ -746,6 +743,7 @@ export const executeDataQueryAction = async (
                 aiFilterExplanation: null,
                 isSpreadsheetVisible: true,
             });
+            identity.assertCurrent();
             throwIfAborted(abortSignal);
             setState(prev => ({
                 chatHistory: [
@@ -775,6 +773,7 @@ export const executeDataQueryAction = async (
                     toolCategory: governance.descriptor?.category ?? 'data',
                 })),
             }));
+            identity.assertCurrent();
             throwIfAborted(abortSignal);
             getState().logAgentToolUsage({
                 tool: 'data.query',
@@ -787,6 +786,7 @@ export const executeDataQueryAction = async (
                     truncated: fallbackResult.truncated,
                 },
             });
+            identity.assertCurrent();
             throwIfAborted(abortSignal);
             getState().addProgress(`Read-only query fell back to compatibility filter: ${errorMessage}`, 'system');
             return {

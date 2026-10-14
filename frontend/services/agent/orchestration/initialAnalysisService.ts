@@ -1,3 +1,4 @@
+import { beginRun, finishRun, scopeRunStore, ownsRun } from '../../session/sessionOwnership';
 import type {
     CsvData,
     InitialAnalysisOutcome,
@@ -17,10 +18,10 @@ const toLegacyOutcome = (
     outcome: InitialAnalysisRunOutcome,
 ): InitialAnalysisOutcome => {
     if (outcome.status === 'completed') return { status: 'ready' };
-    if (outcome.status === 'cancelled') {
+    if (outcome.status === 'cancelled'||outcome.status==='blocked') {
         return {
             status: 'paused',
-            message: 'The analysis was stopped. The last stable dataset was kept.',
+            message: outcome.status==='blocked'?'Initial analysis is paused for exact candidate review or required output verification.': 'The analysis was stopped. The last stable dataset was kept.',
         };
     }
     if (outcome.status === 'degraded') {
@@ -54,6 +55,10 @@ export const handleInitialAnalysis = async (
         };
     }
 
+    const ownsLease = !store.executionContext;
+    const lease = store.executionContext?.lease ?? beginRun(store, 'initial_analysis', `pi-initial-${crypto.randomUUID()}`);
+    const originalStore = store;
+    store = scopeRunStore(store, lease);
     const state = store.getState();
     const datasetVersion = getCurrentAnalysisDatasetVersion(state)
         ?? buildDatasetVersionId(
@@ -77,9 +82,10 @@ export const handleInitialAnalysis = async (
                 provider: state.settings.provider,
                 modelId: resolveProviderModelId(state.settings),
             },
-        }, store);
+        }, store,undefined,{codingPreparation:{enabled:true,qualified:true}});
         return toLegacyOutcome(outcome);
     } finally {
-        await finalizeAndSaveRun(store);
+        try { if (ownsRun(originalStore, lease) && !lease.signal.aborted) await finalizeAndSaveRun(store); }
+        finally { if (ownsLease) finishRun(originalStore, lease); }
     }
 };

@@ -1,3 +1,5 @@
+import { preparePiExecutor, type PiExecutorPreparation, type InitialExecutorStage } from './piExecutorPreparation';
+import { beginRun, assertRunActive, awaitOwned, ownsRun, finishRun, scopeRunStore, rootStore } from '../../../session/sessionOwnership';
 import { presentGatewayError } from '../../../../utils/gatewayErrorMessage';
 import { getTranslation } from '../../../../utils/localization';
 import { Agent, type AgentTool, type StreamFn } from '@earendil-works/pi-agent-core';
@@ -5,24 +7,45 @@ import { Type } from '@earendil-works/pi-ai';
 import { resolveAnalysisCompletionGate } from '../../analysisCompletionGate';
 import { getCurrentAnalysisDatasetVersion } from '../../artifactProvenance';
 import { buildCardSemanticFingerprint } from '../../cardSemanticFingerprint';
+import { updateCleaningRun } from '../../cleaningRunState';
 import { emitAgentEvent, updateAgentTaskStatus } from '../../monitoring/agentMonitor';
 import { persistCurrentAppSessionSnapshot } from '../../../persistence/currentSessionPersistence';
 import { ensureCloudAiConsent } from '../../../privacy/cloudAiConsent';
 import { buildToolAvailabilityContext } from '../../tools/toolGovernance';
 import { createInitialAnalysisStageToolManifests } from '../../tools/manifests/initialAnalysisStageManifests';
-import type { ResearchPlan } from '../../../../types';
 import type { StoreApi } from '../../types';
 import { getPreferredAnalysisDataset } from '../../reportStructureState';
 import { requestDataResearchCancellation } from '../dataResearchCancellation';
-import { createInitialAnalysisStageExecutors } from './initialAnalysisStageExecutors';
+import { createInitialAnalysisStageExecutors, type InitialAnalysisStageServiceBindings } from './initialAnalysisStageExecutors';
 import { executeInitialAnalysisStageTool, type InitialAnalysisStageActionResult } from './initialAnalysisStageTools';
 import type { InitialAnalysisRunOutcome, InitialAnalysisRunRequest } from './initialAnalysisTypes';
 import { createPiCompactionTelemetry, createPiProviderContextTransform, createPiProviderStream, resolvePiModel, resolvePiThinkingLevel } from './piProvider';
 import { describeInitialAnalysisFailure, isInitialAnalysisProviderFailure } from './initialAnalysisFailure';
 import { runPiResearchPlanner } from './piResearchPlanner';
+import {createPiAppTools} from './piAppTools';
+import {pendingPiCandidateApproval,sealPiCandidateApproval,discardPiCandidateApproval} from './piCandidateApproval';
+import {formatPinnedSkills} from '../../skills/skillSnapshot';
+import type {ClarificationRequest} from '../../../../types';
+import {createChatMessage} from '../../../../utils/messageState';
+import {getStorageDatabase} from '../../../storageService';
+import {readCurrentCommit} from '../../../data/datasetRecoveryActions';
+import {verifyInitialCodingCommit,reconcileInitialCodingCheckpoint} from './piInitialCodingCheckpoint';
 
 const STAGES = createInitialAnalysisStageToolManifests();
-const CHECKPOINT_PREFIX = 'pi-initial-analysis-v1:';
+import { INITIAL_CHECKPOINT_PREFIX as CHECKPOINT_PREFIX, initialCheckpointKey as checkpointKey, hasPiInitialCheckpoint, readPiInitialCheckpoint as readCheckpoint, writePiInitialCheckpoint as writeCheckpoint, discardPiInitialCheckpoint as discardCheckpoint, captureCheckpointSource, captureCheckpointSourceBoundary, checkpointLineageSignature, validateCheckpointState, type PiInitialCheckpoint, type InitialStageReceipt } from './piInitialCheckpoint';
+import { getCsvDatasetVersion } from '../../../../utils/datasetId';
+export interface PiInitialAnalysisOptions {
+    plannerStream?: StreamFn;
+    stageServices?: Partial<InitialAnalysisStageServiceBindings>;
+    // Host route selection. Model arguments and saved references cannot enable execution.
+    codingPreparation?: {
+        enabled: true;
+        qualified?: boolean;
+        continuation?: import('./piCodingTask').PiTaskContinuation;
+        guest?: Parameters<typeof preparePiExecutor>[1]['guest'];
+        prepareStage?: (store: StoreApi, stage: InitialExecutorStage) => Promise<void>;
+    };
+}
 const INITIAL_ANALYSIS_BUDGET_MS = 240_000;
 // Pi may skip these when the earlier stages show the data needs no cleaning. Every other stage is
 // required, so the host never lets a run reach evidence without a prepared, validated dataset.
@@ -45,56 +68,6 @@ const readCurrentRowCount = (store: StoreApi): number | null => {
     const dataset = getPreferredAnalysisDataset(store.getState());
     const count = dataset?.backing?.rowCount ?? dataset?.data?.length;
     return typeof count === 'number' && Number.isFinite(count) ? count : null;
-};
-
-interface PiInitialCheckpoint {
-    schemaVersion: 1;
-    sessionId: string;
-    datasetVersion: string;
-    researchGoal: string;
-    nextStageIndex: number;
-    pendingStageIndex: number | null;
-    committedTransformationIds: string[];
-    cardFingerprints: string[];
-    warnings: InitialAnalysisRunOutcome['warnings'];
-    // Pi's research plan, kept so a resumed run does not lose it. Optional: older checkpoints lack it.
-    researchPlan?: ResearchPlan | null;
-}
-
-const checkpointKey = (sessionId: string) => `${CHECKPOINT_PREFIX}${sessionId}`;
-
-const readCheckpoint = (sessionId: string): PiInitialCheckpoint | null => {
-    try {
-        const raw = localStorage.getItem(checkpointKey(sessionId));
-        if (!raw) return null;
-        const value: unknown = JSON.parse(raw);
-        if (!value || typeof value !== 'object') return null;
-        const record = value as PiInitialCheckpoint;
-        if (record.schemaVersion !== 1 || record.sessionId !== sessionId
-            || !Number.isInteger(record.nextStageIndex)
-            || record.nextStageIndex < 0 || record.nextStageIndex > STAGES.length) return null;
-        return record;
-    } catch {
-        return null;
-    }
-};
-
-const writeCheckpoint = (checkpoint: PiInitialCheckpoint): void => {
-    try { localStorage.setItem(checkpointKey(checkpoint.sessionId), JSON.stringify(checkpoint)); }
-    catch { /* Recovery is unavailable when browser storage is full. */ }
-};
-
-const discardCheckpoint = (sessionId: string): void => {
-    try { localStorage.removeItem(checkpointKey(sessionId)); } catch { /* ignore */ }
-};
-
-const hasCommittedState = (checkpoint: PiInitialCheckpoint, store: StoreApi): boolean => {
-    const state = store.getState();
-    const transformations = new Set((state.dataPreparationPlan?.operations ?? []).map(operation => operation.id));
-    const cardFingerprints = new Set(state.analysisCards.map(card =>
-        buildCardSemanticFingerprint(card.plan, card.provenance?.datasetVersion)).filter(Boolean));
-    return checkpoint.committedTransformationIds.every(id => transformations.has(id))
-        && checkpoint.cardFingerprints.every(value => cardFingerprints.has(value));
 };
 
 /** The stage Pi must run next and the optional stages it may skip to get there. */
@@ -134,42 +107,71 @@ const run = async (
     store: StoreApi,
     checkpoint: PiInitialCheckpoint | null,
     streamOverride?: StreamFn,
-    options: { plannerStream?: StreamFn } = {},
+    options: PiInitialAnalysisOptions = {},
 ): Promise<InitialAnalysisRunOutcome> => {
     // A stream override replaces the model for the whole run (tests), so the planner
     // only runs when the caller also supplies its own planner stream.
     const plannerEnabled = !streamOverride || Boolean(options.plannerStream);
-    if (activeRuns.has(request.appSessionId)) throw new Error('Initial analysis is already running.');
-    const controller = new AbortController();
+    const providerStream = streamOverride ?? createPiProviderStream(store.getState().settings);
+    const model = resolvePiModel(store.getState().settings);
+    const runtimeRunId = store.executionContext?.lease.runId ?? createIdentity('pi-initial');
+    const lease = store.executionContext?.lease ?? beginRun(store, 'initial_analysis', runtimeRunId);
+    const ownsLease = !store.executionContext;
+    const originalStore = rootStore(store);
+    const attachedTask = store.piTask;
+    store = scopeRunStore(store, lease);
+    attachedTask?.attach(store);
+    const controller = lease.controller;
     const forwardAbort = () => controller.abort(request.signal?.reason);
     request.signal?.addEventListener('abort', forwardAbort, { once: true });
     if (request.signal?.aborted) forwardAbort();
-    const runtimeRunId = createIdentity('pi-initial');
     const traceId = createIdentity('pi-trace');
     let nextStageIndex = checkpoint?.nextStageIndex ?? 0;
     const results: InitialAnalysisStageActionResult[] = [];
     const warnings: InitialAnalysisRunOutcome['warnings'] = [...(checkpoint?.warnings ?? [])];
+    const checkpointSource = checkpoint?.schemaVersion === 2 ? checkpoint.source : captureCheckpointSource(store.getState());
+    const sourceBoundary = checkpoint?.schemaVersion === 2 ? checkpoint.sourceBoundary : captureCheckpointSourceBoundary(store.getState());
+    const stageReceipts: InitialStageReceipt[] = checkpoint?.schemaVersion === 2 ? [...checkpoint.stageReceipts] : [];
+    const receiptStartIndex = checkpoint?.schemaVersion === 2 ? checkpoint.receiptStartIndex : checkpoint?.nextStageIndex ?? 0;
+    const initialDatasetVersion = checkpoint?.schemaVersion === 2 ? checkpoint.initialDatasetVersion : getCurrentAnalysisDatasetVersion(store.getState()) ?? request.datasetVersion;
     // A fresh run must not reuse a plan left by an earlier one; a resumed run brings its own back.
-    if (!checkpoint) store.setState({ initialAnalysisPlan: null });
+    if (!checkpoint) store.setState({ initialAnalysisPlan: null, initialAnalysisRecovery: null });
     else if (checkpoint.researchPlan && !store.getState().initialAnalysisPlan) {
         store.setState({ initialAnalysisPlan: checkpoint.researchPlan });
     }
-    const executors = createInitialAnalysisStageExecutors();
-    let recoveryEnabled = !store.getState().csvData?.backing?.ephemeral;
+    const executors = createInitialAnalysisStageExecutors(options.stageServices);
+    let executorPreparation: PiExecutorPreparation | undefined;
+    const qualified=options.codingPreparation?.qualified===true;
+    let pendingApproval:ClarificationRequest|undefined;
+    let approvalSealed=false;
+    let recoveryEnabled = Boolean(checkpointSource) && !store.getState().csvData?.backing?.ephemeral;
     let providerTurns = 0;
     let invalidStageRequests = 0;
     const timer = setTimeout(() => controller.abort(new Error('The Pi initial-analysis time budget expired.')),
-        INITIAL_ANALYSIS_BUDGET_MS);
+        Math.max(1,INITIAL_ANALYSIS_BUDGET_MS-(checkpoint?.coding?.budget.used.activeMs??0)));
     const persistCheckpoint = async (pendingStageIndex: number | null) => {
+        assertRunActive(store, lease);
         if (!recoveryEnabled) return;
+        const savedState = store.getState();
         if (pendingStageIndex === null) {
-            recoveryEnabled = await persistCurrentAppSessionSnapshot(store.getState());
+            recoveryEnabled = await persistCurrentAppSessionSnapshot(savedState, { store, scope: lease.scope });
+            assertRunActive(store, lease);
             if (!recoveryEnabled) return;
         }
+        assertRunActive(store, lease);
         writeCheckpoint({
-            schemaVersion: 1,
+            schemaVersion: 2,
             sessionId: request.appSessionId,
-            datasetVersion: request.datasetVersion,
+            datasetVersion: getCurrentAnalysisDatasetVersion(savedState) ?? request.datasetVersion,
+            preparedDatasetVersion: savedState.csvData ? getCsvDatasetVersion(savedState.csvData) : request.datasetVersion,
+            initialDatasetVersion,
+            source: checkpointSource!,
+            sourceBoundary,
+            lineageSignature: checkpointLineageSignature(savedState),
+            stageReceipts, receiptStartIndex,
+            ...(executorPreparation ? {executorPreparation:executorPreparation.reference()} : {}),
+            ...(qualified&&executorPreparation?{coding:{version:1 as const,budget:structuredClone(executorPreparation.task.snapshot.budget),
+                ...(savedState.datasetBundle?.acceptedCommit?{commit:structuredClone(savedState.datasetBundle.acceptedCommit)}:{})}}:{}),
             researchGoal: request.researchGoal,
             nextStageIndex,
             pendingStageIndex,
@@ -177,12 +179,17 @@ const run = async (
                 ...(checkpoint?.committedTransformationIds ?? []),
                 ...results.flatMap(result => result.transformationIds),
             ])],
-            cardFingerprints: store.getState().analysisCards
+            cardFingerprints: savedState.analysisCards
                 .map(card => buildCardSemanticFingerprint(card.plan, card.provenance?.datasetVersion))
                 .filter((value): value is string => Boolean(value)),
             warnings,
-            researchPlan: store.getState().initialAnalysisPlan ?? null,
+            researchPlan: savedState.initialAnalysisPlan ?? null,
         });
+        if(qualified){
+            const durable=readCheckpoint(request.appSessionId);
+            if(!durable||durable.pendingStageIndex!==pendingStageIndex||durable.nextStageIndex!==nextStageIndex
+                ||durable.executorPreparation?.runId!==lease.runId)throw new Error('initial_checkpoint_unavailable');
+        }
     };
     const tool: AgentTool = {
         name: 'run_next_analysis_stage',
@@ -195,6 +202,8 @@ const run = async (
         executionMode: 'sequential',
         replay: 'never',
         execute: async (_id, args, signal) => {
+            assertRunActive(store, lease);
+            if(pendingApproval)throw new Error('initial_approval_pending');
             if (nextStageIndex >= STAGES.length) {
                 return { details: undefined, content: [{ type: 'text', text: 'All stages are complete.' }], terminate: true };
             }
@@ -211,6 +220,7 @@ const run = async (
                         && requestedName === choices.required)
                     || (requestedIndex > nextStageIndex && choices.skippable.includes(requestedName));
                 if (allowed) {
+                    if(qualified&&executorPreparation?.task.coding&&requestedIndex>nextStageIndex&&!checkpoint?.coding?.commit)throw new Error('initial_cleaning_requires_exact_candidate_approval');
                     invalidStageRequests = 0;
                     if (requestedIndex > nextStageIndex) {
                         emitAgentEvent(store, {
@@ -234,8 +244,12 @@ const run = async (
             }
             const stageIndex = nextStageIndex;
             const stage = STAGES[stageIndex];
+            if(qualified&&stageIndex===3)throw new Error('initial_cleaning_requires_exact_candidate_approval');
+            if(qualified&&executorPreparation?.task.coding&&stageIndex>=4&&!checkpoint?.coding?.commit)throw new Error('initial_cleaning_requires_exact_candidate_approval');
+            if(qualified)await executorPreparation!.task.beforeTool('run_next_analysis_stage',{},_id);
             await persistCheckpoint(stageIndex);
             const state = store.getState();
+            const inputVersion = getCurrentAnalysisDatasetVersion(state) ?? request.datasetVersion;
             updateAgentTaskStatus(store, {
                 status: 'acting',
                 // User-facing copy; the technical stage description stays in the tool manifest.
@@ -246,24 +260,36 @@ const run = async (
                 currentStep: stageIndex + 1,
                 rowCount: readCurrentRowCount(store),
             });
+            const stageContext: InitialExecutorStage = {stageIndex,toolName:stage.name,phase:stage.initialAnalysis.phase,
+                nextStageIndex,pendingStageIndex:stageIndex};
+            const stageStore = executorPreparation ? executorPreparation.stage(stageContext,_id)
+                : Object.assign(scopeRunStore(store,lease), {executionContext:{lease,stepId:`stage-${stageIndex}-${_id}`,toolCallId:_id}});
+            if (executorPreparation && options.codingPreparation?.prepareStage) {
+                await awaitOwned(options.codingPreparation.prepareStage(stageStore,stageContext),store,lease);
+            }
             const result = await executeInitialAnalysisStageTool({
                 toolName: stage.name,
                 phase: stage.initialAnalysis.phase,
                 args: {
                     datasetId: request.datasetId,
-                    datasetVersion: getCurrentAnalysisDatasetVersion(state) ?? request.datasetVersion,
+                    datasetVersion: inputVersion,
                     runtimeRunId,
                     traceId,
                     phaseAttempt: 1,
-                    idempotencyKey: `${request.appSessionId}:${request.datasetVersion}:${stage.name}:1`,
+                    idempotencyKey: `${request.appSessionId}:${inputVersion}:${stage.name}:1`,
                 },
                 availability: buildToolAvailabilityContext(state, {
                     toolStage: stage.stageAvailability?.[0],
                 }),
-                context: { request, store, signal: signal ?? controller.signal },
+                context: { request, store: stageStore, signal: signal ?? controller.signal },
                 executors,
             });
+            assertRunActive(store, lease);
             results.push(result);
+            stageReceipts.push({ stageIndex, toolName: stage.name, inputVersion,
+                outputVersion: getCurrentAnalysisDatasetVersion(store.getState()) ?? inputVersion,
+                decision: result.decision, transformationIds: result.transformationIds, cardIds: result.cardIds,
+                ...(executorPreparation ? {execution:{...executorPreparation.reference(),stepId:stageStore.executionContext!.stepId!,toolCallId:_id}} : {}) });
             // Pi decides what to investigate once the data is ready. This never fails the run:
             // without a usable plan the existing question planner is used.
             if (plannerEnabled && stage.name === 'analysis.researchQuestions' && result.decision === 'pass') {
@@ -278,8 +304,10 @@ const run = async (
             warnings.push(...result.warningCodes.map(code => ({
                 code, message: result.summary, phase: result.phase,
             })));
-            nextStageIndex += 1;
-            await persistCheckpoint(null);
+            const failedPreparedStage = executorPreparation && result.decision === 'fail';
+            if (!failedPreparedStage) nextStageIndex += 1;
+            // A failed qualified stage is not a completed checkpoint boundary or a replay permission.
+            await persistCheckpoint(failedPreparedStage ? stageIndex : null);
             emitAgentEvent(store, {
                 runId: runtimeRunId,
                 phase: 'execution',
@@ -315,22 +343,34 @@ const run = async (
                 `You may skip ${[...OPTIONAL_STAGE_NAMES].join(' and ')} (pass stage = the stage you want next, and a short reason) only when the facts returned after dataset.detectNoiseRows show clean data: no residual noise candidates and no data quality notes. When unsure, do not skip. Every other stage is required.`,
                 'Use no raw CSV rows, credentials, web access, or undeclared actions.',
                 'Do not answer before the host says every stage is complete.',
+                ...(qualified?[
+                    'After inspection, shared app tools are available only during the optional cleaning window. Inspect complete source/table, infer meaning with candidate_infer_meaning without asking for preliminary semantic confirmation, then write your own revisioned JavaScript program, code_run, candidate_stage and candidate_validate.',
+                    'Request exact candidate_request_approval for publication. Never call dataset.applyTransform as a substitute. Approval releases this run; a fresh initial lease resumes mandatory verification, current-version evidence and report stages. If inspection establishes no cleaning is needed, skip both optional cleaning stages before any coding tool.',
+                    'Preserve original source, legitimate zero/negative facts and names. Unsupported or unverified meaning must block. Code output and validation alone are not answer evidence. Provider text never completes the mandatory output contract.',
+                ]:[]),
             ].join('\n'),
-            model: resolvePiModel(store.getState().settings),
+            model,
             thinkingLevel: resolvePiThinkingLevel(store.getState().settings),
             tools: [tool],
         },
-        streamFn: streamOverride ?? createPiProviderStream(store.getState().settings),
+        streamFn: (...args) => { executorPreparation?.task.providerTurn(); return providerStream(...args); },
         transformContext: createPiProviderContextTransform(store.getState().settings, createPiCompactionTelemetry(store)),
         toolExecution: 'sequential',
+        afterToolCall:async context=>{
+            if(qualified&&context.isError&&executorPreparation&&ownsRun(store,lease)&&!lease.signal.aborted){
+                await executorPreparation.task.toolFailure(context.toolCall.name,context.args,context.result.content.filter(p=>p.type==='text').map(p=>p.text).join('').slice(0,2000),context.toolCall.id);
+                return {terminate:Boolean(executorPreparation.task.blockedReason)};
+            }
+        },
         finishTurn: () => {
             providerTurns += 1;
-            if (providerTurns > STAGES.length + 3) {
+            if (!qualified && providerTurns > STAGES.length + 3) {
                 controller.abort(new Error('Pi did not complete the governed stage sequence.'));
                 agent.abort();
                 return { action: 'end' };
             }
             return nextStageIndex >= STAGES.length
+                || Boolean(pendingApproval)
                 || results.at(-1)?.decision === 'fail'
                 ? { action: 'end' } : { action: 'continue' };
         },
@@ -347,46 +387,136 @@ const run = async (
     let errorMessage = '';
     let providerFailure = false;
     try {
+        if (options.codingPreparation?.enabled === true) executorPreparation = await preparePiExecutor(store, {entryPoint:'initial_analysis',
+            goal:request.researchGoal,guest:options.codingPreparation.guest,qualified,continuation:options.codingPreparation.continuation,
+            recoveryBudget:options.codingPreparation.continuation?undefined:checkpoint?.coding?.budget});
+        if(qualified){
+            executorPreparation!.task.requireOutputs([{id:'initial-evidence',kind:'card',required:true},{id:'initial-report',kind:'answer',required:true}]);
+            // Pi 0.87 derives its prompt from system messages; the prompt view is read-only.
+            agent.state.messages=agent.state.messages.map(message=>message.role==='system'
+                ? {...message,sections:{...message.sections,skills:formatPinnedSkills(executorPreparation!.task.skills,store)}} : message);
+            const appTools=createPiAppTools(store,request.datasetVersion,{maxToolCalls:40,includeSkills:true}).filter(t=>t.name!=='data_mutate'&&t.name!=='conversation_request_clarification');
+            agent.state.tools=[tool,...appTools.map(t=>({...t,execute:async(...args:Parameters<typeof t.execute>)=>{
+                assertRunActive(store,lease);
+                if(pendingApproval)throw new Error('initial_approval_pending');
+                if(t.name!=='read_skill'&&nextStageIndex!==2&&nextStageIndex!==3)throw new Error('initial_coding_phase_unavailable');
+                // Loading pinned guidance cannot execute a stage. Preserve an existing uncertain
+                // boundary without manufacturing one when no stage/coding tool has started.
+                const pending=t.name==='read_skill'?readCheckpoint(request.appSessionId)?.pendingStageIndex??null:nextStageIndex;
+                await persistCheckpoint(pending);
+                try{
+                    const result=await t.execute(...args);assertRunActive(store,lease);
+                    pendingApproval=pendingPiCandidateApproval(store);
+                    return {...result,...(pendingApproval?{terminate:true}:{})};
+                }finally{if(ownsRun(store,lease)&&!lease.signal.aborted)await persistCheckpoint(pending);}
+            }}))];
+        }
         if (!streamOverride) await ensureCloudAiConsent(store.getState().settings.provider);
         await persistCheckpoint(null);
-        await agent.prompt('Start the next governed stage. Continue until all stages are complete.');
+        await awaitOwned(agent.prompt('Start the next governed stage. Continue until all stages are complete.'), store, lease);
         if (controller.signal.aborted) throw controller.signal.reason;
         if (agent.state.errorMessage) {
-            providerFailure = true;
+            providerFailure = !executorPreparation?.task.blockedReason;
             throw new Error(agent.state.errorMessage);
         }
-        status = nextStageIndex === STAGES.length && results.every(result => result.decision === 'pass')
-            && warnings.length === 0 ? 'completed' : 'degraded';
+        if(pendingApproval&&qualified){
+            const suspended=executorPreparation!.task.suspend(pendingApproval);
+            const captured=readCheckpoint(request.appSessionId)!;
+            if(!captured||captured.schemaVersion!==2)throw new Error('initial_checkpoint_unavailable');
+            sealPiCandidateApproval(store,suspended,{message:request.researchGoal},agent.state.messages,
+                executorPreparation!.task.snapshot.scope.answer,streamOverride,async(target,marker,resumeStream)=>{
+                    assertRunActive(target,target.executionContext!.lease);
+                    if(marker.audit.taskId!==captured.executorPreparation?.taskId||marker.bundle.acceptedCommit?.commitId!==target.getState().datasetBundle?.acceptedCommit?.commitId)throw new Error('initial_commit_mismatch');
+                    const next:PiInitialCheckpoint={...captured,nextStageIndex:4,pendingStageIndex:null,
+                        datasetVersion:marker.bundle.datasetVersion,preparedDatasetVersion:marker.bundle.datasetVersion,
+                        lineageSignature:checkpointLineageSignature(target.getState()),
+                        committedTransformationIds:[...captured.committedTransformationIds,marker.commitId],
+                        stageReceipts:[...captured.stageReceipts,{stageIndex:3,toolName:'dataset.applyTransform',
+                            inputVersion:captured.datasetVersion,outputVersion:marker.bundle.datasetVersion,decision:'pass',transformationIds:[marker.commitId],cardIds:[]}],
+                        coding:{version:1,budget:structuredClone(target.piTask!.snapshot.budget),commit:marker.bundle.acceptedCommit!}};
+                    writeCheckpoint(next);
+                    return run({...request,signal:undefined,datasetVersion:marker.bundle.datasetVersion},target,next,resumeStream,
+                        {...options,codingPreparation:{...options.codingPreparation!,continuation:undefined}});
+                });
+            pendingApproval=suspended;
+            await persistCheckpoint(nextStageIndex);
+            approvalSealed=true;
+            status='blocked';
+        }else if (executorPreparation && results.some(result => result.decision === 'fail')) {
+            status = 'failed';
+            errorMessage = results.find(result => result.decision === 'fail')!.summary;
+        } else {
+            status = nextStageIndex === STAGES.length && results.every(result => result.decision === 'pass')
+                && warnings.length === 0 ? 'completed' : 'degraded';
+        }
+        if(qualified&&!pendingApproval&&status!=='failed'){
+            const state=store.getState(),version=getCurrentAnalysisDatasetVersion(state);
+            const emitted=new Set(stageReceipts.filter(r=>r.toolName==='analysis.executeEvidence').flatMap(r=>r.cardIds));
+            const trusted=resolveAnalysisCompletionGate({cards:state.analysisCards.filter(c=>emitted.has(c.id)),currentDatasetVersion:version,columnProfiles:state.columnProfiles}).trustedBusinessCardIds;
+            const report=stageReceipts.some(r=>r.toolName==='analysis.finalizeArtifacts'&&r.decision==='pass')
+                &&Boolean(state.finalSummary||state.aiCoreAnalysisSummary)
+                &&(state.finalSummaryProvenance?.datasetVersion===version||state.aiCoreAnalysisSummaryProvenance?.datasetVersion===version);
+            if(nextStageIndex!==STAGES.length||!trusted.length||!report){status='blocked';errorMessage='initial_required_outputs_unfulfilled';}
+        }
     } catch (error) {
         errorMessage = sanitizeError(error);
         providerFailure ||= isInitialAnalysisProviderFailure(error);
-        status = controller.signal.aborted && (request.signal?.aborted || activeEntry.cancelledByUser) ? 'cancelled'
-            : results.length > 0 ? 'degraded' : 'failed';
+        status = !ownsRun(store, lease) || (controller.signal.aborted && (request.signal?.aborted || activeEntry.cancelledByUser || (controller.signal.reason as Error)?.name === 'AbortError')) ? 'cancelled'
+            : qualified && !providerFailure && (executorPreparation?.task.blockedReason || /^(tool_no_progress|task_budget_exhausted|initial_[a-z_]+)/.test(errorMessage)) ? 'blocked'
+                : !executorPreparation && results.length > 0 ? 'degraded' : 'failed';
         if (status === 'degraded') warnings.push({
             code: 'pi_initial_analysis_incomplete',
             message: errorMessage,
             phase: STAGES[nextStageIndex]?.initialAnalysis.phase,
         });
     } finally {
+        if(qualified&&!pendingApproval&&ownsRun(store,lease)&&!lease.signal.aborted&&(status==='failed'||status==='blocked')){
+            // Retain consumed provider/tool counters without converting an uncertain stage into a stable boundary.
+            try {await persistCheckpoint(readCheckpoint(request.appSessionId)?.pendingStageIndex ?? null);}
+            catch { /* The original failure and last durable checkpoint remain the recovery boundary. */ }
+        }
+        if(!approvalSealed){
+            discardPiCandidateApproval(store);
+            if(pendingApproval&&ownsRun(store,lease)&&!lease.signal.aborted){
+                store.setState({pendingClarification:null});
+                if(executorPreparation?.task.snapshot.status==='awaiting_approval')executorPreparation.task.rejectApproval();
+            }
+            pendingApproval=undefined;
+        }
+        executorPreparation?.task.close(status === 'cancelled' ? 'cancelled' : status==='blocked'?'blocked'
+            : results.some(result => result.decision === 'fail') ? 'blocked' : status === 'failed' ? 'failed' : 'completed');
         clearTimeout(timer);
         controller.signal.removeEventListener('abort', abortAgent);
         request.signal?.removeEventListener('abort', forwardAbort);
-        activeRuns.delete(request.appSessionId);
-        if (status === 'completed' || status === 'degraded' || status === 'cancelled') {
+        if (activeRuns.get(request.appSessionId) === activeEntry) activeRuns.delete(request.appSessionId);
+        if (ownsRun(store, lease) && (status === 'completed' || status === 'degraded' || status === 'cancelled')) {
             discardCheckpoint(request.appSessionId);
         }
     }
+    if (!ownsRun(store, lease)) return { status: 'cancelled', currentDatasetVersion: request.datasetVersion,
+        finalDatasetVersion: request.datasetVersion, trustedCardIds: [], warnings, runtimeRunId, traceId };
+    // Cancellation may finalize its own session, but ordinary cancelled writes remain fenced.
+    store = originalStore;
     const finalDatasetVersion = getCurrentAnalysisDatasetVersion(store.getState()) ?? request.datasetVersion;
     const trustedCardIds = resolveAnalysisCompletionGate({
-        cards: store.getState().analysisCards,
+        cards: qualified?store.getState().analysisCards.filter(c=>stageReceipts.some(r=>r.toolName==='analysis.executeEvidence'&&r.cardIds.includes(c.id))):store.getState().analysisCards,
         currentDatasetVersion: finalDatasetVersion,
         columnProfiles: store.getState().columnProfiles,
     }).trustedBusinessCardIds;
-    const noUsableResults = status !== 'cancelled' && trustedCardIds.length === 0;
+    const noUsableResults = status !== 'cancelled' && status!=='blocked' && trustedCardIds.length === 0;
+    const cleaningRun = store.getState().cleaningRun;
+    const prepared = stageReceipts.some(receipt => receipt.toolName === 'dataset.validatePreparedData' && receipt.decision === 'pass');
     store.setState({
         isBusy: false,
         isGeneratingReport: false,
-        initialAnalysisStatus: status === 'cancelled' ? 'paused'
+        // Shared coding bypasses the legacy cleaner's finalizer. Release its UI
+        // projection under this lease even when later report admission blocks.
+        ...(qualified && cleaningRun ? { cleaningRun: updateCleaningRun(cleaningRun, {
+            status: pendingApproval || status === 'cancelled' ? 'paused' : prepared ? 'completed' : status === 'failed' ? 'failed' : 'paused',
+            shouldAutoResume: false,
+        }) } : {}),
+        initialAnalysisRecovery: null,
+        initialAnalysisStatus: status === 'cancelled'||status==='blocked' ? 'paused'
             : noUsableResults || status === 'failed' ? 'error'
                 : status === 'completed' ? 'ready' : 'degraded',
         initialAnalysisFailureKind: providerFailure ? 'provider'
@@ -398,7 +528,7 @@ const run = async (
     }
     updateAgentTaskStatus(store, {
         status: status === 'failed' || noUsableResults ? 'error' : 'done',
-        title: noUsableResults ? 'Unable to reliably analyze'
+        title: pendingApproval?'Dataset candidate ready for review':status==='blocked'?'Analysis blocked':noUsableResults ? 'Unable to reliably analyze'
             : status === 'completed' ? 'Analysis ready' : 'Analysis ready with limitations',
         subtitle: noUsableResults || status === 'failed'
             ? describeInitialAnalysisFailure({
@@ -413,6 +543,13 @@ const run = async (
         totalSteps: STAGES.length,
         currentStep: Math.min(nextStageIndex, STAGES.length),
     });
+    if (ownsLease || pendingApproval) finishRun(store, lease);
+    if (pendingApproval) {
+        // Expose the review only after releasing the old lease, including when the caller acquired it.
+        store.setState(prev => ({pendingClarification: pendingApproval!, activeAgentTask: executorPreparation!.task.snapshot, chatHistory: [...prev.chatHistory,
+            createChatMessage({sender: 'ai', type: 'ai_clarification', text: pendingApproval!.question,
+                clarificationRequest: pendingApproval, timestamp: new Date()})]}));
+    }
     return {
         status,
         currentDatasetVersion: request.datasetVersion,
@@ -421,7 +558,7 @@ const run = async (
         warnings,
         runtimeRunId,
         traceId,
-        ...(status === 'failed' ? { error: {
+        ...(status === 'failed'||status==='blocked'&&!pendingApproval ? { error: {
             code: 'pi_initial_analysis_failed',
             message: errorMessage || 'Pi did not complete the governed analysis.',
             retryable: true,
@@ -433,31 +570,65 @@ export const runPiInitialAnalysis = (
     request: InitialAnalysisRunRequest,
     store: StoreApi,
     streamOverride?: StreamFn,
-    options?: { plannerStream?: StreamFn },
+    options?: PiInitialAnalysisOptions,
 ): Promise<InitialAnalysisRunOutcome> => {
     discardCheckpoint(request.appSessionId);
     return run(request, store, null, streamOverride, options);
 };
 
-export const recoverPiInitialAnalysisIfNeeded = async (store: StoreApi): Promise<InitialAnalysisRunOutcome | null> => {
+export const recoverPiInitialAnalysisIfNeeded = async (store: StoreApi, streamOverride?: StreamFn, options:PiInitialAnalysisOptions = {}): Promise<InitialAnalysisRunOutcome | null> => {
     const state = store.getState();
-    const checkpoint = readCheckpoint(state.sessionId);
-    if (!checkpoint) return null;
-    if (checkpoint.datasetVersion !== getCurrentAnalysisDatasetVersion(state)
-        || checkpoint.researchGoal !== state.confirmedAnalysisGoal
-        || checkpoint.pendingStageIndex !== null
-        || !hasCommittedState(checkpoint, store)) {
-        discardCheckpoint(state.sessionId);
-        state.addProgress?.('The interrupted Pi analysis cannot resume safely. Review the last stable dataset and retry.', 'warning');
+    let checkpoint = readCheckpoint(state.sessionId, STAGES.length);
+    if (!checkpoint) {
+        if (hasPiInitialCheckpoint(state.sessionId)) store.setState({ initialAnalysisRecovery: {
+            status: 'blocked', reason: 'checkpoint_invalid', fileName: state.datasetBundle?.source.fileName ?? '', nextStageIndex: 0,
+        } });
         return null;
     }
+    if (state.activeExecution && !store.executionContext) return null;
+    if(checkpoint.schemaVersion===2&&checkpoint.coding&&(checkpoint.coding.commit||[2,3].includes(checkpoint.pendingStageIndex??-1))){
+        const lease=store.executionContext?.lease??beginRun(store,'initial_analysis',`initial-journal-${crypto.randomUUID()}`);
+        const owned=scopeRunStore(store,lease),owns=!store.executionContext;
+        try{
+            const db=await awaitOwned(getStorageDatabase(),store,lease),marker=await awaitOwned(readCurrentCommit(db,owned),store,lease);
+            await awaitOwned(verifyInitialCodingCommit(checkpoint,marker),store,lease);
+            if(!state.csvData||state.datasetBundle?.acceptedCommit?.commitId!==marker.commitId||state.datasetCommitBindingStatus!=='ready'){
+                owned.setState({datasetBundle:structuredClone(marker.bundle),csvData:null,canonicalCsvData:null,activeDataQuery:null,datasetCommitBindingStatus:'awaiting_source',
+                    initialAnalysisStatus:'paused',initialAnalysisRecovery:{status:'awaiting_source',reason:null,nextStageIndex:checkpoint.nextStageIndex,fileName:checkpoint.source.fileName}});
+                return null;
+            }
+            checkpoint=await awaitOwned(reconcileInitialCodingCheckpoint(checkpoint,owned.getState(),marker),store,lease);
+            writeCheckpoint(checkpoint);
+        }catch(error){
+            if(ownsRun(store,lease)&&!lease.signal.aborted)owned.setState({isBusy:false,initialAnalysisStatus:'paused',initialAnalysisRecovery:{status:'blocked',
+                reason:error instanceof Error?error.message:'initial_journal_unavailable',nextStageIndex:checkpoint.nextStageIndex,fileName:checkpoint.source.fileName}});
+            return null;
+        }finally{if(owns)finishRun(store,lease);}
+    }
+    const hasRows = Boolean(state.csvData);
+    const reason = validateCheckpointState(checkpoint, state, STAGES, OPTIONAL_STAGE_NAMES, hasRows);
+    if (reason) {
+        // Preserve v2 metadata for inspection and retry with the correct source. Never replay a pending mutation.
+        if (checkpoint.schemaVersion === 1 && hasRows) discardCheckpoint(state.sessionId);
+        store.setState({ initialAnalysisRecovery: { status: 'blocked', reason, nextStageIndex: checkpoint.nextStageIndex,
+            fileName: checkpoint.schemaVersion === 2 ? checkpoint.source.fileName : state.datasetBundle?.source.fileName ?? '' } });
+        state.addProgress?.(`The interrupted Pi analysis cannot resume safely (${reason}). Re-select the original source or start a new session.`, 'warning');
+        return null;
+    }
+    if (!hasRows) {
+        store.setState({ initialAnalysisStatus: 'paused', initialAnalysisRecovery: { status: 'awaiting_source', reason: null,
+            nextStageIndex: checkpoint.nextStageIndex, fileName: checkpoint.schemaVersion === 2 ? checkpoint.source.fileName : '' } });
+        return null;
+    }
+    store.setState({ initialAnalysisRecovery: { status: 'recovering', reason: null, nextStageIndex: checkpoint.nextStageIndex,
+        fileName: state.csvData?.fileName ?? '' } });
     return run({
         appSessionId: state.sessionId,
         datasetId: state.currentDatasetId ?? checkpoint.datasetVersion,
         datasetVersion: checkpoint.datasetVersion,
         researchGoal: checkpoint.researchGoal,
         provider: { provider: state.settings.provider, modelId: state.settings.complexModel },
-    }, store, checkpoint);
+    }, store, checkpoint, streamOverride,{...options,...(checkpoint.coding?{codingPreparation:{enabled:true as const,qualified:true}}:{})});
 };
 
 export const discardPiInitialAnalysisCheckpoint = discardCheckpoint;

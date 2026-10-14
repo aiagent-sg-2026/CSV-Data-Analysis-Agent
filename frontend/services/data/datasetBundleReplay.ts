@@ -55,6 +55,11 @@ export const replayVerifiedTransformationProgram = (input: {
         };
     }
     const pendingSteps = input.program.steps.filter(step => !existingIds.has(step.idempotencyKey));
+    const expectedInput = pendingSteps.length === 0 ? input.program.outputVersion : input.program.inputVersion;
+    if (getCsvDatasetVersion(input.currentData) !== expectedInput) {
+        return { status: 'blocked', data: cloneData(input.currentData), committedTransformationIds: [...existingIds],
+            reasonCodes: ['transformation_input_version_mismatch'] };
+    }
     if (pendingSteps.some(step => step.kind !== 'declarative' || !step.operation)) {
         return {
             status: 'needs_confirmation',
@@ -106,6 +111,8 @@ export const replayDatasetBundlePrograms = (input: {
     bundle: DatasetBundle;
     currentData: CsvData;
 }): DatasetBundleReplayOutcome => {
+    if (input.bundle.acceptedCommit) return {status:'fresh_import_required',data:cloneData(input.currentData),
+        committedTransformationIds:[],reasonCodes:['committed_dataset_requires_verified_recovery']};
     const source = cloneData(input.currentData);
     let replayedData = source;
     let committedTransformationIds: string[] = [];

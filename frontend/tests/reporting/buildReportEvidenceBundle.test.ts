@@ -686,6 +686,7 @@ describe('buildReportEvidenceBundle', () => {
         const card = bundle?.allCards[0];
 
         expect(card?.evidenceValueGateDecision).toBe('table_only');
+        expect(card?.presentationMode).toBe('table');
         expect(card?.evidenceValueGateDetail).toBe('Helper dimension detected, table presentation preferred.');
         expect(card?.evidenceValueGateReasonCodes).toEqual(['helper_dimension', 'not_chart_worthy']);
     });

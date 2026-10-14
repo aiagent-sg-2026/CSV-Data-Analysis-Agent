@@ -54,6 +54,8 @@ export const buildToolAvailabilityContext = (
         columnNames: overrides.columnNames ?? state.columnProfiles.map(profile => profile.name),
         csvData: overrides.csvData ?? state.csvData ?? null,
         hasCsvData: overrides.hasCsvData ?? Boolean(state.csvData),
+        hasCodeExecution: overrides.hasCodeExecution ?? false,
+        externalToolManifests: overrides.externalToolManifests,
         hasCards: overrides.hasCards ?? state.analysisCards.length > 0,
         hasCleaningRun: overrides.hasCleaningRun ?? Boolean(state.cleaningRun),
         cleaningRunStatus: overrides.cleaningRunStatus ?? state.cleaningRun?.status ?? null,
@@ -72,10 +74,12 @@ export const buildToolAvailabilityContext = (
 export const normalizeToolAvailabilityContext = (
     context: Partial<ToolAvailabilityContext>,
 ): ToolAvailabilityContext => ({
+    externalToolManifests: context.externalToolManifests,
     cardIds: context.cardIds ?? [],
     columnNames: context.columnNames ?? [],
     csvData: context.csvData ?? null,
     hasCsvData: context.hasCsvData ?? true,
+    hasCodeExecution: context.hasCodeExecution ?? false,
     hasCards: context.hasCards ?? false,
     hasCleaningRun: context.hasCleaningRun ?? false,
     cleaningRunStatus: context.cleaningRunStatus ?? null,
@@ -181,7 +185,8 @@ export const resolveToolGovernance = (
             decision = { toolName: descriptor.name, stage: toolStage, allowed: false, source: 'default_policy', reason: `Tool "${descriptor.name}" is not included in the base tool policy.`, category: descriptor.category, risk: descriptor.risk };
         } else if (descriptor.defaultPolicy === 'deny') {
             decision = { toolName: descriptor.name, stage: toolStage, allowed: false, source: 'default_policy', reason: `Tool "${descriptor.name}" is disabled by default policy.`, category: descriptor.category, risk: descriptor.risk };
-        } else if (!descriptor.stageAvailability?.includes(toolStage)) {
+        } else if (!descriptor.stageAvailability?.includes(toolStage)
+            || (toolStage === 'analysis' && descriptor.groups?.includes('workspace.edit') && !normalizedContext.hasCodeExecution)) {
             decision = { toolName: descriptor.name, stage: toolStage, allowed: false, source: 'stage_allowlist', reason: `Tool "${descriptor.name}" is not exposed during the ${toolStage} stage.`, category: descriptor.category, risk: descriptor.risk };
         } else if (denyOverrides.has(descriptor.name)) {
             const deniedBySettings = settingsDenyOverrides.has(descriptor.name);

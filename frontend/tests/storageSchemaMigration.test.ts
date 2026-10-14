@@ -31,19 +31,19 @@ const {
     getStorageBreakdown,
 } = await import('../services/storageService');
 
-describe('IndexedDB v11 local diagnostics migration', () => {
-    it('opens the existing database at version 11', async () => {
+describe('IndexedDB v13 recovery retention migration', () => {
+    it('opens the existing database at version 13', async () => {
         await getStorageBreakdown();
 
-        expect(STORAGE_DB_VERSION).toBe(11);
+        expect(STORAGE_DB_VERSION).toBe(13);
         expect(openDBMock).toHaveBeenCalledWith(
             'csv-ai-assistant-db',
-            11,
+            13,
             expect.objectContaining({ upgrade: expect.any(Function) }),
         );
     });
 
-    it('adds consent and local diagnostic stores while preserving existing stores', async () => {
+    it('adds commit uniqueness and diagnostic stores while preserving existing records', async () => {
         await getStorageBreakdown();
         const createIndex = vi.fn();
         const createdStore = {
@@ -53,6 +53,8 @@ describe('IndexedDB v11 local diagnostics migration', () => {
         const upgradeDb = {
             objectStoreNames: {
                 contains: vi.fn((name: string) => ![
+                    'dataset_commits',
+                    'dataset_retention',
                     CLOUD_AI_CONSENTS_STORE_NAME,
                     LOCAL_DIAGNOSTICS_STORE_NAME,
                 ].includes(name)),
@@ -67,11 +69,15 @@ describe('IndexedDB v11 local diagnostics migration', () => {
         capturedUpgrade?.(
             upgradeDb,
             9,
-            11,
+            13,
             { objectStore: vi.fn(() => existingStore) },
         );
 
-        expect(upgradeDb.createObjectStore).toHaveBeenCalledTimes(2);
+        expect(upgradeDb.createObjectStore).toHaveBeenCalledTimes(4);
+        expect(upgradeDb.createObjectStore).toHaveBeenCalledWith('dataset_retention', { keyPath: 'recordId' });
+        expect(upgradeDb.createObjectStore).toHaveBeenCalledWith('dataset_commits', { keyPath: 'recordId' });
+        expect(createIndex).toHaveBeenCalledWith('intentKey', 'intentKey', { unique: true });
+        expect(createIndex).toHaveBeenCalledWith('approvalKey', 'approvalKey', { unique: true });
         expect(upgradeDb.createObjectStore).toHaveBeenCalledWith(
             CLOUD_AI_CONSENTS_STORE_NAME,
             { keyPath: 'key' },
@@ -81,6 +87,12 @@ describe('IndexedDB v11 local diagnostics migration', () => {
             { keyPath: 'id' },
         );
         expect(createIndex.mock.calls.map(call => call[0])).toEqual([
+            'sessionId',
+            'commitId',
+            'sessionId',
+            'intentKey',
+            'approvalKey',
+            'commitId',
             'datasetId',
             'provider',
             'recordedAt',

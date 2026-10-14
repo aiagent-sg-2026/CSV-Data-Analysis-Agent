@@ -83,7 +83,7 @@ export const commitVerifiedSandboxTransformation = (input: {
             idempotencyKey: `${input.runId ?? 'cleaning'}:${input.outcome.codeRef}`,
         }],
     };
-    registerSandboxTableRows(input.bundle.bundleId, committedOutput);
+    registerSandboxTableRows(input.bundle.bundleId, committedOutput, outputVersion);
     return {
         ...input.bundle,
         datasetVersion: outputVersion,

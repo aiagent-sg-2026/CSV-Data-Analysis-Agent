@@ -14,8 +14,9 @@ import {
     WORKSPACE_DATASET_RAW_CSV,
 } from './agent/workspaceFileUtils';
 
-const BALANCED_BLOCKED_GROUPS = new Set<ToolGroup>(['workspace.edit']);
+const BALANCED_BLOCKED_GROUPS = new Set<ToolGroup>(['workspace.edit', 'code.execute']);
 const STRICT_ALLOWED_GROUPS = new Set<ToolGroup>([
+    'code.inspect',
     'analysis.plan',
     'analysis.statistics',
     'analysis.validate',

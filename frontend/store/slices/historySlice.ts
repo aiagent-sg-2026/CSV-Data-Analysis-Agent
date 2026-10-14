@@ -1,3 +1,7 @@
+import { resetAgentTelemetryBuffers } from './agentTelemetryHelpers';
+import { captureOutgoingSessionSnapshot, beginSessionTransition, ownsTransition, captureSessionScope, ownsSessionScope, scopeStore } from '../../services/session/sessionOwnership';
+import { drainSessionPersistence, queueSessionWrite } from '../../services/persistence/currentSessionPersistence';
+import { buildPersistedReportRecord, hasSavableSession } from '../../services/persistence/persistedAppState';
 
 
 
@@ -67,21 +71,28 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
         set({ reportsList: list, _reportsListLoadedAt: now } as any);
     },
     handleLoadReport: async (id) => {
-        // Guard: block load if an AI turn is actively running to prevent
-        // stale turn results from being applied to the wrong session.
-        const activeTurn = get().activeTurn;
-        if (activeTurn && activeTurn.status === 'running') {
-            get().addProgress('Cannot load a report while an AI turn is running. Please wait for it to finish or cancel it first.', 'error');
-            return;
-        }
+        const store = { getState: get, setState: set };
+        const outgoing = captureOutgoingSessionSnapshot(store);
+        const token = beginSessionTransition(store);
+        resetAgentTelemetryBuffers();
+        const assertTransition = () => ownsTransition(store, token);
+        try {
         get().addProgress(`Loading report ${id}...`);
-        const [report, { normalizeDataPreparationPlan }, { updateCleaningRun }] = await Promise.all([
+        let [report, { normalizeDataPreparationPlan }, { updateCleaningRun }] = await Promise.all([
             getReport(id),
             import('../../services/agent/execution/dataOperationRunner'),
             import('../../services/agent/cleaningRunState'),
         ]);
+        if (!assertTransition()) return;
         if (report) {
-            await discardPiSessionCheckpoint(get().sessionId);
+            if (outgoing.csvData || hasSavableSession(outgoing)) await queueSessionWrite(() => saveReport(buildPersistedReportRecord({ ...outgoing, initialAnalysisStatus: outgoing.initialAnalysisStatus === 'running' ? 'paused' : outgoing.initialAnalysisStatus, isBusy: false, isGeneratingReport: false }, { id: outgoing.sessionId, filename: outgoing.csvData?.fileName ?? outgoing.datasetBundle?.source.fileName ?? 'analysis-session' })));
+            await drainSessionPersistence();
+            if (!assertTransition()) return;
+            // A commit admitted before replacement may have advanced this report during the barrier.
+            report = await getReport(id);
+            if (!assertTransition()) return;
+            if (!report) throw new Error('The selected report is no longer available.');
+            await discardPiSessionCheckpoint(outgoing.sessionId);
             const normalizedAppState = normalizeRestoredAppState(report.appState);
             const restoredMemoryScope = normalizedAppState.reportMemoryScope
                 ?? (report.lineage
@@ -92,10 +103,13 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                     }
                     : resolveReportMemoryScope(normalizedAppState as AppStore));
             const hydratedWorkspaceFiles = await hydrateLatestReportWorkspaceFiles(normalizedAppState.workspaceFiles ?? {});
-            const nextSessionId = createAndStoreTabSessionId();
+            if (!assertTransition()) return;
             const loadedAt = new Date();
             await disposeDuckDbQueryEngine();
+            if (!assertTransition()) return;
             await vectorStore.clear();
+            if (!assertTransition()) return;
+            const nextSessionId = createAndStoreTabSessionId();
             set({
                 ...normalizedAppState,
                 sessionId: nextSessionId,
@@ -125,6 +139,7 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                 pendingClarification: null,
                 pendingMutationConfirmation: normalizedAppState.pendingMutationConfirmation ?? null,
                 activeTurn: null,
+                activeExecution: null,
                 queuedChatTurns: [],
                 queuedAgentRuns: [],
                 cancelRequestedTurnId: null,
@@ -159,6 +174,7 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                                 : 'idle')
                     ),
                 initialAnalysisFailureKind: normalizedAppState.initialAnalysisFailureKind ?? null,
+                initialAnalysisRecovery: null,
                 goalState: normalizeRestoredGoalState(normalizedAppState.goalState),
                 currentView: normalizedAppState.csvData ? 'analysis_dashboard' : 'file_upload',
                 isHistoryPanelOpen: false,
@@ -177,6 +193,13 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                 sessionCreatedAt: loadedAt,
                 vectorStoreDocuments: [],
             });
+            const restoredScope = captureSessionScope(store);
+            const restoredStore = scopeStore(store, restoredScope);
+            void import('../../services/agent/runtime/pi/piInitialAnalysisRuntimeService').then(({ recoverPiInitialAnalysisIfNeeded }) => {
+                if (ownsSessionScope(store, restoredScope)) return recoverPiInitialAnalysisIfNeeded(restoredStore);
+            }).catch(error => {
+                if (ownsSessionScope(store, restoredScope)) restoredStore.getState().addProgress(`Could not inspect checkpoint recovery: ${error instanceof Error ? error.message : String(error)}`, 'warning');
+            });
             // Prefer instant rehydration from saved embeddings over expensive
             // ONNX re-computation. Fall back to rebuild only for legacy sessions
             // that were saved without embedding data.
@@ -193,6 +216,7 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                 void (async () => {
                     try {
                         await vectorStore.rehydrate(savedVectorDocs);
+                        if (!ownsSessionScope(store, restoredScope)) return;
                         set({
                             vectorStoreDocuments: savedVectorDocs,
                             vectorMemoryState: 'queued',
@@ -205,7 +229,7 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                 })();
             } else {
                 void import('../../services/agent/memory/vectorMemorySync').then(m =>
-                    m.rebuildVectorMemoryFromState({ getState: get as never, setState: set as never }, {
+                    m.rebuildVectorMemoryFromState(restoredStore as never, {
                         reset: true,
                         includeDatasetDocs: true,
                         progressMessage: 'Rebuilding AI long-term memory from the loaded report...',
@@ -213,7 +237,8 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                 );
             }
             if (normalizedAppState.cleaningRun?.status === 'completed' || !normalizedAppState.cleaningRun) {
-                await get().refreshDuckDbSession();
+                await get().refreshDuckDbSession(undefined, restoredScope);
+                if (!ownsSessionScope(store, restoredScope)) return;
             } else {
                 set(prev => ({
                     chatHistory: appendUnfinishedCleaningNotice(prev.chatHistory, 'history_load'),
@@ -221,7 +246,11 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
             }
             get().addProgress(`Report "${report.filename}" loaded.`);
         } else {
+            set({ isBusy: false });
             get().addProgress(`Failed to load report ${id}.`, 'error');
+        }
+        } catch (error) {
+            if (assertTransition()) { set({ isBusy: false }); get().addProgress(`Failed to load report: ${error instanceof Error ? error.message : String(error)}`, 'error'); }
         }
     },
     handleDeleteReport: async (id) => {
@@ -274,6 +303,10 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
         }
     },
     handleNewSession: async () => {
+        const store = { getState: get, setState: set };
+        const outgoing = captureOutgoingSessionSnapshot(store);
+        const token = beginSessionTransition(store);
+        resetAgentTelemetryBuffers();
         try {
             const outgoingSessionId = get().sessionId;
             const settings = get().settings;
@@ -290,8 +323,12 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                 chatLifecycleState: 'running' as const,
             });
 
+            if (outgoing.csvData || hasSavableSession(outgoing)) await queueSessionWrite(() => saveReport(buildPersistedReportRecord({ ...outgoing, isBusy: false, isGeneratingReport: false, initialAnalysisStatus: outgoing.initialAnalysisStatus === 'running' ? 'paused' : outgoing.initialAnalysisStatus }, { id: outgoing.sessionId, filename: outgoing.csvData?.fileName ?? outgoing.datasetBundle?.source.fileName ?? 'analysis-session' })));
+            await drainSessionPersistence();
+            if (!ownsTransition(store, token)) return;
             await disposeDuckDbQueryEngine();
-            if (get().csvData) {
+            if (!ownsTransition(store, token)) return;
+            if (outgoing.csvData) {
                 const existingSession = await getReport(CURRENT_SESSION_KEY);
                 if (existingSession) {
                     const archiveId = `report-${existingSession.createdAt.getTime()}`;
@@ -299,12 +336,14 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                 }
             }
             await vectorStore.clear();
-            await deleteReport(CURRENT_SESSION_KEY);
+            if (!ownsTransition(store, token)) return;
+            await queueSessionWrite(() => deleteReport(CURRENT_SESSION_KEY));
+            if (!ownsTransition(store, token)) return;
             void import('../../services/data/opfsDatasetStorage')
-                .then(({ removeOpfsDatasetSession }) => removeOpfsDatasetSession(get().sessionId))
+                .then(({ removeOpfsDatasetSession }) => removeOpfsDatasetSession(outgoingSessionId))
                 .catch(error => console.warn('[History] Could not clear temporary OPFS data.', error));
             void import('../../services/data/sandboxTableRegistry')
-                .then(({ clearSandboxTableRows }) => clearSandboxTableRows(get().datasetBundle?.bundleId))
+                .then(({ clearSandboxTableRows }) => clearSandboxTableRows(outgoing.datasetBundle?.bundleId))
                 .catch(error => console.warn('[History] Could not clear temporary sandbox tables.', error));
             const nextSessionId = createAndStoreTabSessionId();
 
@@ -325,6 +364,8 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                 selectedMemoryRunId: null,
                 currentDatasetId: null,
                 datasetBundle: null,
+                candidateRecovery: null,
+                datasetCommitBindingStatus: undefined,
                 csvData: null,
                 rawCsvData: null,
                 rawIntakeIr: null,
@@ -358,6 +399,7 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                 resolvedClarifications: null,
                 pendingMutationConfirmation: null,
                 activeTurn: null,
+                activeExecution: null,
                 queuedChatTurns: [],
                 queuedAgentRuns: [],
                 cancelRequestedTurnId: null,
@@ -367,6 +409,7 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                 initialAnalysisStatus: 'idle',
                 initialAnalysisFailureKind: null,
                 initialAnalysisPlan: null,
+                initialAnalysisRecovery: null,
                 confirmedAnalysisGoal: null,
                 goalState: 'idle',
                 dataQualityIssues: null,
@@ -398,7 +441,7 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
             // record has already been removed, so these operations are safe to
             // finish after the visible reset without deleting new-session data.
             const maintenanceResults = await Promise.allSettled([
-                archivedSession ? saveReport(archivedSession) : Promise.resolve(),
+                archivedSession ? queueSessionWrite(() => saveReport(archivedSession!)) : Promise.resolve(),
                 outgoingSessionId
                     ? discardPiSessionCheckpoint(outgoingSessionId)
                     : Promise.resolve(),
@@ -406,6 +449,7 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                     ? deleteOriginalData(outgoingSessionId)
                     : Promise.resolve(),
             ]);
+            if (!ownsTransition(store, token)) return;
             if (maintenanceResults.some(result => result.status === 'rejected')) {
                 get().addProgress(
                     'The new session is ready, but some previous-session cleanup could not finish.',
@@ -414,10 +458,11 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
             }
             await get().loadReportsList();
         } catch (error) {
+            if (!ownsTransition(store, token)) return;
             set({
                 isBusy: false,
                 chatLifecycleState: 'idle' as const,
-                currentView: 'file_upload',
+                currentView: outgoing.currentView,
             });
             get().addProgress(`Failed to start a new session: ${error instanceof Error ? error.message : String(error)}`, 'error');
         }

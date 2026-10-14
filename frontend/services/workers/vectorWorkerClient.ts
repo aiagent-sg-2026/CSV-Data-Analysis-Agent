@@ -79,6 +79,7 @@ class VectorWorkerClient {
     private statusListeners = new Set<StatusListener>();
     private currentStatus: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
     private currentError: string | null = null;
+    private generation = 0;
     private healthMonitor: WorkerHealthMonitor | null = null;
 
     private ping(): Promise<unknown> {
@@ -107,7 +108,10 @@ class VectorWorkerClient {
 
     // --- Worker lifecycle ---
 
+    retireSession(): void { this.resetWorker(new Error("The vector session was replaced.")); }
+
     private resetWorker(error: Error) {
+        this.generation += 1;
         this.healthMonitor?.stop();
         this.healthMonitor = null;
         this.callbacks.forEach(callback => {
@@ -124,6 +128,7 @@ class VectorWorkerClient {
 
         const worker = createVectorWorker();
         worker.onmessage = (event: MessageEvent<VectorWorkerMessage>) => {
+            if (this.worker !== worker) return;
             const handlerStart = performance.now();
             const data = event.data;
 
@@ -183,6 +188,7 @@ class VectorWorkerClient {
         };
 
         worker.onerror = event => {
+            if (this.worker !== worker) return;
             this.resetWorker(event.error || new Error('Vector worker crashed.'));
         };
 
@@ -234,6 +240,7 @@ class VectorWorkerClient {
     // --- Public API ---
 
     async init(progressCallback?: ProgressListener): Promise<void> {
+        const generation = this.generation;
         let unsubscribe: (() => void) | undefined;
         if (progressCallback) {
             unsubscribe = this.onProgress(progressCallback);
@@ -246,12 +253,13 @@ class VectorWorkerClient {
         }
         try {
             await this.call('init', undefined, VECTOR_INIT_TIMEOUT_MS);
+            if (generation !== this.generation) return;
             if (!this.healthMonitor) {
                 this.healthMonitor = new WorkerHealthMonitor({
                     workerFamily: 'vector',
                     pingFn: () => this.ping(),
                     onUnhealthy: (_failures, error) => {
-                        this.resetWorker(new Error(`Vector worker unresponsive: ${error.message}`));
+                        if (generation === this.generation) this.resetWorker(new Error(`Vector worker unresponsive: ${error.message}`));
                     },
                 });
                 this.healthMonitor.start();

@@ -4,6 +4,7 @@ import { AnalysisPlan, ChartType, CsvRow } from '../../types';
 import { useAppStore } from '../../store/useAppStore';
 import { getTranslation } from '../../utils/localization';
 import { isAdditiveAggregation } from '../../utils/analysisCardPresentation';
+import { shouldHideCardChart } from '../../utils/analysisCardPresentationPolicy';
 
 interface AnalysisCardControlsProps {
     cardId: string;
@@ -62,12 +63,12 @@ const AnalysisCardControlsComponent: React.FC<AnalysisCardControlsProps> = ({
     return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-card border border-slate-200 bg-slate-50/80 px-3 py-2" data-export-exclude>
         <div>
-            {(!plan.artifactMetadata?.hideChartByDefault || !isDataVisible) && <button onClick={onToggleDataVisibility} className="min-h-[44px] text-sm font-semibold text-blue-600 hover:text-blue-700 hover:underline md:min-h-0">
+            {(!shouldHideCardChart(plan) || !isDataVisible) && <button onClick={onToggleDataVisibility} className="min-h-[44px] text-sm font-semibold text-blue-600 hover:text-blue-700 hover:underline md:min-h-0">
                 {isDataVisible ? t('card_controls_hide_table') : t('card_controls_show_table')}
             </button>}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-            {plan.artifactType === 'pivot_matrix' && availableChartTypes.length > 1 && (
+            {!shouldHideCardChart(plan) && plan.artifactType === 'pivot_matrix' && availableChartTypes.length > 1 && (
                 <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-xs font-semibold text-slate-500">{t('card_controls_pivot_chart')}</span>
                     {availableChartTypes.map(type => (
@@ -165,7 +166,7 @@ const AnalysisCardControlsComponent: React.FC<AnalysisCardControlsProps> = ({
                     </label>
                 </div>
             )}
-            {onToggleDataLabels && (
+            {!shouldHideCardChart(plan) && onToggleDataLabels && (
                 <div className="flex items-center">
                     <label htmlFor={`data-labels-${cardId}`} className="flex min-h-[44px] items-center gap-1.5 text-xs font-semibold text-slate-500 md:min-h-0">
                         <input

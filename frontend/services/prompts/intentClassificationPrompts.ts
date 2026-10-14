@@ -31,6 +31,10 @@ ${columnSummary ? `Dataset columns: ${columnSummary}\n` : ''}Output exactly ONE 
   "aggregationFunctions": [],
   "groupingColumns": [],
   "filterDescription": null,
+  "requestedQueryScopes": [],
+  "requestedComputationScope": null,
+  "requestedDataPreparation": null,
+  "resultCompleteness": "bounded",
   "subjectRefs": [],
   "timeScope": { "kind": "none" },
   "comparisonScope": { "kind": "none" },
@@ -58,7 +62,7 @@ ${columnSummary ? `Dataset columns: ${columnSummary}\n` : ''}Output exactly ONE 
 - compare_periods: compare across time periods (year-over-year, month-over-month, etc.)
 - analyze_cohort: cohort analysis, retention, churn analysis
 - find_root_cause: identify drivers, contributors, or root causes of a metric change
-- statistical: correlation, regression, distribution, outlier, or trend analysis
+- statistical: correlation, lower weighted median, regression, distribution, outlier, or trend analysis
 - derive_metric: calculate a new metric from existing data (margins, rates, ratios)
 - answer_scalar: answer a single-entity, single-metric question with a direct value (e.g. "What is the total sales for Denso?", "How much revenue did we get?")
 - converse: general conversation, greeting, or meta-question about the system
@@ -79,6 +83,16 @@ ${columnSummary ? `Dataset columns: ${columnSummary}\n` : ''}Output exactly ONE 
 
 **filterDescription** — natural language description of any filter/where condition the user specified. null if none.
 
+**requestedDataPreparation** — "canonical_fact_table" only when the user requests a repaired/canonical fact table or publishing a typed repair before analysis. This is a required dataset output, separate from the calculation scope. null for a read-only calculation or explanation. Preserve both this field and requestedComputationScope in a combined repair-then-calculation request; workflow actions are not unresolved references. The host retains responsibility for validation, exact human approval and fresh-version evidence.
+
+**requestedComputationScope** — for a data-specific Pearson correlation request, use {"method":"pearson_correlation","x":"Column A","y":"Column B","where":{"predicates":[]},"missingPolicy":"pairwise_complete","seed":"none"}. For lower weighted median, use {"method":"lower_weighted_median","value":"Amount","weight":"Quantity","where":{"predicates":[]},"missingPolicy":"pairwise_complete","weightPolicy":"nonnegative_integer_frequency","seed":"none"}; add "unitColumn" when the dataset carries measurement units. This selects the first sorted observed value whose cumulative frequency reaches half the total, including the lower value at an exact half; never average middle values. Frequency weights must be nonnegative safe integers; fractional/negative/untyped weights are unsupported. Zero-weight rows contribute nothing; missing pairs are excluded; mixed units need an explicit typed single-unit filter. Preserve typed AND/OR/time filters. Do not combine with requestedQueryScopes or queryCalculation. Only complete current primary-table numeric data is supported; ambiguous columns, year, missing/weight policy or unsupported methods must be unresolved. General method explanations need no computation.
+
+**requestedQueryScopes** — typed query scopes required to answer the request: [{"role":"result","plan":{"groupBy":["Town"],"aggregates":[{"function":"sum","column":"Amount","as":"Total"}],"where":{"predicates":[{"column":"Date","operator":"gte","value":"2026-10-01"},{"column":"Date","operator":"lt","value":"2026-11-01"}]}}}]. Use only named dataset columns and functions count/count_distinct/sum/avg/min/max/median/percentile. Filters use eq/neq/gt/gte/lt/lte/between/in/contains/starts_with/ends_with/is_null/not_null. For comparisons use explicit roles current/previous; for ratios numerator/denominator. Preserve the user's intended metric, filters, grouping and sorting. Do not invent missing years or metrics: leave scopes empty and list unresolvedReferences. Use no rawSql. Non-data conversation uses an empty array.
+
+**queryCalculation** — null for ordinary queries. For a derived answer using multiple queries, specify {"operation":"ratio"|"percentage"|"difference"|"percent_change","leftRole":"numerator"|"current","rightRole":"denominator"|"previous"}; use only the requested formula and explicit evidence roles. Do not guess a formula.
+
+**resultCompleteness** — "complete" when the user requests all results; "bounded" otherwise.
+
 **subjectRefs** — entities the user refers to: card names, metric names, campaigns, specific data entities. Empty array if none.
 
 **timeScope** — time reference in the message:
@@ -89,7 +103,7 @@ ${columnSummary ? `Dataset columns: ${columnSummary}\n` : ''}Output exactly ONE 
 - kind: "previous_card" (compare to a prior card), "previous_result" (compare to a prior query), "previous_period" (compare to prior time period), "none"
 - value: the raw phrase (e.g. "vs last month", "compared to the previous card")
 
-**unresolvedReferences** — phrases in the message that refer to something context-dependent and cannot be resolved from the message alone. Examples: "this month", "that campaign", "the previous card", "those results". List the raw phrases. Empty array if everything is self-contained.
+**unresolvedReferences** — phrases in the message that refer to something context-dependent and cannot be resolved from the message alone. Examples: "this month", "that campaign", "the previous card", "those results". List the raw phrases. Empty array if everything is self-contained. Workflow instructions such as repair, source inspection, excluded-record accounting, candidate validation/approval and inspectable JavaScript are actions, not unresolved data references. Describe the requested calculation even when source numeric types first require a separately validated repair; never invent its result.
 
 **reason** — brief explanation of your classification (1 sentence).
 
@@ -97,6 +111,8 @@ ${columnSummary ? `Dataset columns: ${columnSummary}\n` : ''}Output exactly ONE 
 
 - Return valid JSON only. No markdown fences, no explanation outside the JSON.
 - Fill every field. Use empty arrays, null, or { "kind": "none" } for absent values.
+- A dataset-specific supported statistical calculation must include requestedComputationScope with its actual named columns and typed filters. For a lower weighted median weighted by frequency/count/quantity, select method lower_weighted_median and weightPolicy nonnegative_integer_frequency. Do not leave its scope null or replace it with preview query scopes. A month with an explicit year must include both inclusive start and exclusive next-month Date predicates in computation.where. Use the dataset's actual date-column name. Method definitions alone keep computation null.
+- Computation missingPolicy handles missing value/weight pairs after applying the requested business/time scope. Do not duplicate that policy as not_null filters in computation.where unless the user independently requests a nonmissing-row population filter. Zero-frequency rows remain within scopedRows and are accounted for by the method, not removed by an invented positive-weight filter.
 - Do not invent column names — only list columns the user actually mentioned.
 - Set confidence to "low" if the message is a single word, a fragment, or genuinely ambiguous.
 - Set confidence to "medium" if you can reasonably interpret the request but it has some ambiguity.

@@ -4,6 +4,8 @@ import type { ColumnProfile, CsvData, DataPreparationPlan } from '../types';
 import type { StoreApi } from '../services/agent/types';
 import { persistSuccessfulCleaning } from '../services/agent/orchestration/cleaningPipelinePersistence';
 import { buildColumnRegistry } from '../services/data/columnRegistry';
+import { createSingleTableDatasetBundle } from '../services/data/datasetBundle';
+import { getCsvDatasetVersion } from '../utils/datasetId';
 
 const {
     profileDataWithWorkerMock,
@@ -183,6 +185,9 @@ describe('persistSuccessfulCleaning', () => {
             columnProfiles: baseProfiles,
             existingRegistry: null,
         });
+        state.datasetBundle = createSingleTableDatasetBundle({ datasetId: 'dataset-test', sourceFingerprint: 'source',
+            file: { name: rawData.fileName, size: 10, lastModified: 1 },
+            data: { ...rawData, data: [{ CanonicalAmount: 999 }] } });
         state.userColumnAnnotations = {
             revenue: {
                 columnName: 'Revenue',
@@ -208,6 +213,7 @@ describe('persistSuccessfulCleaning', () => {
         });
 
         expect(state.csvData?.data).toEqual(workingData.data);
+        expect(state.datasetBundle?.transformationPrograms[0].inputVersion).toBe(getCsvDatasetVersion(rawData));
         expect(state.columnProfiles.map(profile => profile.name)).toEqual(['RegionCode', 'Revenue', 'Margin']);
         expect(state.columnRegistry?.columns.map(column => column.physicalName)).toEqual(['RegionCode', 'Revenue', 'Margin']);
         expect(state.columnRegistry?.columns.map(column => column.displayLabel)).toEqual(['Region', 'Net Revenue', 'Margin']);

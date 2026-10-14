@@ -12,6 +12,7 @@ import { buildDataPreparationWorkflowBundle } from '../agent/buildDataPreparatio
 import { buildCleaningInspectionBundle } from '../agent/buildCleaningInspectionBundle';
 import { resolveAnalysisArtifactFreshness } from '../agent/artifactProvenance';
 import { resolveCardTrustDecision } from '../agent/cardTrustDecision';
+import { resolveCardPresentationPlan, shouldHideCardChart } from '../../utils/analysisCardPresentationPolicy';
 
 export const MAX_CARD_SAMPLE_ROWS = 8;
 export const MAX_REPORT_CHART_ROWS = 24;
@@ -273,6 +274,7 @@ export const buildCardEvidence = (
     const ir = irByCardId.get(card.id);
     const freshness = resolveAnalysisArtifactFreshness(card.provenance, currentDatasetVersion);
     const trustDecision = resolveCardTrustDecision(card, currentDatasetVersion);
+    const presentationPlan = resolveCardPresentationPlan(card);
 
     return {
         evidenceId: `card.${card.id}`,
@@ -283,6 +285,7 @@ export const buildCardEvidence = (
         description: ir?.displayDescription ?? card.plan.description,
         artifactType: card.plan.artifactType ?? null,
         chartType: card.displayChartType,
+        presentationMode: shouldHideCardChart(presentationPlan) ? 'table' : presentationPlan.presentationMode ?? 'chart',
         groupByColumn: card.plan.groupByColumn ?? null,
         valueColumn: card.plan.valueColumn ?? null,
         aggregation: card.plan.aggregation ?? null,

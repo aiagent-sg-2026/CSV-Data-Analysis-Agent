@@ -1,3 +1,5 @@
+import { captureSessionScope, ownsSessionScope, scopeStore } from '../../session/sessionOwnership';
+import { drainSessionPersistence, queueSessionWrite } from '../../persistence/currentSessionPersistence';
 
 import type { AppStore } from '../../../store/useAppStore';
 import { CsvData, DatasetBundle } from '../../../types';
@@ -207,6 +209,8 @@ export async function* orchestrateFileUpload(
     store: StoreApi,
     options: { restoreBundle?: DatasetBundle | null; restoreSnapshot?: HistoryAnalysisSnapshot | null } = {},
 ): AsyncGenerator<FileOrchestrationUpdate, void, unknown> {
+    const scope = captureSessionScope(store);
+    store = scopeStore(store, scope);
     const { getState, setState } = store;
     const _orchestrationStart = performance.now();
     console.log(`${LOG_PREFIX} Starting orchestration for file:`, file.name);
@@ -242,12 +246,16 @@ export async function* orchestrateFileUpload(
     if (getState().csvData?.data.length > 0) {
         const existingSession = await getReport(CURRENT_SESSION_KEY);
         if (existingSession) {
-            await saveReport({ ...existingSession, id: `report-${existingSession.createdAt.getTime()}`, updatedAt: new Date() });
+            await queueSessionWrite(() => saveReport({ ...existingSession, id: `report-${existingSession.createdAt.getTime()}`, updatedAt: new Date() }));
             console.log(`${LOG_PREFIX} Archived previous session.`);
         }
     }
-    vectorStore.clear();
-    await deleteReport(CURRENT_SESSION_KEY);
+    if (!ownsSessionScope(store, scope)) return;
+    await vectorStore.clear();
+    await drainSessionPersistence();
+    if (!ownsSessionScope(store, scope)) return;
+    await queueSessionWrite(async () => { if (ownsSessionScope(store, scope)) await deleteReport(CURRENT_SESSION_KEY); });
+    if (!ownsSessionScope(store, scope)) return;
 
     // PERF-501: Start DuckDB WASM download + compile in the background immediately.
     // By the time cleaning finishes and the first prime is needed, the engine is
@@ -267,10 +275,11 @@ export async function* orchestrateFileUpload(
         import('../datasetBinding'),
     ]);
 
+    if (!ownsSessionScope(store, scope)) return;
+
     yield {
         type: 'state',
         payload: {
-            ...getState(),
             isBusy: true,
             csvData: { fileName: file.name, data: [] },
             rawCsvData: null,
@@ -350,9 +359,13 @@ export async function* orchestrateFileUpload(
     let sourceVerified = false;
     let verifiedReplay = false;
     if (options.restoreBundle) {
+        if (options.restoreBundle.acceptedCommit) {
+            throw new Error('This session contains a committed coding transformation. Its rows require verified source and program replay; recovery is not available yet.');
+        }
         const sourceMatches = options.restoreBundle.source.fileName === datasetBundle.source.fileName
             && options.restoreBundle.source.byteSize === datasetBundle.source.byteSize
-            && options.restoreBundle.source.fingerprint === datasetBundle.source.fingerprint;
+            && options.restoreBundle.source.fingerprint === datasetBundle.source.fingerprint
+            && (!options.restoreBundle.source.inspection?.sha256 || options.restoreBundle.source.inspection.sha256 === datasetBundle.source.inspection?.sha256);
         if (!sourceMatches) {
             throw new Error('The selected CSV does not match the saved source fingerprint. Select the original file to restore this analysis.');
         }
@@ -365,7 +378,7 @@ export async function* orchestrateFileUpload(
             verifiedReplay = true;
             dataForAnalysis = replay.data;
             canonicalCsvData = null;
-            datasetBundle = options.restoreBundle;
+            datasetBundle = { ...options.restoreBundle, source: { ...options.restoreBundle.source, inspection: datasetBundle.source.inspection } };
             const replayedOperations = options.restoreBundle.transformationPrograms.flatMap(program =>
                 program.steps.flatMap(step => step.operation ? [step.operation] : []));
             dataPrepPlan = dataPrepPlan
@@ -381,11 +394,13 @@ export async function* orchestrateFileUpload(
                     planStatus: replayedOperations.length > 0 ? 'operations' : 'schema_only',
                     consistencyIssues: [],
                 };
+            if (!ownsSessionScope(store, scope)) return;
             yield {
                 type: 'progress',
                 message: 'Verified the original source fingerprint and replayed the saved transformation lineage.',
             };
         } else {
+            if (!ownsSessionScope(store, scope)) return;
             yield {
                 type: 'progress',
                 messageType: 'warning',
@@ -447,6 +462,7 @@ export async function* orchestrateFileUpload(
     
     // Step 3: Process the result and continue orchestration.
     // Unlock the UI as soon as data is ready.
+    if (!ownsSessionScope(store, scope)) return;
     yield { type: 'state', payload: { 
         csvData: dataForAnalysis,
         rawCsvData: rawData,
@@ -556,6 +572,7 @@ export async function* orchestrateFileUpload(
             totalSteps: 1,
             currentStep: 1,
         });
+        if (!ownsSessionScope(store, scope)) return;
         yield {
             type: 'progress',
             message: 'Restored saved cards and report after verifying the source and prepared dataset version.',
@@ -571,7 +588,7 @@ export async function* orchestrateFileUpload(
         }
         await persistOriginalSnapshot();
         try {
-            await persistCurrentAppSessionSnapshot(getState());
+            await persistCurrentAppSessionSnapshot(getState(), { store, scope });
         } catch (error) {
             console.warn(`${LOG_PREFIX} Could not persist the restored current session.`, error);
         }
@@ -579,6 +596,7 @@ export async function* orchestrateFileUpload(
     }
 
     if (options.restoreSnapshot && sourceVerified) {
+        if (!ownsSessionScope(store, scope)) return;
         yield {
             type: 'progress',
             messageType: 'warning',
@@ -619,7 +637,7 @@ export async function* orchestrateFileUpload(
         try {
             if (!dataForAnalysis.backing?.ephemeral) {
                 await persistOriginalSnapshot();
-                await persistCurrentAppSessionSnapshot(getState());
+                await persistCurrentAppSessionSnapshot(getState(), { store, scope });
             }
         } catch (error) {
             const persistenceMessage = 'Local import is ready, but automatic recovery could not be saved. Keep this tab open or retry the import.';
@@ -654,6 +672,7 @@ export async function* orchestrateFileUpload(
             ],
         }));
         // If no API key is set, prompt the user to contact technical support
+        if (!ownsSessionScope(store, scope)) return;
         yield { type: 'state', payload: { isApiKeyRequiredModalOpen: true } };
         await persistOriginalSnapshot();
     }

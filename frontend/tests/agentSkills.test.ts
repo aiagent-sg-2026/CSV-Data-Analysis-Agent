@@ -91,14 +91,15 @@ describe('skills in the prompt and as a tool', () => {
         expect(buildSkillsPromptSection([])).toBe('');
     });
 
-    it('read_skill returns full instructions, including a skill added moments ago', async () => {
+    it('read_skill pins the listing until a new tool/task is prepared', async () => {
         const files: Record<string, string> = {};
         const tool = createPiSkillTool(storeWith(files));
         const builtin = await tool.execute('1', { name: 'choose-metric-and-aggregation' }, undefined as never);
         expect((builtin.content[0] as { text: string }).text).toContain('Match the aggregation to the meaning');
 
         files['skills/new-skill.md'] = doc('new-skill', 'Use for new things.', 'Fresh guidance.');
-        const added = await tool.execute('2', { name: 'new-skill' }, undefined as never);
+        await expect(tool.execute('2',{name:'new-skill'},undefined as never)).rejects.toThrow(/Unknown skill/);
+        const added = await createPiSkillTool(storeWith(files)).execute('3', { name: 'new-skill' }, undefined as never);
         expect((added.content[0] as { text: string }).text).toContain('Fresh guidance.');
     });
 

@@ -227,6 +227,7 @@ export const isSupportedReportChartType = (value: string | null | undefined): va
     SUPPORTED_CHART_TYPES.includes(value as ReportVisualChartType);
 
 export const buildReportChartPayload = (card: ReportCardEvidence): ReportChartPayload | null => {
+    if (card.presentationMode === 'table' || card.evidenceValueGateDecision === 'table_only') return null;
     if (!isSupportedReportChartType(card.chartType) || !card.valueColumn) {
         return null;
     }

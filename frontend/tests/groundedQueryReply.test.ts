@@ -166,6 +166,34 @@ describe('grounded ranked share reply', () => {
 });
 
 describe('grounded derived margin reply', () => {
+    it.each([
+        ['List the lowest one customer by profit margin.', 'English', ['Loss']],
+        ['List the lowest 2 customers by profit margin.', 'English', ['Loss', 'Low']],
+        ['List the highest 2 customers by profit margin.', 'English', ['High', 'Tie']],
+        ['列出利润率最低的 2 个客户。', 'Mandarin', ['Loss', 'Low']],
+        ['列出利润率最高的 1 个客户。', 'Mandarin', ['High']],
+    ] as const)('respects exact direction and count for %s', (userMessage, language, expected) => {
+        const rows = [
+            { Customer: 'High', total_sales: 100, total_profit: 50 },
+            { Customer: 'Low', total_sales: 100, total_profit: 10 },
+            { Customer: 'Zero', total_sales: 0, total_profit: 100 },
+            { Customer: 'Loss', total_sales: 100, total_profit: -5 },
+            { Customer: 'Tie', total_sales: 200, total_profit: 100 },
+            { Customer: 'Unknown', total_sales: 100, total_profit: null },
+        ];
+        const query = makeQuery({ plan: { groupBy: ['Customer'], aggregates: [
+            { function: 'sum', column: 'Sales Amount Base', as: 'total_sales' },
+            { function: 'sum', column: 'Profit Amount', as: 'total_profit' },
+        ] }, result: { ...makeQuery().result, rows, selectedColumns: ['Customer', 'total_sales', 'total_profit'],
+            returnedRows: rows.length, totalMatchedRows: rows.length, truncated: false } });
+        const reply = buildGroundedDerivedMarginReply({ userMessage, language, query, fileName: 'synthetic.csv' });
+        const displayed = reply?.split('\n').filter(line => /^\| (?:High|Low|Zero|Loss|Tie|Unknown) \|/.test(line))
+            .map(line => line.split('|')[1].trim());
+        expect(displayed).toEqual(expected);
+        expect(reply).not.toContain('| Zero |');
+        expect(reply).not.toContain('| Unknown |');
+    });
+
     it('calculates margin from summed profit and sales instead of trusting an averaged ratio', () => {
         const query = makeQuery({
             explanation: 'Total sales and profit by Customer',

@@ -37,6 +37,12 @@ const createCard = (): ReportCardEvidence => ({
 });
 
 describe('buildReportChartPayload', () => {
+    it('cannot promote table-only evidence back into a report chart', () => {
+        expect(buildReportChartPayload({ ...createCard(), evidenceValueGateDecision: 'table_only' })).toBeNull();
+        expect(buildReportChartPayload({ ...createCard(), presentationMode: 'table' })).toBeNull();
+        expect(buildReportChartPayload({ ...createCard(), evidenceValueGateDecision: 'pass' })).not.toBeNull();
+    });
+
     it('ranks bar rows by absolute value and aggregates the tail into Other', () => {
         const payload = buildReportChartPayload(createCard());
 

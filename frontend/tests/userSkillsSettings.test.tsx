@@ -203,3 +203,31 @@ describe('skill export, edit and switch', () => {
         vi.restoreAllMocks();
     });
 });
+
+describe('supporting skill folder UI',()=>{
+    beforeEach(resetUserSkillsForTests);
+    afterEach(cleanup);
+    it('imports relative supporting files and preserves them when editing the instructions',async()=>{
+        const {sha256Bytes}=await import('../services/data/sourceDigest');
+        const content='return {observed:true};',sha256=await sha256Bytes(new TextEncoder().encode(content));
+        const manifest={schemaVersion:1,version:'1.0.0',profiles:['browser-javascript'],requires:['code.run'],supportingFiles:[{path:'scripts/check.js',kind:'javascript',sha256}]};
+        const text=`---\nname: folder-skill\ndescription: Inspect complete structure.\nmanifest: ${JSON.stringify(manifest)}\n---\nRead observed input.`;
+        const file=(name:string,value:string)=>{
+            const f=new File([value],name.split('/').at(-1)!);
+            Object.defineProperty(f,'webkitRelativePath',{value:name});Object.defineProperty(f,'text',{value:async()=>value});return f;
+        };
+        render(<AgentSkillsSection language="English"/>);
+        await act(async()=>fireEvent.change(screen.getByLabelText('Add skill folder'),{target:{files:[file('package/SKILL.md',text),file('package/scripts/check.js',content)]}}));
+        await screen.findByText('folder-skill');expect(screen.getByText(/Version 1.0.0 · Profiles: browser-javascript · Required: code.run/)).toBeTruthy();
+        fireEvent.click(screen.getByRole('button',{name:'Edit folder-skill'}));
+        fireEvent.change(screen.getByRole('textbox',{name:'Edit folder-skill'}),{target:{value:text.replace('Read observed input.','Read exact input.')}});
+        fireEvent.click(screen.getByRole('button',{name:'Save'}));
+        expect(readUserSkillSources()['skills/folder-skill/scripts/check.js']).toBe(content);
+        expect(screen.queryByText(/Supporting files missing/)).toBeNull();
+    });
+    it('shows an unavailable package before it can be used',()=>{
+        importUserSkills([{fileName:'missing.md',text:`---\nname: missing-support\ndescription: Missing helper.\nmanifest: ${JSON.stringify({schemaVersion:1,version:'1',profiles:['full'],requires:[],supportingFiles:[{path:'scripts/missing.js',kind:'javascript',sha256:'a'.repeat(64)}]})}\n---\nUnavailable.`}]);
+        render(<AgentSkillsSection language="English"/>);
+        expect(screen.getByText(/Supporting files missing; this skill is unavailable/)).toBeTruthy();
+    });
+});

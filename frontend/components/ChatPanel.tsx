@@ -16,6 +16,7 @@ import { resolveEffectivePendingClarification } from '../services/agent/runtime/
 import { ChatPanelHeader } from './chat/ChatPanelHeader';
 import { ChatComposer, getComposerBusyState } from './chat/ChatComposer';
 import { TERMINAL_CHAT_LIFECYCLE_STATES } from '../types/runtime';
+import { TaskInspectionEntry } from './task/TaskInspection';
 
 const PiBrowserLab = lazy(() => import('./modals/PiBrowserLab').then(module => ({ default: module.PiBrowserLab })));
 
@@ -456,6 +457,7 @@ export const ChatPanel: React.FC = React.memo(() => {
                 onOpenPiBrowserLab={() => setIsPiBrowserLabOpen(true)}
                 onHidePanel={() => setIsAsideVisible(false)}
             />
+            <TaskInspectionEntry />
             <div className="relative flex-1 min-h-0">
                 <div
                     ref={messagesContainerRef}

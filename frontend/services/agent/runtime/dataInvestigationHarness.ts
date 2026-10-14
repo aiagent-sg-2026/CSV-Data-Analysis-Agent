@@ -203,10 +203,11 @@ const runDescriptionRowCountQuery = async (
 
     const result = await duckDbWorkerClient.executeCompiledQuery({
         sql,
-        countSql: 'SELECT 1 AS total',
+        countSql: `SELECT COUNT(*) AS total FROM (${sql}) AS __counted`,
         selectedColumns: ['desc_name', 'total_value', 'row_count'],
         appliedOrderBy: [],
         appliedLimit: limit,
+        expectedBinding: binding,
     }, QUERY_TIMEOUT_MS);
 
     return result.rows.map(row => ({

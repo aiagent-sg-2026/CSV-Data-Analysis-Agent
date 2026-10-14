@@ -1,3 +1,5 @@
+import { captureSessionScope, scopeStore } from './session/sessionOwnership';
+import type { StoreApi } from './agent/types';
 /**
  * VectorStore facade — delegates all heavy work to a dedicated Web Worker.
  *
@@ -43,6 +45,8 @@ class VectorStore {
     private _status: VectorStoreStatus = 'idle';
     private _lastError: string | null = null;
     private initPromise: Promise<void> | null = null;
+    private generation = 0;
+    private storageWrites: Promise<unknown> = Promise.resolve();
     private static RETRY_COOLDOWN_MS = 60_000;
 
     public static getInstance(): VectorStore {
@@ -97,8 +101,10 @@ class VectorStore {
             return;
         }
 
-        this.initPromise = vectorWorkerClient.init(progressCallback)
+        const generation = this.generation;
+        const pending = vectorWorkerClient.init(progressCallback)
             .catch(error => {
+                if (this.generation !== generation) return;
                 console.error(`${LOG_PREFIX} Failed to initialize vector store:`, error);
                 const message = error instanceof Error ? error.message : String(error);
                 progressCallback?.(`Error loading AI memory model: ${message}`);
@@ -109,10 +115,10 @@ class VectorStore {
                 this._lastError = message;
             })
             .finally(() => {
-                this.initPromise = null;
+                if (this.initPromise === pending) this.initPromise = null;
             });
-
-        await this.initPromise;
+        this.initPromise = pending;
+        await pending;
     }
 
     /**
@@ -131,6 +137,10 @@ class VectorStore {
         store: MemoryActivationStoreApi,
         flushCallback?: (store: MemoryActivationStoreApi) => Promise<void>,
     ): Promise<void> {
+        const root = store as unknown as StoreApi;
+        store = scopeStore(root, captureSessionScope(root), root.executionContext?.lease) as unknown as MemoryActivationStoreApi;
+        const generation = this.generation;
+        const current = () => generation === this.generation;
         const { vectorMemoryState } = store.getState();
         if (vectorMemoryState === 'ready') return;
         if (vectorMemoryState === 'initializing') {
@@ -151,6 +161,7 @@ class VectorStore {
             const { addProgress } = store.getState();
             addProgress?.('Preparing AI long-term memory...');
             await this.init(addProgress);
+            if (!current()) return;
 
             // init() swallows errors internally — verify actual readiness
             // before marking the store as ready (Ticket: init-failure-state).
@@ -164,6 +175,7 @@ class VectorStore {
 
             // Restore persisted vectors from IndexedDB before flushing pending docs.
             const restored = await this.loadFromStorage();
+            if (!current()) return;
             if (restored) {
                 addProgress?.('Restored AI memory from local storage.');
             }
@@ -178,6 +190,7 @@ class VectorStore {
                 });
             }
         } catch (error) {
+            if (!current()) return;
             const msg = error instanceof Error ? error.message : String(error);
             console.error(`${LOG_PREFIX} On-demand activation failed:`, error);
             store.setState({ vectorMemoryState: 'error' });
@@ -232,17 +245,29 @@ class VectorStore {
     }
 
     public async clear(): Promise<void> {
+        this.generation += 1;
+        const generation = this.generation;
+        this.initPromise = null;
+        this._isInitialized = false;
+        this._permanentlyFailed = false;
+        this._status = 'idle';
+        this._lastError = null;
+        if (persistDebounceTimer) { clearTimeout(persistDebounceTimer); persistDebounceTimer = null; }
+        if (typeof vectorWorkerClient.retireSession === "function") vectorWorkerClient.retireSession();
         await vectorWorkerClient.clear();
-        await clearVectorMemory().catch(() => { /* non-blocking */ });
+        this.storageWrites = this.storageWrites.then(() => this.generation === generation ? clearVectorMemory() : undefined).catch(() => undefined);
+        await this.storageWrites;
     }
 
     // --- IndexedDB persistence ---
 
     /** Persist current worker documents to IndexedDB. Non-blocking. */
     public async persistToStorage(): Promise<void> {
+        const generation = this.generation;
         try {
             const docs = await vectorWorkerClient.getDocuments();
-            await saveVectorMemory(docs);
+            this.storageWrites = this.storageWrites.then(async () => { if (this.generation === generation) await saveVectorMemory(docs); }).catch(() => undefined);
+            await this.storageWrites;
         } catch (error) {
             console.warn(`${LOG_PREFIX} persistToStorage failed (non-blocking):`, error);
         }
@@ -253,8 +278,10 @@ class VectorStore {
      * Returns true if documents were loaded, false otherwise.
      */
     public async loadFromStorage(): Promise<boolean> {
+        const generation = this.generation;
         try {
             const docs = await loadVectorMemory();
+            if (generation !== this.generation) return false;
             if (docs.length > 0 && docs.every(d => Array.isArray(d.embedding) && d.embedding.length > 0)) {
                 await vectorWorkerClient.rehydrate(docs);
                 return true;

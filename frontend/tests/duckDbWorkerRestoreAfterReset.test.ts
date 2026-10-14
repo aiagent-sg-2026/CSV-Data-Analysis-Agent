@@ -9,19 +9,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const harness = vi.hoisted(() => {
-    type Message = { id: number; task: string; payload?: unknown };
-    const instances: Array<{ tasks: string[]; terminate: ReturnType<typeof vi.fn> }> = [];
+    type Message = { id: number; task: string; payload?: unknown; resourceGeneration: number };
+    const instances: FakeWorker[] = [];
     let hangTask: string | null = null;
 
     class FakeWorker {
         tasks: string[] = [];
+        messages: Message[] = [];
+        held: Message[] = [];
+        release() { for (const message of this.held.splice(0)) this.onmessage?.({ data: { id: message.id, success: true, result: { ok: true } } }); }
         terminate = vi.fn();
         onmessage: ((event: { data: Record<string, unknown> }) => void) | null = null;
         onerror: unknown = null;
         constructor() { instances.push(this); }
         postMessage = (message: Message) => {
             this.tasks.push(message.task);
-            if (message.task === hangTask) return;
+            this.messages.push(message);
+            if (message.task === hangTask) { this.held.push(message); return; }
             const result = message.task === 'executeCompiledQuery'
                 ? { rows: [], totalRows: 0 }
                 : { ok: true, loaded: true };
@@ -90,4 +94,71 @@ describe('DuckDbWorkerClient restores the dataset after a worker reset', () => {
         const last = harness.instances.at(-1)!;
         expect(last.tasks).not.toContain('loadCleanDataset');
     });
+    it('fences a late old load and dispose from the replacement worker', async () => {
+        const { duckDbWorkerClient } = await import('../services/workers/duckDbWorkerClient');
+        const run = async <T,>(promise: Promise<T>) => { const result = promise.catch(error => error); await vi.advanceTimersByTimeAsync(100); return result; };
+        await run(duckDbWorkerClient.initDuckDb(5000));
+        harness.setHangTask('loadCleanDataset');
+        const oldLoad = duckDbWorkerClient.loadCleanDataset(cleanPayload, 5000).catch(error => error);
+        harness.setHangTask('disposeDuckDbSession');
+        const oldDispose = duckDbWorkerClient.disposeDuckDbSession(5000).catch(error => error);
+        const oldWorker = harness.instances[0];
+        duckDbWorkerClient.retireSession();
+        harness.setHangTask(null);
+        await run(duckDbWorkerClient.initDuckDb(5000));
+        await run(duckDbWorkerClient.loadCleanDataset({ ...cleanPayload, loadVersion: 'new-version' }, 5000));
+        const replacement = harness.instances[1];
+        oldWorker.release();
+        await oldLoad;
+        await oldDispose;
+        await run(duckDbWorkerClient.executeCompiledQuery(query, 5000));
+        expect(replacement.terminate).not.toHaveBeenCalled();
+        expect(replacement.tasks).toEqual(['initDuckDb', 'loadCleanDataset', 'executeCompiledQuery']);
+    });
+
+    it('attaches the captured resource binding and refuses stale caller versions before posting', async () => {
+        const { DuckDbWorkerClient } = await import('../services/workers/duckDbWorkerClient');
+        const client = new DuckDbWorkerClient();
+        const run = async <T,>(promise: Promise<T>) => {const result = promise.catch(error => error); await vi.advanceTimersByTimeAsync(100); return result;};
+        await run(client.loadCleanDataset(cleanPayload, 5000));
+        await run(client.executeRawQuery({sql: 'SELECT 1', selectedColumns: [], limit: 500}, 5000));
+        const worker = harness.instances[0];
+        expect(worker.messages.at(-1)).toMatchObject({resourceGeneration: 0,
+            payload: {expectedBinding: {tableName: cleanPayload.tableName, loadVersion: 'v1'}}});
+        const before = worker.messages.length;
+        await expect(client.executeRawQuery({sql: 'SELECT 1', selectedColumns: [], limit: 500,
+            expectedBinding: {tableName: cleanPayload.tableName, loadVersion: 'old'}}, 5000)).rejects.toThrow('sql_binding_mismatch');
+        expect(worker.messages).toHaveLength(before);
+        client.retireSession();
+    });
+
+    it('refuses a deferred old query after a same-worker dataset replacement', async () => {
+        const { DuckDbWorkerClient } = await import('../services/workers/duckDbWorkerClient');
+        const client = new DuckDbWorkerClient();
+        const run = async <T,>(promise: Promise<T>) => {const result = promise.catch(error => error); await vi.advanceTimersByTimeAsync(100); return result;};
+        await run(client.loadCleanDataset(cleanPayload, 5000));
+        harness.setHangTask('executeRawQuery');
+        const oldQuery = client.executeRawQuery({sql: 'SELECT 1', selectedColumns: [], limit: 500}, 5000).catch(error => error);
+        await vi.advanceTimersByTimeAsync(0);
+        harness.setHangTask(null);
+        await run(client.loadCleanDataset({...cleanPayload, loadVersion: 'v2'}, 5000));
+        harness.instances[0].release();
+        expect((await oldQuery).message).toBe('sql_binding_mismatch');
+        await run(client.executeCompiledQuery(query, 5000));
+        expect(harness.instances[0].messages.at(-1)).toMatchObject({payload: {expectedBinding: {loadVersion: 'v2'}}});
+        expect(harness.instances[0].terminate).not.toHaveBeenCalled();
+        client.retireSession();
+    });
+
+    it('terminates a hanging SQL request at the host ceiling even when a caller requests longer', async () => {
+        const { DuckDbWorkerClient } = await import('../services/workers/duckDbWorkerClient');
+        const client = new DuckDbWorkerClient();
+        harness.setHangTask('executeRawQuery');
+        const pending = client.executeRawQuery({sql: 'SELECT 1', selectedColumns: [], limit: 500}, 180000).catch(error => error);
+        await vi.advanceTimersByTimeAsync(60001);
+        expect((await pending).message).toMatch(/timed out after 60000ms/);
+        expect(harness.instances[0].terminate).toHaveBeenCalledOnce();
+        client.retireSession();
+    });
+
 });

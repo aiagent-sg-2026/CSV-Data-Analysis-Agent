@@ -18,6 +18,7 @@ export const INITIAL_ANALYSIS_TERMINAL_STATUSES = Object.freeze([
     'degraded',
     'failed',
     'cancelled',
+    'blocked',
 ] as const);
 
 export type InitialAnalysisRunStatus =

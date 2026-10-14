@@ -25,9 +25,12 @@ import {
     buildReportLineageBundle,
 } from './persistence/datasetLineage';
 import { buildDatasetId, buildDatasetVersionId } from '../utils/datasetId';
+import { DATASET_COMMITS_STORE, type DatasetCommitRecord } from '../types/datasetCommit';
+import { reconcileReportCommit } from './persistence/datasetCommitProjection';
+import { DATASET_RETENTION_STORE, type DatasetRetainedArtifact } from './data/datasetRecoveryContract';
 
 const DB_NAME = 'csv-ai-assistant-db';
-export const STORAGE_DB_VERSION = 11;
+export const STORAGE_DB_VERSION = 13;
 const REPORTS_STORE_NAME = 'reports';
 const MEMORY_STORE_NAME = 'agent_memory_runs';
 const SETTINGS_STORE_NAME = 'settings';
@@ -42,6 +45,12 @@ const SETTINGS_RECORD_KEY = 'app_settings';
 export const CURRENT_SESSION_KEY = 'current_session';
 
 interface MyDB extends DBSchema {
+  [DATASET_RETENTION_STORE]: { key: string; value: DatasetRetainedArtifact; indexes: { sessionId: string; commitId: string } };
+  [DATASET_COMMITS_STORE]: {
+    key: string;
+    value: DatasetCommitRecord;
+    indexes: { 'sessionId': string; 'intentKey': string; 'approvalKey': string; 'commitId': string };
+  };
   [REPORTS_STORE_NAME]: {
     key: string;
     value: Report;
@@ -124,9 +133,26 @@ const getDb = (): Promise<IDBPDatabase<MyDB>> => {
       'Local data was cleared; reload before creating new records.',
     ));
   }
-  if (!dbPromise) {
-    dbPromise = openDB<MyDB>(DB_NAME, STORAGE_DB_VERSION, {
+  dbPromise ??= openStorageDatabase();
+  return dbPromise;
+};
+
+export type StorageDatabase = IDBPDatabase<MyDB>;
+export const getStorageDatabase = getDb;
+/** Qualification opens a separate database through the exact production schema. */
+export const openStorageDatabase = (name = DB_NAME): Promise<StorageDatabase> => openDB<MyDB>(name, STORAGE_DB_VERSION, {
       upgrade(db, _oldVersion, _newVersion, transaction) {
+        if (!db.objectStoreNames.contains(DATASET_RETENTION_STORE)) {
+            const retention = db.createObjectStore(DATASET_RETENTION_STORE, { keyPath: 'recordId' });
+            retention.createIndex('sessionId', 'sessionId'); retention.createIndex('commitId', 'commitId');
+        }
+        if (!db.objectStoreNames.contains(DATASET_COMMITS_STORE)) {
+            const commits = db.createObjectStore(DATASET_COMMITS_STORE, { keyPath: 'recordId' });
+            commits.createIndex('sessionId', 'sessionId');
+            commits.createIndex('intentKey', 'intentKey', { unique: true });
+            commits.createIndex('approvalKey', 'approvalKey', { unique: true });
+            commits.createIndex('commitId', 'commitId');
+        }
         // FIX: Removed explicit `IDBObjectStore` type to allow type inference
         // of the `idb` library's `IDBPObjectStore` wrapper.
         let reportStore;
@@ -204,15 +230,11 @@ const getDb = (): Promise<IDBPDatabase<MyDB>> => {
             diagnosticsStore.createIndex('expiresAt', 'expiresAt');
         }
       },
-      blocking(_currentVersion, blockedVersion, event) {
-        if (blockedVersion === null) {
-          (event.target as IDBDatabase | null)?.close();
-        }
+      blocking(_currentVersion, _blockedVersion, event) {
+        (event.target as IDBDatabase | null)?.close();
+        if (name === DB_NAME) dbPromise = undefined;
       },
     });
-  }
-  return dbPromise;
-};
 
 const isInvalidStateError = (error: unknown) =>
     typeof DOMException !== 'undefined' && error instanceof DOMException
@@ -281,7 +303,7 @@ const estimateRecordBytes = (value: unknown): number => {
  */
 export const getStorageBreakdown = async (): Promise<StorageBreakdownResult> => {
     const db = await getDb();
-    type StoreName = 'reports' | 'report_artifacts' | 'original_data' | 'agent_memory_runs' | 'vector_memory' | 'dataset_lineage' | 'settings' | 'ai_consents' | 'local_diagnostics';
+    type StoreName = 'reports' | 'report_artifacts' | 'original_data' | 'agent_memory_runs' | 'vector_memory' | 'dataset_lineage' | 'settings' | 'ai_consents' | 'local_diagnostics' | 'dataset_commits';
     const storeConfigs: { name: StoreName; label: string }[] = [
         { name: REPORTS_STORE_NAME, label: 'Reports (sessions)' },
         { name: REPORT_ARTIFACTS_STORE_NAME, label: 'Report Artifacts (HTML)' },
@@ -289,6 +311,7 @@ export const getStorageBreakdown = async (): Promise<StorageBreakdownResult> => 
         { name: MEMORY_STORE_NAME, label: 'Agent Memory Runs' },
         { name: VECTOR_MEMORY_STORE_NAME, label: 'Vector Memory' },
         { name: DATASET_LINEAGE_STORE_NAME, label: 'Dataset Versions & Lineage' },
+        { name: DATASET_COMMITS_STORE, label: 'Dataset Commit Journal' },
         { name: SETTINGS_STORE_NAME, label: 'Settings' },
         { name: CLOUD_AI_CONSENTS_STORE_NAME, label: 'Cloud AI Consent Records' },
         { name: LOCAL_DIAGNOSTICS_STORE_NAME, label: 'Local Debug Diagnostics (7 days)' },
@@ -358,6 +381,7 @@ export const getStorageBreakdown = async (): Promise<StorageBreakdownResult> => 
 
 /** Clear a specific IndexedDB store (all records). Returns number of records deleted. */
 export const clearStore = async (storeName: string, protectKeys?: Set<string>): Promise<number> => {
+    if (storeName === DATASET_COMMITS_STORE || storeName === DATASET_RETENTION_STORE) throw new StorageOperationError('clearStore', 'Commit records require Clear all local data; partial journal deletion is unavailable.');
     const db = await getDb();
     const allKeys = await db.getAllKeys(storeName as any);
     let deleted = 0;
@@ -535,6 +559,8 @@ export const clearAllLocalBrowserData = async (): Promise<ClearAllLocalBrowserDa
         ]);
         cacheCount = clearedCaches;
         opfsCleared = await clearAllOpfsDatasetData();
+        const { clearAllRetainedDatasetRows } = await import('./persistence/datasetRetention');
+        opfsCleared = await clearAllRetainedDatasetRows() || opfsCleared;
     } catch (error) {
         localDataClearInProgress = false;
         throw new StorageOperationError('clearAllLocalBrowserData', error);
@@ -1176,54 +1202,50 @@ export const purgeAllStorage = async (activeSessionId?: string): Promise<{ delet
 };
 
 // Report History Management
+export const writeReportProjection = async (report: Report, database?: StorageDatabase): Promise<Report> => {
+    const db = database ?? await getDb();
+    const tx = db.transaction([REPORTS_STORE_NAME, DATASET_LINEAGE_STORE_NAME, DATASET_COMMITS_STORE], 'readwrite');
+    void tx.done.catch(() => undefined);
+    try {
+        const reports = tx.objectStore(REPORTS_STORE_NAME);
+        const previous = await reports.get(report.id);
+        const incomingCheckpoint=report.appState.candidateRecovery, priorCheckpoint=previous?.appState.candidateRecovery;
+        // Delayed snapshots cannot reset an interrupted logical task's durable counters.
+        if(incomingCheckpoint&&priorCheckpoint&&incomingCheckpoint.checkpointId===priorCheckpoint.checkpointId
+            &&(Object.entries(priorCheckpoint.task.budget.used).some(([key,value])=>value>incomingCheckpoint.task.budget.used[key as keyof typeof incomingCheckpoint.task.budget.used])
+                ||priorCheckpoint.repetitions>incomingCheckpoint.repetitions)) {
+            report={...report,appState:{...report.appState,candidateRecovery:priorCheckpoint}};
+        }
+        const current = await reconcileReportCommit(tx.objectStore(DATASET_COMMITS_STORE), report);
+        const bundle = buildReportLineageBundle(current, previous);
+        await reports.put(toSerializable(bundle.report));
+        for (const record of bundle.records) await tx.objectStore(DATASET_LINEAGE_STORE_NAME).put(toSerializable(record));
+        await tx.done;
+        if (bundle.report.lineage) {
+            await migrateAgentMemoryDatasetId(db, bundle.legacyDatasetId, bundle.report.lineage.datasetId);
+            await evictOldDatasetVersions(db, bundle.report.lineage.datasetId);
+        }
+        return bundle.report;
+    } catch (error) {
+        try { tx.abort(); } catch { /* A completed transaction cannot be aborted. */ }
+        await tx.done.catch(() => undefined);
+        throw error;
+    }
+};
+
 export const saveReport = async (report: Report): Promise<void> => {
   if (!report.id) {
       throw new StorageOperationError('saveReport', 'Report ID is undefined or null');
   }
   let normalizedReport = report;
   try {
-    const db = await getDb();
-    const previousReport = await db.get(REPORTS_STORE_NAME, report.id);
-    const bundle = buildReportLineageBundle(report, previousReport);
-    normalizedReport = bundle.report;
-    const tx = db.transaction(
-        [REPORTS_STORE_NAME, DATASET_LINEAGE_STORE_NAME],
-        'readwrite',
-    );
-    await tx.objectStore(REPORTS_STORE_NAME).put(toSerializable(normalizedReport));
-    for (const record of bundle.records) {
-        await tx.objectStore(DATASET_LINEAGE_STORE_NAME).put(toSerializable(record));
-    }
-    await tx.done;
-    if (normalizedReport.lineage) {
-        await migrateAgentMemoryDatasetId(
-            db,
-            bundle.legacyDatasetId,
-            normalizedReport.lineage.datasetId,
-        );
-        const evictedVersions = await evictOldDatasetVersions(db, normalizedReport.lineage.datasetId);
-        if (evictedVersions > 0) {
-            console.log(`[StorageCleanup] Evicted ${evictedVersions} old dataset version snapshot(s).`);
-        }
-    }
+    normalizedReport = await writeReportProjection(report);
   } catch (error) {
     if (isQuotaExceededError(error)) {
         console.warn('[saveReport] QuotaExceeded — running cleanup and retrying...');
         await runStorageCleanup(report.id);
         try {
-            const db = await getDb();
-            const previousReport = await db.get(REPORTS_STORE_NAME, report.id);
-            const bundle = buildReportLineageBundle(report, previousReport);
-            normalizedReport = bundle.report;
-            const tx = db.transaction(
-                [REPORTS_STORE_NAME, DATASET_LINEAGE_STORE_NAME],
-                'readwrite',
-            );
-            await tx.objectStore(REPORTS_STORE_NAME).put(toSerializable(normalizedReport));
-            for (const record of bundle.records) {
-                await tx.objectStore(DATASET_LINEAGE_STORE_NAME).put(toSerializable(record));
-            }
-            await tx.done;
+            normalizedReport = await writeReportProjection(report);
         } catch (retryError) {
             console.error('[saveReport] Retry after cleanup also failed:', retryError);
             throw new StorageOperationError('saveReport', retryError);
@@ -1265,7 +1287,10 @@ export const getReport = async (id: string): Promise<Report | undefined> => {
     const db = await getDb();
     const dbMs = performance.now() - start;
     const readStart = performance.now();
-    const report = await db.get(REPORTS_STORE_NAME, id);
+    const tx = db.transaction([REPORTS_STORE_NAME, DATASET_COMMITS_STORE], 'readonly');
+    const stored = await tx.objectStore(REPORTS_STORE_NAME).get(id);
+    const report = stored ? await reconcileReportCommit(tx.objectStore(DATASET_COMMITS_STORE), stored) : undefined;
+    await tx.done;
     const readMs = performance.now() - readStart;
     const totalMs = performance.now() - start;
     if (totalMs > 100) {

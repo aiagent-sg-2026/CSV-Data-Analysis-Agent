@@ -1,7 +1,9 @@
+import { beginRun, finishRun, scopeRunStore, rootStore, ownsRun, assertRunActive, awaitOwned } from '../../services/session/sessionOwnership';
+import { persistCurrentAppSessionSnapshot, queueSessionWrite } from '../../services/persistence/currentSessionPersistence';
 
 import { generateAnalystReportArtifacts } from '../../services/reporting/generateAnalystReportArtifacts';
 import { buildPersistedReportRecord } from '../../services/persistence/persistedAppState';
-import { CURRENT_SESSION_KEY, saveReport } from '../../services/storageService';
+import { saveReport } from '../../services/storageService';
 import { openReportArtifact, printReportArtifact } from '../../services/reporting/reportArtifactViewer';
 import { saveReportArtifacts } from '../../services/reporting/reportArtifactStorage';
 import {
@@ -19,7 +21,8 @@ const REPORT_GENERATION_TIMEOUT_MS = 300_000; // 5 minutes
 let reportAbortController: AbortController | null = null;
 let reportTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
-const cleanupReportAbort = () => {
+const cleanupReportAbort = (controller: AbortController) => {
+    if (reportAbortController !== controller) return;
     if (reportTimeoutHandle) {
         clearTimeout(reportTimeoutHandle);
         reportTimeoutHandle = null;
@@ -56,10 +59,15 @@ export const createAgentReportActions = (
             return;
         }
 
-        const reportRunId = `report-run-${Date.now()}`;
+        const reportRunId = `report-run-${crypto.randomUUID()}`;
+        const originalStore = { getState: get, setState: set };
+        const lease = beginRun(originalStore, 'report', reportRunId);
+        const ownedStore = scopeRunStore(originalStore, lease);
+        const ownedGet = ownedStore.getState;
+        const ownedSet = ownedStore.setState;
         let lastRecordedProgress = -1;
         const updateProgress = (progress: { completed: number; total: number; title: string; subtitle: string }) => {
-            set({
+            ownedSet({
                 reportGenerationProgress: {
                     completed: progress.completed,
                     total: progress.total,
@@ -75,7 +83,7 @@ export const createAgentReportActions = (
             });
             if (progress.completed !== lastRecordedProgress) {
                 lastRecordedProgress = progress.completed;
-                get().recordAgentEvent({
+                ownedGet().recordAgentEvent({
                     runId: reportRunId,
                     phase: 'execution',
                     step: 'analyst_report_progress',
@@ -96,7 +104,7 @@ export const createAgentReportActions = (
             }
         };
 
-        set({
+        ownedSet({
             isGeneratingReport: true,
             reportGenerationProgress: {
                 completed: 0,
@@ -126,20 +134,22 @@ export const createAgentReportActions = (
             },
         });
 
-        const controller = new AbortController();
+        const controller = lease.controller;
         reportAbortController = controller;
         reportTimeoutHandle = setTimeout(() => {
             controller.abort(new Error('Report generation timed out after 5 minutes.'));
         }, REPORT_GENERATION_TIMEOUT_MS);
 
         try {
-            const artifacts = await generateAnalystReportArtifacts(state, state.settings, {
+            const artifacts = await awaitOwned(generateAnalystReportArtifacts(state, state.settings, {
                 onProgress: updateProgress,
                 abortSignal: controller.signal,
-            });
+            }), ownedStore, lease);
+            assertRunActive(ownedStore, lease);
             await saveReportArtifacts(artifacts.manifest.reportId, artifacts.manifest, artifacts.storedArtifactFiles);
+            assertRunActive(ownedStore, lease);
 
-            set((prev: any) => ({
+            ownedSet(prev => ({
                 workspaceFiles: {
                     ...Object.fromEntries(
                         Object.entries(prev.workspaceFiles ?? {}).filter(([path]: [string, unknown]) => !path.startsWith('/workspace/reports/latest-analyst-report.')),
@@ -162,33 +172,22 @@ export const createAgentReportActions = (
                     ],
             }));
 
-            const nextState = get();
+            const nextState = ownedGet();
             const reportGeneratedAt = Number.isNaN(new Date(artifacts.manifest.generatedAt).getTime())
                 ? new Date()
                 : new Date(artifacts.manifest.generatedAt);
             const sessionCreatedAt = nextState.sessionCreatedAt ?? reportGeneratedAt;
             if (!nextState.sessionCreatedAt) {
-                set({ sessionCreatedAt });
+                ownedSet({ sessionCreatedAt });
             }
 
-            const currentSessionReport = buildPersistedReportRecord(nextState, {
-                id: nextState.sessionId,
-                filename: nextState.csvData?.fileName || 'Current Session',
-                createdAt: sessionCreatedAt,
-            });
             const archivedReport = buildPersistedReportRecord(nextState, {
-                id: `report-artifact-${Date.now()}`,
-                filename: artifacts.title,
-                createdAt: reportGeneratedAt,
+                id: `report-artifact-${Date.now()}`, filename: artifacts.title, createdAt: reportGeneratedAt,
             });
-
-            await saveReport(currentSessionReport);
-            await saveReport({
-                ...currentSessionReport,
-                id: CURRENT_SESSION_KEY,
-            });
+            await persistCurrentAppSessionSnapshot(nextState, { store: ownedStore, scope: lease.scope });
+            assertRunActive(ownedStore, lease);
             if (artifacts.artifactStatus !== 'blocked') {
-                await saveReport(archivedReport);
+                await queueSessionWrite(async () => { assertRunActive(ownedStore, lease); await saveReport(archivedReport); });
             }
             await nextState.loadReportsList();
 
@@ -277,12 +276,14 @@ export const createAgentReportActions = (
                 });
             }
         } catch (error) {
+            if (!ownsRun(originalStore, lease)) return;
             const cancelled = isRuntimeAbortError(error, controller.signal);
             const message = cancelled
                 ? 'Report generation was cancelled.'
                 : error instanceof Error ? error.message : String(error);
             console.error('Analyst report generation failed:', error);
-            set({
+            const terminal = cancelled ? rootStore(originalStore) : ownedStore;
+            terminal.setState({
                 isGeneratingReport: false,
                 reportGenerationProgress: null,
                 aiTaskStatus: cancelled ? null : {
@@ -294,11 +295,11 @@ export const createAgentReportActions = (
                     error: message,
                 },
             });
-            get().addProgress(
+            terminal.getState().addProgress(
                 cancelled ? 'Report generation cancelled.' : `Analyst report generation failed: ${message}`,
                 cancelled ? 'system' : 'error',
             );
-            get().recordAgentEvent({
+            terminal.getState().recordAgentEvent({
                 runId: reportRunId,
                 phase: 'execution',
                 step: cancelled ? 'analyst_report_cancelled' : 'analyst_report_failed',
@@ -319,7 +320,9 @@ export const createAgentReportActions = (
                 },
             });
         } finally {
-            cleanupReportAbort();
+            cleanupReportAbort(controller);
+            if (ownsRun(originalStore, lease)) rootStore(originalStore).setState({ isGeneratingReport: false, reportGenerationProgress: null });
+            finishRun(originalStore, lease);
         }
     },
 

@@ -59,6 +59,8 @@ export const useDialogAccessibility = <T extends HTMLElement>(
         const frameId = requestAnimationFrame(focusInitialElement);
 
         const handleKeyDown = (event: KeyboardEvent) => {
+            // Closing the foreground dialog can remove inert before a later listener sees the same event.
+            if (event.defaultPrevented || dialog.closest('[inert]')) return;
             if (event.key === 'Escape') {
                 event.preventDefault();
                 onCloseRef.current();

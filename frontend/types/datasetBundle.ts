@@ -1,4 +1,4 @@
-import type { CsvCellValue } from './intake';
+import type { CsvCellValue, CsvSourceMetadata } from './intake';
 import type { DataOperation } from './operations';
 
 export const DATASET_BUNDLE_SCHEMA_VERSION = 1 as const;
@@ -115,6 +115,7 @@ export interface StructureResolutionOutcome {
 }
 
 export interface DatasetBundleSource {
+    inspection?: CsvSourceMetadata;
     fileName: string;
     fingerprint: string;
     byteSize: number;
@@ -126,6 +127,7 @@ export interface DatasetBundleSource {
  * backing store so large datasets are never duplicated into Zustand.
  */
 export interface DatasetBundle {
+    acceptedCommit?: import('./datasetCommit').DatasetCommitReference;
     schemaVersion: typeof DATASET_BUNDLE_SCHEMA_VERSION;
     bundleId: string;
     source: DatasetBundleSource;

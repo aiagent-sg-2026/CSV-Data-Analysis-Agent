@@ -4,7 +4,9 @@ import { gatePiCreatedCards } from '../services/agent/runtime/pi/piCardEvidenceG
 // Real evidence gate and result summary: guards the trace-to-evidence-plan mapping.
 const makeCard = (id: string) => ({
     id,
-    plan: { title: `Total Value by Project ${id}`, description: 'Value per project.' },
+    plan: { title: `Total Value by Project ${id}`, description: 'Value per project.', chartType: 'bar', aggregation: 'sum', groupByColumn: 'Project', valueColumn: 'total_value' },
+    displayChartType: 'bar',
+    isDataVisible: false,
     aggregatedData: [
         { Project: 'A', total_value: 50 }, { Project: 'B', total_value: 30 }, { Project: 'C', total_value: 20 },
     ],
@@ -39,6 +41,20 @@ const makeStore = (cards: any[]) => {
 };
 
 describe('gatePiCreatedCards with the real evidence gate', () => {
+    it('settles table-only evidence into persisted table presentation without inventing an artifact type', () => {
+        const store = makeStore([makeCard('c1')]);
+        store.getState().latestAnalysisSession.semanticUnderstanding.unsafeForBusinessNarrative = true;
+        const outcome = gatePiCreatedCards(store as never, ['c1']);
+        const saved = JSON.parse(JSON.stringify(store.getState().analysisCards[0]));
+
+        expect(outcome.tableOnlyIds).toEqual(['c1']);
+        expect(saved.evidenceValueGate).toMatchObject({ decision: 'table_only', reasonCodes: expect.arrayContaining(['unsafe_business_narrative']) });
+        expect(saved.plan.presentationMode).toBe('table');
+        expect(saved.isDataVisible).toBe(true);
+        expect(saved.plan.artifactType).toBeUndefined();
+        expect(saved.aggregatedData).toEqual(makeCard('c1').aggregatedData);
+    });
+
     it('stores a gate result on a valid card and rejects an identical second card as a duplicate', () => {
         const store = makeStore([makeCard('c1'), makeCard('c2')]);
 

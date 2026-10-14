@@ -1,3 +1,4 @@
+import { assertRunActive } from '../../../session/sessionOwnership';
 import type { ClarificationOption, ClarificationRequest } from '../../../../types';
 import { createChatMessage } from '../../../../utils/messageState';
 import { getTranslation } from '../../../../utils/localization';
@@ -13,6 +14,7 @@ export const resumePiMutationApproval = async (
     choice: ClarificationOption,
     store: StoreApi,
 ): Promise<void> => {
+    if (store.executionContext) assertRunActive(store, store.executionContext.lease);
     const approval = pending.resumeContext?.piMutationApproval;
     if (!approval) throw new Error('The Pi approval request is unavailable.');
     const state = store.getState();
@@ -43,10 +45,11 @@ export const resumePiMutationApproval = async (
             thought: 'Execute the exact user-approved Pi dataset change.',
             toolName: 'data.mutate',
             args: approval.args,
-        }, store, { toolStage: 'analysis', requireRowDeleteConfirmation: true });
+        }, store, { toolStage: 'analysis', requireRowDeleteConfirmation: true, abortSignal: store.executionContext?.lease.signal });
         message = result.message;
         failed = result.status !== 'success';
     }
+    if (store.executionContext) assertRunActive(store, store.executionContext.lease);
     const turn = store.getState().activeTurn;
     if (!turn) {
         store.setState(prev => ({
@@ -73,7 +76,7 @@ export const resumePiMutationApproval = async (
         turn: finishedTurn,
         preserveActiveTurn: true,
         outcome: {
-            runId: `pi-${turn.turnId}`,
+            runId: turn.runId,
             turnId: turn.turnId,
             sessionId: state.sessionId,
             outcomeKind: failed ? 'failed' : 'accepted',

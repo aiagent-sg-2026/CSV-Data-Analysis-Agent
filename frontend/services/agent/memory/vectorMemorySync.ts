@@ -1,3 +1,5 @@
+import { captureSessionScope, scopeStore } from '../../session/sessionOwnership';
+import type { StoreApi } from '../types';
 import type {
     AnalysisCardData,
     ColumnProfile,
@@ -22,6 +24,7 @@ import {
 } from './memoryScope';
 
 type MemorySyncStore = {
+    isActive?: () => boolean;
     getState: () => {
         analysisCards: AnalysisCardData[];
         columnProfiles: ColumnProfile[];
@@ -39,6 +42,9 @@ type MemorySyncStore = {
     };
     setState: (partial: Record<string, unknown> | ((state: Record<string, unknown>) => Record<string, unknown>)) => void;
 };
+
+const scopedMemoryStore = (store: MemorySyncStore): MemorySyncStore => store.isActive ? store
+    : scopeStore(store as unknown as StoreApi, captureSessionScope(store as unknown as StoreApi)) as unknown as MemorySyncStore;
 
 const LOG_PREFIX = '[VectorMemorySync]';
 
@@ -65,6 +71,7 @@ const resolveScope = (state: ReturnType<MemorySyncStore['getState']>) =>
  * ONNX model initialization. Called during file import (PERF-101).
  */
 export const enqueueDatasetMemoryDocs = (store: MemorySyncStore) => {
+    store = scopedMemoryStore(store);
     const state = store.getState();
     const scope = resolveScope(state);
     if (!scope) return;
@@ -97,6 +104,7 @@ export const upsertCardMemoryDocument = async (
     store: MemorySyncStore,
     cardId: string,
 ) => {
+    store = scopedMemoryStore(store);
     const state = store.getState();
     const scope = resolveScope(state);
     if (!scope) return;
@@ -119,7 +127,9 @@ export const upsertCardMemoryDocument = async (
 
     // If memory is ready, write directly to vector store (PERF-102).
     if (state.vectorMemoryState === 'ready') {
+        if (store.isActive && !store.isActive()) return;
         await vectorStore.addDocument(doc);
+        if (store.isActive && !store.isActive()) return;
         vectorStore.schedulePersist();
         // PERF-308: Skip setState({ vectorStoreDocuments }) during batch upsert.
         // This snapshot is only used for debug display (AgentMemoryView).
@@ -148,6 +158,7 @@ export const upsertCardMemoryDocument = async (
 const FLUSH_BATCH_SIZE = 10;
 
 export const flushPendingVectorMemoryDocs = async (store: MemorySyncStore) => {
+    store = scopedMemoryStore(store);
     const { pendingVectorMemoryDocs } = store.getState();
     if (pendingVectorMemoryDocs.length === 0) return;
 
@@ -160,11 +171,14 @@ export const flushPendingVectorMemoryDocs = async (store: MemorySyncStore) => {
     for (let i = 0; i < pendingVectorMemoryDocs.length; i += FLUSH_BATCH_SIZE) {
         const batch = pendingVectorMemoryDocs.slice(i, i + FLUSH_BATCH_SIZE);
         try {
+            if (store.isActive && !store.isActive()) return;
             await vectorStore.addDocumentBatch(batch);
         } catch (error) {
             console.warn(`${LOG_PREFIX} Batch flush failed (non-blocking):`, error);
         }
     }
+
+    if (store.isActive && !store.isActive()) return;
 
     vectorStore.schedulePersist();
 
@@ -187,6 +201,7 @@ export const rebuildVectorMemoryFromState = async (
         progressMessage?: string;
     } = {},
 ) => {
+    store = scopedMemoryStore(store);
     const { getState, setState } = store;
     const {
         reset = true,
@@ -198,6 +213,7 @@ export const rebuildVectorMemoryFromState = async (
     if (!scope) return;
 
     if (reset) {
+        if (store.isActive && !store.isActive()) return;
         await vectorStore.clear();
         setState({ vectorStoreDocuments: [] });
     }
@@ -227,11 +243,14 @@ export const rebuildVectorMemoryFromState = async (
     // Batch all documents to the worker in one call — the worker runs on a
     // separate thread so there is no main-thread ONNX blocking to yield from.
     if (allDocs.length > 0) {
+        if (store.isActive && !store.isActive()) return;
         await vectorStore.addDocumentBatch(allDocs);
+        if (store.isActive && !store.isActive()) return;
         vectorStore.schedulePersist();
     }
 
     try {
+        if (store.isActive && !store.isActive()) return;
         setState({ vectorStoreDocuments: await vectorStore.getDocuments() });
     } catch {
         // Snapshot fetch timed out — stale local cache is acceptable.
@@ -242,6 +261,7 @@ export const removeCardMemoryDocument = async (
     store: MemorySyncStore,
     cardId: string,
 ) => {
+    store = scopedMemoryStore(store);
     const scope = resolveScope(store.getState());
     // Always purge from the pending queue, regardless of memory state.
     // This prevents a deleted card from being flushed back into the vector
@@ -255,10 +275,12 @@ export const removeCardMemoryDocument = async (
     });
 
     try {
+        if (store.isActive && !store.isActive()) return;
         const deleted = scope
             ? await vectorStore.deleteDocument(buildScopedMemoryDocumentId(scope, cardId))
             : false;
         if (deleted) {
+            if (store.isActive && !store.isActive()) return;
             vectorStore.schedulePersist();
             store.setState({ vectorStoreDocuments: await vectorStore.getDocuments() });
         }
@@ -275,6 +297,7 @@ export const upsertChatInsightDocs = async (
     store: MemorySyncStore,
     insights: ChatInsightDocument[],
 ) => {
+    store = scopedMemoryStore(store);
     if (insights.length === 0) return;
 
     const state = store.getState();
@@ -289,7 +312,9 @@ export const upsertChatInsightDocs = async (
 
     if (state.vectorMemoryState === 'ready') {
         try {
+            if (store.isActive && !store.isActive()) return;
             await vectorStore.addDocumentBatch(scopedInsights);
+            if (store.isActive && !store.isActive()) return;
             vectorStore.schedulePersist();
             store.setState({ vectorStoreDocuments: await vectorStore.getDocuments() });
         } catch (error) {
@@ -315,6 +340,7 @@ export const upsertAcceptedDecisionDoc = async (
     store: MemorySyncStore,
     decision: ResolvedClarification,
 ) => {
+    store = scopedMemoryStore(store);
     const state = store.getState();
     const scope = resolveScope(state);
     if (!scope) return;
@@ -341,7 +367,9 @@ export const upsertAcceptedDecisionDoc = async (
     ));
 
     if (state.vectorMemoryState === 'ready') {
+        if (store.isActive && !store.isActive()) return;
         await vectorStore.addDocument(doc);
+        if (store.isActive && !store.isActive()) return;
         vectorStore.schedulePersist();
         store.setState({ vectorStoreDocuments: await vectorStore.getDocuments() });
         return;
@@ -376,6 +404,7 @@ export const upsertColumnAnnotationDoc = async (
     store: MemorySyncStore,
     annotation: UserColumnAnnotation,
 ) => {
+    store = scopedMemoryStore(store);
     const state = store.getState();
     const scope = resolveScope(state);
     if (!scope) return;
@@ -395,7 +424,9 @@ export const upsertColumnAnnotationDoc = async (
 
     if (state.vectorMemoryState === 'ready') {
         try {
+            if (store.isActive && !store.isActive()) return;
             await vectorStore.addDocument(doc);
+            if (store.isActive && !store.isActive()) return;
             vectorStore.schedulePersist();
         } catch (error) {
             console.warn(`${LOG_PREFIX} upsertColumnAnnotationDoc failed (non-blocking):`, error);
@@ -419,6 +450,7 @@ export const removeColumnAnnotationDoc = async (
     store: MemorySyncStore,
     columnName: string,
 ) => {
+    store = scopedMemoryStore(store);
     const sourceId = buildAnnotationDocId(columnName);
 
     store.setState((prev: Record<string, unknown>) => {
@@ -430,11 +462,12 @@ export const removeColumnAnnotationDoc = async (
     });
 
     try {
+        if (store.isActive && !store.isActive()) return;
         const scope = resolveScope(store.getState());
         const deleted = scope
             ? await vectorStore.deleteDocument(buildScopedMemoryDocumentId(scope, sourceId))
             : false;
-        if (deleted) vectorStore.schedulePersist();
+        if (deleted && store.isActive?.()) vectorStore.schedulePersist();
     } catch (error) {
         console.warn(`${LOG_PREFIX} removeColumnAnnotationDoc failed (non-blocking):`, error);
     }
@@ -447,6 +480,7 @@ export const upsertAnalysisPatternDoc = async (
     store: MemorySyncStore,
     pattern: AnalysisPatternDocument,
 ) => {
+    store = scopedMemoryStore(store);
     const state = store.getState();
     const scope = resolveScope(state);
     if (!scope) return;
@@ -461,7 +495,9 @@ export const upsertAnalysisPatternDoc = async (
     );
     if (state.vectorMemoryState === 'ready') {
         try {
+            if (store.isActive && !store.isActive()) return;
             await vectorStore.addDocument(scopedPattern);
+            if (store.isActive && !store.isActive()) return;
             vectorStore.schedulePersist();
         } catch (error) {
             console.warn(`${LOG_PREFIX} upsertAnalysisPatternDoc failed (non-blocking):`, error);

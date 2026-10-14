@@ -241,6 +241,16 @@ const forum: ForumSummary = {
 };
 
 describe('buildReportVisualSelection', () => {
+    it('exports restricted evidence as a fallback table without chart payload or SVG', () => {
+        const bundle = createBundle();
+        bundle.cards = [{ ...bundle.cards[0], evidenceValueGateDecision: 'table_only' }];
+        const visual = buildReportVisualSelection(bundle, forum, memos)[0];
+        expect(visual.chartType).toBe('table');
+        expect(visual.chartPayload).toBeNull();
+        expect(visual.svgMarkup).toBeNull();
+        expect(visual.fallbackTable?.rows.length).toBeGreaterThan(0);
+    });
+
     it('keeps one lead visual per topic and prefers the stronger card', () => {
         const visuals = buildReportVisualSelection(createBundle(), forum, memos);
 

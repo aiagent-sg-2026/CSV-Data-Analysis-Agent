@@ -11,6 +11,8 @@ import type { ToolGroup, ToolPolicy, ToolStage } from '../types';
 
 export const DEFAULT_TOOL_POLICY: ToolPolicy = {
     allow: [
+        'code.run', 'code.inspect', 'code.cancel', 'computation.validate',
+        'candidate.stage', 'candidate.read', 'candidate.diff', 'candidate.abandon', 'candidate.validate', 'candidate.request_approval', 'candidate.infer_meaning',
         // Analysis
         'analysis.create_plan',
         'analysis.correlation',
@@ -75,6 +77,7 @@ export const DEFAULT_TOOL_POLICY: ToolPolicy = {
 
 export const STAGE_GROUP_ALLOWLIST: Record<ToolStage, ToolGroup[]> = {
     cleaning: [
+        'code.execute', 'code.inspect',
         'workspace.inspect', 'workspace.inspect.tree', 'workspace.inspect.diff',
         'workspace.edit',
         'data.mutation', 'data.query', 'data.diagnostic',
@@ -82,6 +85,8 @@ export const STAGE_GROUP_ALLOWLIST: Record<ToolStage, ToolGroup[]> = {
         'cleaning.inspect', 'cleaning.edit', 'cleaning.verify', 'cleaning.verify.query',
     ],
     analysis: [
+        'code.execute', 'code.inspect',
+        'workspace.edit',
         'analysis.plan', 'analysis.validate', 'analysis.statistics',
         'analysis.matrix', 'analysis.compare', 'analysis.cohort', 'analysis.diagnose', 'analysis.presentation',
         'card.aggregate', 'card.mutate', 'card.review',
@@ -92,6 +97,7 @@ export const STAGE_GROUP_ALLOWLIST: Record<ToolStage, ToolGroup[]> = {
         'conversation.clarification',
     ],
     debug: [
+        'code.inspect',
         'data.query',
         'workspace.inspect', 'workspace.inspect.tree', 'workspace.inspect.diff',
     ],

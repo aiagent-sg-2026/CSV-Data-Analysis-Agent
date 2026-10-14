@@ -1,3 +1,4 @@
+import { orderedPredicateValue } from '../agent/execution/queryPredicateValue';
 /**
  * Arquero-based browser-native query execution engine.
  *
@@ -71,7 +72,8 @@ type FilterPred = { column: string; operator: string; value?: unknown; secondary
 const evaluatePredicate = (row: CsvRow, pred: FilterPred): boolean => {
     const rawValue = row[pred.column];
     const strValue = rawValue == null ? '' : String(rawValue);
-    const numValue = typeof rawValue === 'number' ? rawValue : robustParseFloat(rawValue);
+    const numValue = orderedPredicateValue(rawValue);
+    const bound = orderedPredicateValue(pred.value);
 
     switch (pred.operator) {
         case 'eq':
@@ -81,13 +83,13 @@ const evaluatePredicate = (row: CsvRow, pred: FilterPred): boolean => {
         case 'not_equals':
             return strValue.toLowerCase() !== String(pred.value ?? '').toLowerCase();
         case 'gt':
-            return numValue !== null && numValue > Number(pred.value);
+            return numValue !== null && bound !== null && numValue > bound;
         case 'gte':
-            return numValue !== null && numValue >= Number(pred.value);
+            return numValue !== null && bound !== null && numValue >= bound;
         case 'lt':
-            return numValue !== null && numValue < Number(pred.value);
+            return numValue !== null && bound !== null && numValue < bound;
         case 'lte':
-            return numValue !== null && numValue <= Number(pred.value);
+            return numValue !== null && bound !== null && numValue <= bound;
         case 'contains':
             return strValue.toLowerCase().includes(String(pred.value ?? '').toLowerCase());
         case 'starts_with':
@@ -112,9 +114,11 @@ const evaluatePredicate = (row: CsvRow, pred: FilterPred): boolean => {
                 return !lowerSet.has(strValue.toLowerCase());
             }
             return true;
-        case 'between':
-            if (numValue === null) return false;
-            return numValue >= Number(pred.value) && numValue <= Number(pred.secondaryValue ?? pred.value);
+        case 'between': {
+            const range = Array.isArray(pred.value) ? pred.value : [pred.value, pred.secondaryValue ?? pred.value];
+            const low = orderedPredicateValue(range[0]), high = orderedPredicateValue(range[1]);
+            return numValue !== null && low !== null && high !== null && numValue >= low && numValue <= high;
+        }
         default:
             return true;
     }

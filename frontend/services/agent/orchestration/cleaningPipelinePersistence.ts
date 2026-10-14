@@ -35,6 +35,7 @@ import {
 import { isStructuralMetadataColumn } from '../structuralMetadata';
 import { commitVerifiedPrimaryTableTransformation } from '../../data/datasetBundle';
 import { commitVerifiedSandboxTransformation } from '../../data/sandboxDatasetCommit';
+import { getCsvDatasetVersion } from '../../../utils/datasetId';
 
 const logCleaningPersistStage = (stage: string, startedAt: number, detail?: string) => {
     const suffix = detail ? ` | ${detail}` : '';
@@ -177,6 +178,7 @@ export const persistSuccessfulCleaning = async ({
                 data: normalizedData,
                 operations: persistedPlan.operations,
                 runId: prev.cleaningRun?.runId ?? null,
+                inputVersion: prev.csvData ? getCsvDatasetVersion(prev.csvData) : undefined,
             }),
         columnRegistry: buildEffectiveColumnRegistryFromState({
             ...prev,

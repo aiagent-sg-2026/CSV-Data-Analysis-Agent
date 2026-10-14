@@ -1,3 +1,5 @@
+import { throwIfGatewayAborted } from './demoGatewayAbort';
+
 /**
  * Each demo session allows 2 concurrent requests. Queue requests client-side
  * so bursts wait instead of failing with DEMO_SESSION_CONCURRENCY_LIMIT.
@@ -6,7 +8,7 @@ export const DEMO_SESSION_MAX_CONCURRENT_REQUESTS = 2;
 
 export interface ConcurrencyLimiter {
     /** Resolves with a one-shot release function once a slot is free. */
-    acquire: () => Promise<() => void>;
+    acquire: (signal?: AbortSignal) => Promise<() => void>;
 }
 
 export const createConcurrencyLimiter = (max: number): ConcurrencyLimiter => {
@@ -25,9 +27,24 @@ export const createConcurrencyLimiter = (max: number): ConcurrencyLimiter => {
     };
 
     return {
-        acquire: () => new Promise(resolve => {
-            if (active < max) resolve(grant());
-            else waiting.push(() => resolve(grant()));
+        acquire: (signal?: AbortSignal) => new Promise((resolve, reject) => {
+            throwIfGatewayAborted(signal);
+            if (active < max) {
+                resolve(grant());
+                return;
+            }
+            const enter = () => {
+                signal?.removeEventListener('abort', abort);
+                resolve(grant());
+            };
+            const abort = () => {
+                const index = waiting.indexOf(enter);
+                if (index >= 0) waiting.splice(index, 1);
+                signal?.removeEventListener('abort', abort);
+                reject(signal?.reason ?? new DOMException('Gateway slot wait cancelled.', 'AbortError'));
+            };
+            waiting.push(enter);
+            signal?.addEventListener('abort', abort, { once: true });
         }),
     };
 };
@@ -42,21 +59,40 @@ export const releaseWhenBodyDone = (
     response: Response,
     releaseSlot: () => void,
     maxHoldMs = MAX_SLOT_HOLD_MS,
+    signal?: AbortSignal,
 ): Response => {
     if (!response.body || NULL_BODY_STATUSES.has(response.status)) {
         releaseSlot();
         return response;
     }
-    const holdTimer = setTimeout(releaseSlot, maxHoldMs);
+    let finished = false;
+    let streamController: ReadableStreamDefaultController<Uint8Array>;
+    const reader = response.body.getReader();
     const release = () => {
+        if (finished) return;
+        finished = true;
         clearTimeout(holdTimer);
+        signal?.removeEventListener('abort', abort);
         releaseSlot();
     };
-    const reader = response.body.getReader();
+    const terminate = (reason: unknown) => {
+        if (finished) return;
+        release();
+        streamController.error(reason);
+        void reader.cancel(reason).catch(() => undefined);
+    };
+    const abort = () => terminate(signal?.reason ?? new DOMException('Gateway stream cancelled.', 'AbortError'));
+    const holdTimer = setTimeout(() => terminate(new DOMException('Gateway response body timed out.', 'TimeoutError')), maxHoldMs);
     const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+            streamController = controller;
+            if (signal?.aborted) abort();
+            else signal?.addEventListener('abort', abort, { once: true });
+        },
         async pull(controller) {
             try {
                 const { done, value } = await reader.read();
+                if (finished) return;
                 if (done) {
                     controller.close();
                     release();
@@ -64,6 +100,7 @@ export const releaseWhenBodyDone = (
                     controller.enqueue(value);
                 }
             } catch (error) {
+                if (finished) return;
                 release();
                 controller.error(error);
             }

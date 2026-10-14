@@ -71,10 +71,11 @@ export const detectMissingDataPatterns = async (
     try {
         const result = await duckDbWorkerClient.executeCompiledQuery({
             sql,
-            countSql: 'SELECT 1 AS total',
+            countSql: `SELECT COUNT(*) AS total FROM (${sql}) AS __counted`,
             selectedColumns,
             appliedOrderBy: [],
             appliedLimit: 1,
+            expectedBinding: binding,
         }, QUERY_TIMEOUT_MS);
 
         if (result.rows.length === 0) return [];

@@ -5,6 +5,7 @@ import { generateAllSummaries } from '../../execution/summaryManager';
 import { enqueueDatasetMemoryDocs } from '../../memory/vectorMemorySync';
 import { resolveAnalysisDatasetProfiles } from '../../analysisDatasetProfiles';
 import { getPreferredAnalysisDataset } from '../../reportStructureState';
+import { getCsvDatasetVersion } from '../../../../utils/datasetId';
 import { applyPreparationPlanToCanonicalDataset } from '../../orchestration/canonicalPreparation';
 import { orchestrateAutonomousAiCleaning } from '../../orchestration/autonomousCleaningPipeline';
 import { resolveReportStructureArtifactsWithProposal } from '../../orchestration/reportStructureOrchestrator';
@@ -165,6 +166,20 @@ export const createInitialAnalysisStageExecutors = (
             const artifacts = await resolveAndCommitStructure(context, bindings);
             const resolution = artifacts.reportStructureResolution;
             if (!resolution || !artifacts.canonicalCsvData) {
+                const state = context.store.getState();
+                // Dirty input may be exactly what the qualified coding task must repair.
+                // Keep the failed structure projection; only a validated exact commit or the
+                // later prepared-data gate can authorize analysis of the resulting dataset.
+                if (resolution && context.store.executorPreparation?.mode === 'qualified'
+                    && context.store.codeExecution && context.store.candidateStaging
+                    && !state.datasetBundle?.acceptedCommit && state.csvData?.data.length) {
+                    return createResult({
+                        context, phase: 'inspect_structure', toolName: 'dataset.profileStructure',
+                        decision: 'warn', warningCodes: ['coding_repair_required'],
+                        summary: 'The imported structure needs repair. Inspect source evidence and validate a candidate before analysis.',
+                        artifactRefs: [`report-structure:${resolution.source}`],
+                    });
+                }
                 return createResult({
                     context,
                     phase: 'inspect_structure',
@@ -249,6 +264,15 @@ export const createInitialAnalysisStageExecutors = (
 
         'dataset.applyTransform': async context => {
             assertNotAborted(context.signal);
+            // Shared preparation is staging-only until initial validation/approval continuation is qualified.
+            // The legacy pipeline publishes directly and cannot serve as a substitute commit authority.
+            if (context.store.executorPreparation?.entryPoint === 'initial_analysis') {
+                return createResult({
+                    context, phase: 'apply_safe_cleaning', toolName: 'dataset.applyTransform', decision: 'fail',
+                    summary: 'Shared initial cleaning requires an independent host meaning contract and qualified exact approval continuation.',
+                    warningCodes: ['shared_initial_cleaning_not_qualified'],
+                });
+            }
             const sourceDataset = getPreferredAnalysisDataset(context.store.getState());
             if (sourceDataset?.backing?.mode === 'duckdb_file') {
                 const existingRun = context.store.getState().cleaningRun ?? createCleaningRun();
@@ -299,6 +323,19 @@ export const createInitialAnalysisStageExecutors = (
         },
 
         'dataset.validatePreparedData': async context => {
+            if(context.store.executorPreparation?.mode==='qualified'){
+                assertNotAborted(context.signal);
+                const state=context.store.getState(),bundle=state.datasetBundle;
+                if(bundle?.acceptedCommit){
+                    const ready=state.datasetCommitBindingStatus==='ready'&&currentVersion(context)===bundle.datasetVersion
+                        &&Boolean(state.csvData?.data.length)&&getCsvDatasetVersion(state.csvData!)===bundle.datasetVersion
+                        &&bundle.tables.find(t=>t.tableId===bundle.primaryTableId)?.rowCount===state.csvData?.data.length;
+                    // The exact committed material is authoritative; original intake heuristics cannot reshape it again.
+                    return createResult({context,phase:'verify_prepared_data',toolName:'dataset.validatePreparedData',decision:ready?'pass':'fail',
+                        summary:ready?'The exact committed dataset is ready for current-version analysis.':'The committed dataset is not bound or complete.',
+                        warningCodes:ready?[]:['committed_dataset_not_bound'],artifactRefs:[`dataset-commit:${bundle.acceptedCommit.commitId}`]});
+                }
+            }
             const artifacts = await resolveAndCommitStructure(context, bindings);
             const outcome = artifacts.pipelineOutcome;
             const analysisDataset = getPreferredAnalysisDataset(context.store.getState());
@@ -410,7 +447,7 @@ export const createInitialAnalysisStageExecutors = (
             if (
                 !dataset
                 || (
-                    state.pipelineOutcome?.canAutoAnalyze === false
+                    state.pipelineOutcome?.canAutoAnalyze === false && !(context.store.executorPreparation?.mode==='qualified'&&state.datasetCommitBindingStatus==='ready'&&state.datasetBundle?.acceptedCommit)
                     && !readOnlyEvidenceFallback
                 )
             ) {
@@ -572,6 +609,9 @@ export const createInitialAnalysisStageExecutors = (
             context.signal.removeEventListener('abort', forwardRuntimeAbort);
             if (summaryOutcome === 'aborted') assertNotAborted(context.signal);
             const state = context.store.getState();
+            const hasFreshReport = context.store.executorPreparation?.mode !== 'qualified'
+                || Boolean((state.finalSummary && state.finalSummary !== initialState.finalSummary)
+                    || (state.aiCoreAnalysisSummary && state.aiCoreAnalysisSummary !== initialState.aiCoreAnalysisSummary));
             const version = getCurrentAnalysisDatasetVersion(state);
             const completionGate = resolveAnalysisCompletionGate({
                 cards: state.analysisCards,
@@ -584,7 +624,7 @@ export const createInitialAnalysisStageExecutors = (
                 context,
                 phase: 'finalize_artifacts',
                 toolName: 'analysis.finalizeArtifacts',
-                decision: verifiedCards.length > 0 && summaryOutcome === 'completed' ? 'pass' : 'warn',
+                decision: verifiedCards.length > 0 && summaryOutcome === 'completed' && hasFreshReport ? 'pass' : 'warn',
                 summary: summaryOutcome === 'timed_out'
                     ? 'Analysis cards were finalized, but AI summary synthesis exceeded its time budget.'
                     : verifiedCards.length > 0

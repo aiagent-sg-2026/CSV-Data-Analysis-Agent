@@ -78,6 +78,20 @@ const lastNonBlankIndex = (row: string[] | undefined): number => {
     return -1;
 };
 
+// A compacted outer row cannot safely assign positional bands to a wider,
+// dense leaf schema. Intake merging and shape routing must agree on this.
+export const hasCompactedOuterHeader = (outerRow: string[], leafRow: string[]): boolean => {
+    const leafWidth = lastNonBlankIndex(leafRow) + 1;
+    const outerWidth = lastNonBlankIndex(outerRow) + 1;
+    const leafValues = leafRow.slice(0, leafWidth).map(normalizeReportCellText).filter(Boolean);
+    const outerNonEmptyCount = outerRow.slice(0, outerWidth).filter(normalizeReportCellText).length;
+    return outerWidth >= 4
+        && leafWidth >= outerWidth + 3
+        && leafValues.length / Math.max(leafWidth, 1) >= 0.8
+        && new Set(leafValues).size / Math.max(leafValues.length, 1) >= 0.65
+        && outerNonEmptyCount / Math.max(outerWidth, 1) >= 0.7;
+};
+
 export const buildMergedBoundaryHeaders = (
     rawRows: string[][],
     boundary: Pick<ReportBoundary, 'headerRowIndex' | 'headerLayerRowIndexes'>,
@@ -120,23 +134,7 @@ export const buildMergedBoundaryHeaders = (
     // complete leaf schema instead of inventing misaligned band ownership.
     const leafRow = rawRows[headerIndexes[headerIndexes.length - 1]] ?? [];
     const outerRow = headerIndexes.length === 2 ? rawRows[headerIndexes[0]] ?? [] : null;
-    const leafWidth = lastNonBlankIndex(leafRow) + 1;
-    const outerWidth = lastNonBlankIndex(outerRow ?? undefined) + 1;
-    const leafNonEmptyCount = leafRow.slice(0, leafWidth).filter(value => normalizeReportCellText(value)).length;
-    const leafDistinctCount = new Set(
-        leafRow.slice(0, leafWidth).map(value => normalizeReportCellText(value)).filter(Boolean),
-    ).size;
-    const outerNonEmptyCount = (outerRow ?? []).slice(0, outerWidth).filter(value => normalizeReportCellText(value)).length;
-    const compactedOuterHeader = Boolean(
-        outerRow
-        && outerWidth >= 4
-        && leafWidth >= outerWidth + 3
-        && leafNonEmptyCount / Math.max(leafWidth, 1) >= 0.8
-        && leafDistinctCount / Math.max(leafNonEmptyCount, 1) >= 0.65
-        && outerNonEmptyCount / Math.max(outerWidth, 1) >= 0.7,
-    );
-
-    if (compactedOuterHeader) {
+    if (outerRow && hasCompactedOuterHeader(outerRow, leafRow)) {
         return Array.from({ length: columnCount }, (_, columnIndex) => (
             sanitizeHeaderName(String(leafRow[columnIndex] ?? ''), columnIndex, seen)
         ));

@@ -338,7 +338,7 @@ export const workspaceListSchema = {
 
 export const workspacePathSchema = {
     type: 'object',
-    properties: { path: { type: 'string' } },
+    properties: { path: { type: 'string' }, startOffset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 0, maximum: 3000 }, revision: { type: 'integer', minimum: 1 }, startRow: { type: 'integer', minimum: 0 }, rowCount: { type: 'integer', minimum: 0, maximum: 50 }, byteOffset: { type: 'integer', minimum: 0 }, byteLength: { type: 'integer', minimum: 0, maximum: 65536 } },
     required: ['path'],
 };
 
@@ -367,6 +367,8 @@ export const workspaceDiffSchema = {
     properties: {
         path: { type: 'string' },
         comparePath: { type: 'string' },
+        revision: { type: 'integer', minimum: 1 },
+        compareRevision: { type: 'integer', minimum: 1 },
         limit: { type: 'integer' },
     },
     required: ['path'],
@@ -375,21 +377,23 @@ export const workspaceDiffSchema = {
 export const workspaceReplaceSchema = {
     type: 'object',
     properties: {
+        expectedRevision: { type: 'integer', minimum: 0 },
         path: { type: 'string' },
         oldText: { type: 'string' },
         newText: { type: 'string' },
         replaceAll: { type: 'boolean' },
     },
-    required: ['path', 'oldText', 'newText'],
+    required: ['path', 'oldText', 'newText', 'expectedRevision'],
 };
 
 export const workspaceWriteSchema = {
     type: 'object',
     properties: {
+        expectedRevision: { type: 'integer', minimum: 0 },
         path: { type: 'string' },
         content: { type: 'string' },
     },
-    required: ['path', 'content'],
+    required: ['path', 'content', 'expectedRevision'],
 };
 
 export const analysisPlanSchema = (columnNames: string[]) => ({

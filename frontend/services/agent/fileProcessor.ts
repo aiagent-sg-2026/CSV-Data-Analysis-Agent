@@ -1,3 +1,4 @@
+import { captureCsvSource } from '../data/immutableCsvSource';
 import {
     CanonicalizationStatus,
     ColumnProfile,
@@ -152,6 +153,8 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
         detail: { fileName: file.name, size: file.size },
     });
 
+    const sourceInspection = await captureCsvSource(store, file);
+    const sourceSessionId = store.getState().sessionId;
     let sourceDatasetId: string | null = null;
     let parsedData: CsvData;
     let intakeIr: ReportIntakeIr;
@@ -161,7 +164,7 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
             message: 'Large-file mode: loading the original CSV directly into the local query engine...',
         };
         const identity = await buildDuckDbFileIdentity(file);
-        const sessionId = store.getState().sessionId;
+        const sessionId = sourceSessionId;
         let opfsPath: string | null = null;
         try {
             await cleanupStaleOpfsSessions([sessionId]);
@@ -491,6 +494,9 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
         },
     });
 
+    datasetBundle.source.inspection = sourceInspection;
+    workspaceFiles['/intake/source.json'] = JSON.stringify(sourceInspection, null, 2);
+    workspaceFiles['/intake/source-records.json'] = JSON.stringify({ source: sourceInspection, readWith: 'workspace.read', startRow: 0, rowCount: 50, note: 'Read positional ranges from the live source handle; metadata-only History requires source reattachment.' }, null, 2);
     console.log(`${LOG_PREFIX} AI-first intake complete for ${file.name}.`);
 
     return {

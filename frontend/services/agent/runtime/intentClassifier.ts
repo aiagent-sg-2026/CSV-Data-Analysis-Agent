@@ -38,6 +38,7 @@ import { isValidTaskSignal, isValidExpectedOutput } from './queryUnderstandingRe
 // ─── Phase 1a: Rich AI classification (AGENT-101) ──────────────────────
 
 interface RawAiArtifact {
+    requestedDataPreparation?: QueryUnderstandingArtifact['requestedDataPreparation'];
     intent?: string;
     confidence?: string;
     taskSignal?: string;
@@ -46,6 +47,10 @@ interface RawAiArtifact {
     aggregationFunctions?: string[];
     groupingColumns?: string[];
     filterDescription?: string | null;
+    requestedComputationScope?: QueryUnderstandingArtifact['requestedComputationScope'];
+    queryCalculation?: import('./pi/queryEvidence').QueryCalculation;
+    requestedQueryScopes?: QueryUnderstandingArtifact['requestedQueryScopes'];
+    resultCompleteness?: 'complete' | 'bounded';
     subjectRefs?: string[];
     timeScope?: { kind?: string; value?: string };
     comparisonScope?: { kind?: string; value?: string };
@@ -221,6 +226,11 @@ const buildArtifactFromAiResponse = (
     );
 
     return {
+        requestedDataPreparation: raw.requestedDataPreparation,
+        requestedComputationScope: raw.requestedComputationScope,
+        queryCalculation: raw.queryCalculation,
+        requestedQueryScopes: Array.isArray(raw.requestedQueryScopes) ? raw.requestedQueryScopes : undefined,
+        resultCompleteness: raw.resultCompleteness === 'complete' ? 'complete' : 'bounded',
         intent,
         confidence,
         taskSignal,

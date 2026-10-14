@@ -47,7 +47,7 @@ const writeAll = (skills: Record<string, string>): void => {
 
 /** Stored user skills as virtual workspace-style files (`skills/<name>/SKILL.md` → text). */
 export const readUserSkillSources = (): Record<string, string> =>
-    Object.fromEntries(Object.entries(readAll()).map(([name, text]) => [virtualPath(name), text]));
+    Object.fromEntries(Object.entries(readAll()).map(([name, text]) => [name.startsWith('skills/')?name:virtualPath(name), text]));
 
 export const subscribeUserSkills = (listener: () => void): (() => void) => {
     listeners.add(listener);
@@ -91,8 +91,14 @@ export const importUserSkills = (files: Array<{ fileName: string; text: string }
     const current = readAll();
     const next = { ...current };
     const result: UserSkillImportResult = { added: [], rejected: [] };
-
+    const consumed=new Set<string>();
+    const declaredImports=new Set(files.flatMap(file=>{
+        const parsed=file.fileName.endsWith('.md')?parseSkillMarkdown(file.text,file.fileName):null;
+        const prefix=file.fileName.slice(0,file.fileName.lastIndexOf('/')+1);
+        return parsed?.skill?.manifest?.supportingFiles.map(support=>prefix+support.path)??[];
+    }));
     for (const { fileName, text } of files) {
+        if(!fileName.endsWith('.md')||declaredImports.has(fileName))continue;
         if (text.length > MAX_USER_SKILL_CHARS) {
             result.rejected.push({ fileName, reason: `The file is longer than ${MAX_USER_SKILL_CHARS.toLocaleString()} characters.` });
             continue;
@@ -102,14 +108,24 @@ export const importUserSkills = (files: Array<{ fileName: string; text: string }
             result.rejected.push({ fileName, reason: parsed.diagnostic?.message ?? 'The file is not a valid skill.' });
             continue;
         }
-        if (!(parsed.skill.name in next) && Object.keys(next).length >= MAX_USER_SKILLS) {
+        if (!(parsed.skill.name in next) && Object.keys(next).filter(name=>!name.startsWith('skills/')).length >= MAX_USER_SKILLS) {
             result.rejected.push({ fileName, reason: `At most ${MAX_USER_SKILLS} skills can be added. Remove one first.` });
             continue;
         }
         next[parsed.skill.name] = text;
+        consumed.add(fileName);
+        const prefix=fileName.slice(0,fileName.lastIndexOf('/')+1),target=virtualPath(parsed.skill.name).replace('SKILL.md','');
+        const previous={...next};
+        for(const key of Object.keys(next))if(key.startsWith(target))delete next[key];
+        for(const support of parsed.skill.manifest?.supportingFiles??[]){
+            const source=files.filter(file=>file.fileName===prefix+support.path);
+            if(source.length===1&&source[0].text.length<=65_536){next[target+support.path]=source[0].text;consumed.add(source[0].fileName);}
+            else if(!source.length&&typeof previous[target+support.path]==='string')next[target+support.path]=previous[target+support.path];
+        }
         result.added.push(parsed.skill.name);
     }
-
+    for(const file of files)if(!consumed.has(file.fileName)&&!result.rejected.some(r=>r.fileName===file.fileName))
+        result.rejected.push({fileName:file.fileName,reason:'Undeclared, missing-package or oversized supporting file. Import its manifest folder.'});
     if (result.added.length > 0) writeAll(next);
     return result;
 };
@@ -121,8 +137,13 @@ export const importUserSkills = (files: Array<{ fileName: string; text: string }
 export const saveEditedUserSkill = (
     originalName: string,
     text: string,
+    supportingSources:Record<string,string>={},
 ): { ok: boolean; name?: string; reason?: string } => {
-    const result = importUserSkills([{ fileName: `${originalName}.md`, text }]);
+    const declared=parseSkillMarkdown(text,'SKILL.md').skill?.manifest?.supportingFiles??[];
+    const sources={...supportingSources,...Object.fromEntries(Object.entries(readUserSkillSources())
+        .filter(([path])=>path.startsWith(`skills/${originalName}/`)).map(([path,value])=>[path.slice(`skills/${originalName}/`.length),value]))};
+    const result = importUserSkills([{ fileName: `${originalName}/SKILL.md`, text },...declared.flatMap(file=>
+        typeof sources[file.path]==='string'?[{fileName:`${originalName}/${file.path}`,text:sources[file.path]}]:[])]);
     if (result.rejected.length > 0) return { ok: false, reason: result.rejected[0].reason };
     const name = result.added[0];
     if (name !== originalName) {
@@ -136,7 +157,7 @@ export const saveEditedUserSkill = (
 export const removeUserSkill = (name: string): void => {
     const current = readAll();
     if (!(name in current)) return;
-    const { [name]: _removed, ...rest } = current;
+    const rest=Object.fromEntries(Object.entries(current).filter(([key])=>key!==name&&!key.startsWith(`skills/${name}/`)));
     writeAll(rest);
 };
 

@@ -6,6 +6,7 @@ import { IconMoreHorizontal } from '../../icons/IconMoreHorizontal';
 import { ChartTypeIcon } from './chartTypePresentation';
 import { resolveDisplayPlanDescription, resolveDisplayPlanTitle, resolvePlanGroupLabel, resolvePlanMetricLabel } from '../../services/dashboard/businessLabelResolver';
 import { getTranslation } from '../../utils/localization';
+import { shouldHideCardChart } from '../../utils/analysisCardPresentationPolicy';
 
 interface AnalysisCardHeaderProps {
     cardId?: string;
@@ -274,7 +275,7 @@ const AnalysisCardHeaderComponent: React.FC<AnalysisCardHeaderProps> = ({
                             <path strokeLinecap="round" strokeLinejoin="round" d="M6 8l4 4 4-4" />
                         </svg>
                     </button>
-                    {plan.artifactType !== 'pivot_matrix' && !plan.artifactMetadata?.hideChartByDefault && (<div className="relative" ref={chartMenuRef}>
+                    {plan.artifactType !== 'pivot_matrix' && !shouldHideCardChart(plan) && (<div className="relative" ref={chartMenuRef}>
                         <button
                             ref={chartButtonRef}
                             type="button"
@@ -359,7 +360,7 @@ const AnalysisCardHeaderComponent: React.FC<AnalysisCardHeaderProps> = ({
                             onKeyDown={handleMenuKeyDown('export')}
                             className="absolute right-0 z-10 mt-2 w-52 max-w-[calc(100vw-2rem)] rounded-card border border-slate-200 bg-white p-1 shadow-lg"
                         >
-                            {!plan.artifactMetadata?.hideChartByDefault && <button
+                            {!shouldHideCardChart(plan) && <button
                                 ref={element => {
                                     exportItemRefs.current[0] = element;
                                 }}

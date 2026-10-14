@@ -353,7 +353,7 @@ vi.mock('../services/data/dataProfiler', async (importOriginal) => {
 
 // --- Test fixtures ---
 
-const makeMockFile = () => ({ name: 'test.csv', size: 1000 } as File);
+const makeMockFile = () => (new File(['name,amount\nexample,1\n'], 'test.csv'));
 
 const makeParsedCsvData = () => ({
     data: [

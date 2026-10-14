@@ -7,6 +7,7 @@ import { trimProgressMessages } from '../../../utils/storeLimits';
 import { DEFAULT_STACKED_PIVOT_COLUMN_TOP_N } from '../../../utils/pivotMatrixCharting';
 import { getAvailableChartTypes, getRecommendedPivotChartType } from '../../../utils/chartTypeUtils';
 import { isAdditiveAggregation } from '../../../utils/analysisCardPresentation';
+import { resolveCardPresentationPlan, isTableOnlyPresentation } from '../../../utils/analysisCardPresentationPolicy';
 import { applyMultiSeriesUpgrade } from './presentationSkill';
 import { isStructuralMetadataColumn } from '../structuralMetadata';
 import { isTimeLikeDimensionColumn } from '../analysisColumnRoles';
@@ -104,6 +105,7 @@ export const createNewCard = async (
     if (upgradeResult.upgraded) {
         plan = upgradeResult.plan;
     }
+    plan = resolveCardPresentationPlan({ plan, evidenceValueGate: annotations?.evidenceValueGate });
     const provenance = annotations?.provenance ?? buildAnalysisArtifactProvenance(plan, getState(), {
         queryTrace: annotations?.queryTrace,
         sourceStepIds: annotations?.sourceStepIds,
@@ -116,12 +118,20 @@ export const createNewCard = async (
             buildCardSemanticFingerprint(card.plan, card.provenance?.datasetVersion) === semanticFingerprint)
         : undefined;
     if (duplicateCard) {
+        // Reusing the same query must not bypass a newly imposed evidence restriction.
+        const restricted = annotations?.evidenceValueGate?.decision === 'table_only'
+            ? { ...duplicateCard, evidenceValueGate: annotations.evidenceValueGate }
+            : null;
+        const reusedCard = restricted
+            ? { ...restricted, plan: resolveCardPresentationPlan(restricted), isDataVisible: true }
+            : duplicateCard;
         const duplicateTitle = buildDisplayAnalysisIr(
-            duplicateCard,
+            reusedCard,
             getState().analysisCards,
             getState().columnProfiles,
         ).displayTitle;
         setState(previous => ({
+            ...(restricted ? { analysisCards: previous.analysisCards.map(card => card.id === reusedCard.id ? reusedCard : card) } : {}),
             progressMessages: trimProgressMessages([
                 ...previous.progressMessages,
                 createProgressMessage({
@@ -131,7 +141,7 @@ export const createNewCard = async (
                 }),
             ]),
         }));
-        return duplicateCard;
+        return reusedCard;
     }
 
     const provisionalCard: AnalysisCardData = {
@@ -140,7 +150,7 @@ export const createNewCard = async (
         aggregatedData,
         summary: { language, text: '' },
         displayChartType: resolveDisplayChartType(plan, aggregatedData),
-        isDataVisible: plan.defaultDataVisible ?? false,
+        isDataVisible: isTableOnlyPresentation(plan) || (plan.defaultDataVisible ?? false),
         topN: null,
         hideOthers: false,
         hideZeroValueRows: false,
@@ -182,7 +192,7 @@ export const createNewCard = async (
         aggregatedData,
         summary,
         displayChartType: resolveDisplayChartType(plan, aggregatedData),
-        isDataVisible: plan.defaultDataVisible ?? false,
+        isDataVisible: isTableOnlyPresentation(plan) || (plan.defaultDataVisible ?? false),
         topN: plan.disableTopNControls || preserveFullSeries
             ? null
             : (plan.chartType !== 'scatter' && aggregatedData.length > 15 ? 8 : (plan.defaultTopN || null)),

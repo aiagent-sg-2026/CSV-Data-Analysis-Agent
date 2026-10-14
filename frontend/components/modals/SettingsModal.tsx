@@ -24,6 +24,7 @@ import { clearCloudAiConsentRuntimeDecisions } from '../../services/privacy/clou
 import { usePwaLifecycle } from '../../hooks/usePwaLifecycle';
 import { refreshPwaStorageEstimate } from '../../services/pwa/pwaManager';
 import { AgentSkillsSection } from './AgentSkillsSection';
+import { McpConnectorsSection } from './McpConnectorsSection';
 
 const languages: Settings['language'][] = SUPPORTED_APP_LANGUAGES;
 const googleModels = [...GOOGLE_MODELS];
@@ -478,6 +479,7 @@ export const SettingsModal: React.FC = () => {
                         </div>
 
                         <AgentSkillsSection language={language} />
+                        <McpConnectorsSection />
 
                         <div className="rounded-card border border-red-200 bg-red-50 p-4">
                             <h3 className="text-sm font-semibold text-slate-950">

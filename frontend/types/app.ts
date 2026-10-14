@@ -146,6 +146,10 @@ export interface UserColumnAnnotation {
 }
 
 export interface AppState {
+    datasetCommitBindingStatus?: import('./datasetCommit').DatasetCommitBindingStatus;
+    candidateRecovery?: import('../services/data/datasetRecoveryContract').CandidateRecoveryCheckpoint | null;
+    activeAgentTask?: import('../services/agent/runtime/pi/piTaskContract').AgentTaskContract | null;
+    taskInspection?: import('../services/agent/runtime/pi/piTaskInspection').TaskInspectionProjection | null;
     sessionId: string;
     currentView: AppView;
     isAppInitializing: boolean;
@@ -203,6 +207,13 @@ export interface AppState {
     visibleAnalysisTrace: VisibleAnalysisTraceEntry[];
     aiTaskStatus: AiTaskStatusMessage | null;
     initialAnalysisStatus: InitialAnalysisStatus;
+    /** Runtime projection; checkpoints hold the recovery contract, never a persisted run lease. */
+    initialAnalysisRecovery?: {
+        status: 'awaiting_source' | 'verifying_source' | 'rebinding' | 'recovering' | 'blocked';
+        reason: string | null;
+        fileName: string;
+        nextStageIndex: number;
+    } | null;
     /** Last terminal failure category; absent in reports saved before this field existed. */
     initialAnalysisFailureKind?: InitialAnalysisFailureKind | null;
     /** Research questions Pi drafted for the initial analysis; null when none or already used. */

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { createPortal, flushSync } from 'react-dom';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 import { useDialogAccessibility } from '../hooks/useDialogAccessibility';
 
 const DialogHarness: React.FC = () => {
@@ -59,7 +60,34 @@ const RemountingTriggerHarness: React.FC = () => {
     );
 };
 
+const NestedDialogHarness: React.FC<{ reverseListeners?: boolean }> = ({ reverseListeners = false }) => {
+    const [outer, setOuter] = useState(true), [inner, setInner] = useState(false);
+    const [outerKeyboard, setOuterKeyboard] = useState(!reverseListeners);
+    const parent = useDialogAccessibility<HTMLDivElement>(outer && outerKeyboard, () => setOuter(false));
+    const child = useDialogAccessibility<HTMLDivElement>(inner, () => flushSync(() => setInner(false)));
+    return <>{outer && <div className="fixed"><div ref={parent} role="dialog" aria-label="Outer dialog">
+        <button onClick={() => setInner(true)}>Open inner dialog</button>
+    </div></div>}{inner && createPortal(<div className="fixed"><div ref={child} role="dialog" aria-label="Inner dialog">
+        <button data-dialog-initial-focus>Inner action</button>
+        {reverseListeners && <button onClick={() => setOuterKeyboard(true)}>Enable outer keyboard</button>}
+    </div></div>, document.body)}</>;
+};
+
+afterEach(cleanup);
 describe('useDialogAccessibility', () => {
+    it.each([false, true])('leaves the outer dialog open when Escape closes its portaled child (reverse listeners: %s)', async reverseListeners => {
+        render(<NestedDialogHarness reverseListeners={reverseListeners} />);
+        const trigger = screen.getByRole('button', {name:'Open inner dialog'}); trigger.focus(); fireEvent.click(trigger);
+        await waitFor(() => expect(screen.getByRole('button', {name:'Inner action'})).toHaveFocus());
+        if (reverseListeners) {
+            fireEvent.click(screen.getByRole('button', {name:'Enable outer keyboard'}));
+            await waitFor(() => expect(trigger).toHaveFocus());
+        }
+        fireEvent.keyDown(document, {key:'Escape'});
+        expect(screen.queryByRole('dialog', {name:'Inner dialog'})).not.toBeInTheDocument();
+        expect(screen.getByRole('dialog', {name:'Outer dialog'})).toBeInTheDocument();
+        expect(trigger).toHaveFocus();
+    });
     it('moves and traps focus, closes on Escape, inerts background, and restores focus', async () => {
         render(<DialogHarness />);
         const trigger = screen.getByRole('button', { name: 'Open dialog' });

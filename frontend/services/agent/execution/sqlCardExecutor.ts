@@ -1,4 +1,5 @@
-import type { AppStore } from '../../../store/useAppStore';
+import type { StoreApi } from '../types';
+import { assertRunActive } from '../../session/sessionOwnership';
 import {
     isAggregationType,
     type ActiveDataQuery,
@@ -81,10 +82,11 @@ import { buildAnalysisPlanFromPresentation } from '../planning/sqlPresentationPl
 import { executePivotMatrixAnalysis } from './analysisSkillExecutor';
 import { getPreferredAnalysisDataset } from '../reportStructureState';
 import { buildAnalysisArtifactProvenance } from '../artifactProvenance';
+import { getCsvDatasetVersion } from '../../../utils/datasetId';
 
-type StoreApi = {
-    getState: () => AppStore;
-    setState: (partial: Partial<AppStore> | ((state: AppStore) => Partial<AppStore>)) => void;
+const assertExecutionActive = (store: StoreApi) => {
+    if (store.executionContext) assertRunActive(store, store.executionContext.lease);
+    else if (store.isActive?.() === false) throw new DOMException('Analysis scope was revoked.', 'AbortError');
 };
 
 interface DuckDbAnalysisBinding {
@@ -243,12 +245,26 @@ export const executeEvidenceQuery = async (
         abortSignal?: AbortSignal;
     },
 ): Promise<SqlEvidenceQueryExecution> => {
+    assertExecutionActive(store);
     const { getState } = store;
     const state = getState();
     const dataset = options?.dataset ?? getPreferredAnalysisDataset(state);
     if (!dataset) {
         throw new SqlAutoAnalysisError('duckdb_unavailable', 'Automatic analysis requires a cleaned dataset loaded into DuckDB.');
     }
+    // The executor may receive a semantic projection. Fence its owning source and
+    // the store's resolved view independently, rather than equating their hashes.
+    const captureSourceBinding = () => {
+        const current = getState();
+        const source = getPreferredAnalysisDataset(current);
+        const view = resolveDatasetBindingTarget({ mode: 'analysis', csvData: source,
+            snapshot: current.datasetSemanticSnapshot, semanticDatasetVersion: current.semanticDatasetVersion });
+        return JSON.stringify({ sourceVersion: source ? getCsvDatasetVersion(source) : null,
+            viewVersion: view?.datasetVersion ?? null, semanticDatasetCurrent: view?.semanticDatasetCurrent ?? false });
+    };
+    const sourceBinding = captureSourceBinding();
+    const datasetScope = resolveDatasetScopeBinding(state.datasetBundle);
+    const context = store.executionContext;
     const bindingTarget = resolveDatasetBindingTarget({
         mode: 'analysis',
         csvData: dataset,
@@ -333,18 +349,28 @@ export const executeEvidenceQuery = async (
             allowedColumns,
             {
                 allowNativeFallback: true,
+                bypassCache: Boolean(context),
                 reportDiagnostics,
                 dimensionNormalization,
             },
         ));
 
     console.log(`[Perf:SQL] DuckDB query: ${Math.round(performance.now() - _sqlT0)}ms | "${evidencePlan.title?.slice(0, 40)}"`);
+    assertExecutionActive(store);
+    if (context && (captureSourceBinding() !== sourceBinding
+        || JSON.stringify(resolveDatasetScopeBinding(getState().datasetBundle)) !== JSON.stringify(datasetScope))) {
+        throw new Error('query_dataset_binding_changed');
+    }
     const result = execution.result;
     const activeDataQuery: ActiveDataQuery = {
-        ...resolveDatasetScopeBinding(getState().datasetBundle),
-        sessionId: getState().sessionId,
-        turnId: getState().activeTurn?.turnId,
-        stepId: getState().activeTurn?.steps.at(-1)?.stepId,
+        ...datasetScope,
+        queryId: crypto.randomUUID(),
+        sessionId: context?.lease.scope.sessionId ?? state.sessionId,
+        sessionEpoch: context?.lease.scope.epoch,
+        runId: context?.lease.runId,
+        turnId: context?.lease.turnId ?? state.activeTurn?.turnId,
+        stepId: context?.stepId ?? state.activeTurn?.steps.at(-1)?.stepId,
+        toolCallId: context?.toolCallId,
         explanation: `Automatic SQL-first evidence query for "${evidencePlan.title}"`,
         plan: {
             ...executableQuery,

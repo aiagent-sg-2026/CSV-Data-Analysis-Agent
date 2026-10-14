@@ -26,9 +26,8 @@ const filterPersistedWorkspaceFiles = (workspaceFiles: Record<string, string>): 
 export const hasSavableSession = (state: AppStore): boolean =>
     Boolean(
         state.sessionId
-        && state.csvData
-        && state.csvData.data.length > 0
-        && !state.csvData.backing?.ephemeral,
+        && (state.datasetBundle?.acceptedCommit || state.candidateRecovery || state.csvData
+            && state.csvData.data.length > 0 && !state.csvData.backing?.ephemeral),
     );
 
 const resolveMaterialDataset = (state: AppStore) =>
@@ -59,6 +58,9 @@ const buildColumnRegistrySignature = (state: AppStore): string => (
 );
 
 export const buildPersistedAppState = (state: AppStore): AppState => ({
+    taskInspection: null,
+    datasetCommitBindingStatus: state.datasetBundle?.acceptedCommit ? 'awaiting_source' : undefined,
+    candidateRecovery: state.candidateRecovery ?? null,
     sessionId: state.sessionId,
     settings: state.settings,
     currentView: state.datasetBundle ? 'file_upload' : state.currentView,
@@ -147,7 +149,7 @@ export const buildPersistedAppState = (state: AppStore): AppState => ({
     sessionCreatedAt: state.sessionCreatedAt,
     cardEnhancementSuggestions: state.cardEnhancementSuggestions,
     isCardReviewInProgress: state.isCardReviewInProgress,
-    workspaceFiles: filterPersistedWorkspaceFiles(state.workspaceFiles),
+    workspaceFiles: filterPersistedWorkspaceFiles(state.workspaceFiles ?? {}),
     workspaceActionHistory: state.workspaceActionHistory,
     cleaningRun: state.cleaningRun,
     queryHistory: state.queryHistory,
@@ -231,6 +233,8 @@ export const buildPersistedAppStateSignature = (state: AppStore): string | null 
         state.datasetBundle?.datasetVersion ?? '',
         state.datasetBundle?.relationshipSetId ?? '',
         state.datasetBundle?.transformationPrograms.length ?? 0,
+        state.datasetBundle?.acceptedCommit?.commitId ?? '',
+        state.candidateRecovery?.digest ?? '',
         // --- query / workspace ---
         (state.queryHistory ?? []).length,
         resolveMaterialDataset(state)?.fileName ?? '',
@@ -241,7 +245,7 @@ export const buildPersistedAppStateSignature = (state: AppStore): string | null 
                 resolveMaterialDataset(state)!.data,
             )
             : '',
-        Object.keys(state.workspaceFiles).length,
+        Object.keys(state.workspaceFiles ?? {}).length,
         (state.workspaceActionHistory ?? []).length,
         // --- misc persistence-worthy state ---
         state.duckDbSessionStatus ?? '',

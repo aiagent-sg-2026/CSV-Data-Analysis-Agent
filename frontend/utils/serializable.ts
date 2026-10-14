@@ -37,27 +37,31 @@ export const toSerializable = <T>(value: T, seen = new WeakSet<object>()): T => 
         return undefined as T;
     }
 
+    // Only ancestors indicate a cycle; plan and lineage may share the same operation object.
     seen.add(value as object);
+    try {
+        if (Array.isArray(value)) {
+            return value
+                .map(entry => toSerializable(entry, seen))
+                .filter(entry => entry !== undefined) as T;
+        }
 
-    if (Array.isArray(value)) {
-        return value
-            .map(entry => toSerializable(entry, seen))
-            .filter(entry => entry !== undefined) as T;
-    }
+        if (isPlainObject(value)) {
+            return Object.fromEntries(
+                Object.entries(value)
+                    .map(([key, entry]) => [key, toSerializable(entry, seen)] as const)
+                    .filter(([, entry]) => entry !== undefined),
+            ) as T;
+        }
 
-    if (isPlainObject(value)) {
         return Object.fromEntries(
-            Object.entries(value)
+            Object.entries(value as Record<string, unknown>)
                 .map(([key, entry]) => [key, toSerializable(entry, seen)] as const)
                 .filter(([, entry]) => entry !== undefined),
         ) as T;
+    } finally {
+        seen.delete(value as object);
     }
-
-    return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>)
-            .map(([key, entry]) => [key, toSerializable(entry, seen)] as const)
-            .filter(([, entry]) => entry !== undefined),
-    ) as T;
 };
 
 export const toJsonCompatible = <T>(value: T, seen = new WeakSet<object>()): T => {
@@ -85,23 +89,27 @@ export const toJsonCompatible = <T>(value: T, seen = new WeakSet<object>()): T =
         return undefined as T;
     }
 
+    // Only ancestors indicate a cycle; plan and lineage may share the same operation object.
     seen.add(value as object);
+    try {
+        if (Array.isArray(value)) {
+            return value
+                .map(entry => toJsonCompatible(entry, seen))
+                .filter(entry => entry !== undefined) as T;
+        }
 
-    if (Array.isArray(value)) {
-        return value
-            .map(entry => toJsonCompatible(entry, seen))
-            .filter(entry => entry !== undefined) as T;
-    }
+        const entries = Object.entries(value as Record<string, unknown>)
+            .map(([key, entry]) => [key, toJsonCompatible(entry, seen)] as const)
+            .filter(([, entry]) => entry !== undefined);
 
-    const entries = Object.entries(value as Record<string, unknown>)
-        .map(([key, entry]) => [key, toJsonCompatible(entry, seen)] as const)
-        .filter(([, entry]) => entry !== undefined);
+        if (isPlainObject(value)) {
+            return Object.fromEntries(entries) as T;
+        }
 
-    if (isPlainObject(value)) {
         return Object.fromEntries(entries) as T;
+    } finally {
+        seen.delete(value as object);
     }
-
-    return Object.fromEntries(entries) as T;
 };
 
 export const safeJsonStringify = (value: unknown, space?: number | string): string =>

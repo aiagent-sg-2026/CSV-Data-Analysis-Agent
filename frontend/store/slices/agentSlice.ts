@@ -1,3 +1,4 @@
+import { cancelOwnedRun, captureSessionScope, ownsSessionScope } from '../../services/session/sessionOwnership';
 
 import type { StateCreator } from 'zustand';
 import type { AppStore } from '../useAppStore';
@@ -35,6 +36,7 @@ import {
 export { flushTelemetryToStore } from './agentTelemetryHelpers';
 
 export interface IAgentSlice {
+    activeExecution?: import('../../services/session/sessionOwnership').ActiveExecution | null;
     agentEvents: AgentEvent[];
     agentToolLogs: AgentToolLogEntry[];
     cardEnhancementSuggestions: CardEnhancementSuggestion[];
@@ -193,6 +195,9 @@ export const createAgentSlice: StateCreator<AppStore, [], [], IAgentSlice> = (se
     setActiveTurn: (turn) => set({ activeTurn: turn }),
     clearActiveTurn: () => set({ activeTurn: null, isBusy: false, chatLifecycleState: 'idle' }),
     requestActiveTurnCancellation: async () => {
+        const store = { getState: get, setState: set };
+        const scope = captureSessionScope(store);
+        cancelOwnedRun(store);
         const activeTurn = get().activeTurn;
         if (!activeTurn || activeTurn.status !== 'running') {
             return;
@@ -204,6 +209,7 @@ export const createAgentSlice: StateCreator<AppStore, [], [], IAgentSlice> = (se
             import('../../services/agent/runtime/runtimeAbort'),
             import('../../services/agent/runtime/runtimeControlPlaneContract'),
         ]);
+        if (!ownsSessionScope(store, scope) || get().activeTurn?.turnId !== activeTurn.turnId) return;
         set({ cancelRequestedTurnId: activeTurn.turnId });
         abortRuntimeTurn(activeTurn.turnId);
         get().recordRuntimeEvent({
@@ -253,10 +259,14 @@ export const createAgentSlice: StateCreator<AppStore, [], [], IAgentSlice> = (se
         });
     },
     requestInitialAnalysisCancellation: async () => {
+        const store = { getState: get, setState: set };
+        const scope = captureSessionScope(store);
+        const sessionId = get().sessionId;
+        cancelOwnedRun(store);
         const { cancelPiInitialAnalysis } = await import(
             '../../services/agent/runtime/pi/piInitialAnalysisRuntimeService'
         );
-        cancelPiInitialAnalysis(get().sessionId);
+        if (ownsSessionScope(store, scope)) cancelPiInitialAnalysis(sessionId);
     },
     logAgentToolUsage: (entryInput) => {
         const activeTurn = get().activeTurn;

@@ -144,7 +144,7 @@ export const isWorkspaceReadablePath = (path: string): boolean => {
 export const isWorkspaceWritablePath = (path: string): boolean => {
     const normalized = normalizeWorkspacePath(path);
     if (!normalized) return false;
-    if (normalized === WORKSPACE_ROOT) return false;
+    if (normalized === WORKSPACE_ROOT || normalized.startsWith('/workspace/task-artifacts/')) return false;
     return normalized.startsWith(`${WORKSPACE_ROOT}/`) || normalized === WORKSPACE_DATASET_CLEAN_CSV;
 };
 

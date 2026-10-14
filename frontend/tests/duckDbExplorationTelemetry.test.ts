@@ -120,6 +120,7 @@ describe('buildAndRunExplorationQueries telemetry', () => {
         expect(executeCompiledQueryMock).toHaveBeenCalledWith(
             expect.anything(),
             8_000,
+            undefined,
         );
         expect(store.recordRuntimeEvent).toHaveBeenCalledWith(
             expect.objectContaining({

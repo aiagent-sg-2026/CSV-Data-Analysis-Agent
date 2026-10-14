@@ -1,3 +1,5 @@
+import { captureSessionScope, ownsSessionScope, scopeStore, type SessionScope } from '../../services/session/sessionOwnership';
+import { getCurrentAnalysisDatasetVersion } from '../../services/agent/artifactProvenance';
 import type { StateCreator } from 'zustand';
 import type { AppStore } from '../useAppStore';
 import type { ClarificationOption, ChatMessage, AiAction, QueuedChatTurn, ResolvedClarification, ClarificationRequest, StreamingMessage } from '../../types';
@@ -37,7 +39,7 @@ export interface IChatSlice {
 
 export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set, get) => {
     const storeApi = { getState: get, setState: set };
-    let isDrainingQueuedTurns = false;
+    let drainingScope: SessionScope | null = null;
 
     /**
      * Persist a resolved clarification so subsequent turns can reference it
@@ -64,15 +66,18 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
     };
 
     // Guard: prevent concurrent context refreshes from piling up.
-    let isRefreshingContext = false;
+    let refreshingScope: SessionScope | null = null;
 
     const refreshContextualSummaryIfNeeded = async () => {
-        if (isRefreshingContext) return;
-        isRefreshingContext = true;
+        const scope = captureSessionScope(storeApi);
+        if (refreshingScope === scope) return;
+        refreshingScope = scope;
         try {
             const { shouldRefreshContextualSummary, generateContextualSummary, markContextualSummaryRefreshed } =
                 await import('../../services/ai/contextManager');
+            if (!ownsSessionScope(storeApi, scope)) return;
             const state = get();
+            const version = getCurrentAnalysisDatasetVersion(state);
             if (!shouldRefreshContextualSummary(state.sessionId, state.chatHistory.length)) {
                 return;
             }
@@ -88,10 +93,11 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
                 telemetryTarget: state,
             });
 
+            if (!ownsSessionScope(storeApi, scope) || getCurrentAnalysisDatasetVersion(get()) !== version) return;
             set({ contextualSummary: nextSummary.summary });
             markContextualSummaryRefreshed(state.sessionId, get().chatHistory.length);
         } finally {
-            isRefreshingContext = false;
+            if (refreshingScope === scope) refreshingScope = null;
         }
     };
 
@@ -164,6 +170,7 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
         rawQuery: string,
         origin: 'chat' | 'spreadsheet_panel',
     ) => {
+        const scope = captureSessionScope(storeApi);
         const query = rawQuery.trim();
         if (!query) return;
 
@@ -178,7 +185,9 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
 
         try {
             const { handleAiAction } = await import('../../services/agent/actionHandler');
-            const result = await handleAiAction(action, storeApi, { spreadsheetFilterOrigin: origin });
+            if (!ownsSessionScope(storeApi, scope)) return;
+            const result = await handleAiAction(action, scopeStore(storeApi, scope), { spreadsheetFilterOrigin: origin });
+            if (!ownsSessionScope(storeApi, scope)) return;
             if (result.status === 'success') {
                 const observedReply = result.observation?.summary?.trim() || result.message;
                 if (observedReply) {
@@ -189,6 +198,7 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
 
             appendAiMessage(result.observation?.summary ?? result.message, 'ai_message', { isError: true });
         } catch (error) {
+            if (!ownsSessionScope(storeApi, scope)) return;
             const errorMessage = error instanceof Error ? error.message : String(error);
             appendAiMessage(
                 getTranslation('chat_temporary_filter_failed', get().settings.language, { message: errorMessage }),
@@ -196,7 +206,7 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
                 { isError: true },
             );
         } finally {
-            set({ isBusy: false, chatLifecycleState: 'idle' as const });
+            if (ownsSessionScope(storeApi, scope) && !get().activeExecution) set({ isBusy: false, chatLifecycleState: 'idle' as const });
         }
     };
 
@@ -219,26 +229,7 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
         }
         if (!_isProviderConfigured) return false;
 
-        // Async health check with TTL cache.
-        const { validateProviderHealth } = await import('../../services/ai/providerConfig');
-        const health = await validateProviderHealth(settings);
-        if (health.status === 'healthy') return true;
-
-        const errorMessages: Record<string, string> = {
-            not_configured: getTranslation('provider_health_not_configured', settings.language),
-            invalid_key: getTranslation('provider_health_invalid_key', settings.language),
-            unreachable: getTranslation('provider_health_unreachable', settings.language),
-        };
-        const message = errorMessages[health.status] ?? 'AI provider is unavailable.';
-
-        if (shouldAllowSettingsSurface() && health.status !== 'unreachable') {
-            get().addProgress(message, 'error');
-            get().setIsSettingsModalOpen(true);
-        } else {
-            get().addProgress(message, 'error');
-        }
-        appendAiMessage(message, 'ai_message', { isError: true });
-        return false;
+        return true;
     };
 
     const runImmediateChatTurn = async (
@@ -250,6 +241,7 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
             displayText?: string;
         },
     ) => {
+        const scope = captureSessionScope(storeApi);
         if (options.appendUserMessage) {
             set(prev => ({
                 isBusy: true,
@@ -266,7 +258,9 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
 
         try {
             const { orchestrateChatResponse } = await import('../../services/agent/orchestration/chatOrchestrator');
-            await orchestrateChatResponse(message, storeApi);
+            if (!ownsSessionScope(storeApi, scope)) return;
+            await orchestrateChatResponse(message, scopeStore(storeApi, scope));
+            if (!ownsSessionScope(storeApi, scope)) return;
             fireContextRefresh();
 
             if (options.drainAfter !== false) {
@@ -276,7 +270,7 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
             // Safety net: always clear busy state. Only force chatLifecycleState
             // to 'failed' if runtimeFinalize never ran (still 'running').
             const currentLifecycle = get().chatLifecycleState;
-            set({
+            if (ownsSessionScope(storeApi, scope) && !get().activeExecution) set({
                 isBusy: false,
                 ...(currentLifecycle === 'running'
                     ? { chatLifecycleState: 'failed' as const }
@@ -286,13 +280,14 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
     };
 
     const drainQueuedChatTurns = async () => {
-        if (isDrainingQueuedTurns || !canDrainQueuedTurns()) {
+        const scope = captureSessionScope(storeApi);
+        if (drainingScope === scope || !canDrainQueuedTurns()) {
             return;
         }
 
-        isDrainingQueuedTurns = true;
+        drainingScope = scope;
         try {
-            while (canDrainQueuedTurns()) {
+            while (ownsSessionScope(storeApi, scope) && canDrainQueuedTurns()) {
                 // Atomic read+dequeue: extract message and remove head inside a
                 // single set() call so no interleaving can separate the two steps.
                 let nextMessage: string | undefined;
@@ -310,7 +305,7 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
                 });
             }
         } finally {
-            isDrainingQueuedTurns = false;
+            if (drainingScope === scope) drainingScope = null;
         }
     };
 
@@ -327,11 +322,14 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
         clearStreamingMessage: () => set({ streamingMessage: null }),
 
         confirmGoal: async (goalTitle) => {
+            const scope = captureSessionScope(storeApi);
             const { confirmAnalysisGoal } = await import('../../services/agent/orchestration/sessionManager');
-            await confirmAnalysisGoal(goalTitle, storeApi);
+            if (!ownsSessionScope(storeApi, scope)) return;
+            await confirmAnalysisGoal(goalTitle, scopeStore(storeApi, scope));
         },
 
         handleChatMessage: async (message, options) => {
+            const scope = captureSessionScope(storeApi);
             // Show the user message in chat IMMEDIATELY — before any async work
             // (lazy imports, health checks, intent classification). This ensures
             // the user sees their message right away regardless of API latency.
@@ -358,6 +356,7 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
                 _isProviderConfigured = providerMod.isProviderConfigured;
             }
 
+            if (!ownsSessionScope(storeApi, scope)) return;
             if (get().goalState === 'awaiting_user_confirmation') {
                 await get().confirmGoal(message);
                 return;
@@ -382,6 +381,7 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
                         const { handleClarificationResponse: procClarResp } = await import('../../services/agent/orchestration/chatOrchestrator');
                         return { ...clarMod, handleClarificationResponse: procClarResp };
                     });
+                if (!ownsSessionScope(storeApi, scope)) return;
                 const trimmedMessage = message.trim();
                 if (!trimmedMessage) {
                     set(prev => ({
@@ -402,6 +402,7 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
                     label: trimmedMessage,
                     value: trimmedMessage,
                 }, storeApi);
+                if (!ownsSessionScope(storeApi, scope)) return;
                 fireContextRefresh();
                 await drainQueuedChatTurns();
                 return;
@@ -444,6 +445,7 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
         },
 
         handleClarificationResponse: async (userChoice) => {
+            const scope = captureSessionScope(storeApi);
             if (get().isBusy) {
                 chatDebug('Ignored clarification response because chat is already busy.', {
                     userChoice,
@@ -464,12 +466,15 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
                     const mod = await import('../../services/agent/runtime/runtimeClarification');
                     _resolveEffectivePendingClarification = mod.resolveEffectivePendingClarification;
                 }
+                if (!ownsSessionScope(storeApi, scope)) return;
                 const pendingClarification = getEffectivePendingClarification();
                 if (pendingClarification) {
                     storeResolvedClarification(pendingClarification, userChoice.value || userChoice.label);
                 }
                 const { handleClarificationResponse: processClarificationResponse } = await import('../../services/agent/orchestration/chatOrchestrator');
-                await processClarificationResponse(userChoice, storeApi);
+                if (!ownsSessionScope(storeApi, scope)) return;
+                await processClarificationResponse(userChoice, scopeStore(storeApi, scope));
+                if (!ownsSessionScope(storeApi, scope)) return;
                 fireContextRefresh();
                 await drainQueuedChatTurns();
             } finally {
@@ -482,7 +487,7 @@ export const createChatSlice: StateCreator<AppStore, [], [], IChatSlice> = (set,
                 // Safety net: clear isBusy. Only override chatLifecycleState if
                 // runtimeFinalize never ran (still 'running') — treat as failed.
                 const currentLifecycle = get().chatLifecycleState;
-                set({
+                if (ownsSessionScope(storeApi, scope) && !get().activeExecution) set({
                     isBusy: false,
                     ...(currentLifecycle === 'running'
                         ? { chatLifecycleState: 'failed' as const }

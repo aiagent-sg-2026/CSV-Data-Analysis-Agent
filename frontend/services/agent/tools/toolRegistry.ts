@@ -35,20 +35,20 @@ export type ResolvedToolRegistry = ToolRegistry & {
 
 const DEFAULT_POLICY = DEFAULT_TOOL_POLICY;
 
-export const buildBuiltinToolRegistry = (columnNames: string[]): ToolRegistry => {
+export const buildBuiltinToolRegistry = (columnNames: string[], external: readonly ToolDescriptor[] = []): ToolRegistry => {
     const cacheKey = columnNames.join('::');
     const cached = manifestCache.get(cacheKey);
     const manifests = cached ?? buildBuiltinToolManifests(columnNames);
     if (!cached) {
         manifestCache.set(cacheKey, manifests);
     }
-    const prepared = prepareToolDescriptors(manifests);
+    const prepared = prepareToolDescriptors([...manifests, ...external]);
     return {
         manifests: prepared.descriptors,
         descriptors: prepared.descriptors,
         groups: buildToolGroups(prepared.descriptors),
         diagnostics: prepared.diagnostics,
-        policy: DEFAULT_POLICY,
+        policy: { ...DEFAULT_POLICY, allow: [...DEFAULT_POLICY.allow, ...external.map(tool => tool.name)] },
     };
 };
 
@@ -77,6 +77,7 @@ export const resolveAllowedTools = (registry: ToolRegistry, context: ToolAvailab
         normalizedContext.datasetId ?? 'no-dataset',
         columnKey,
         normalizedContext.hasCsvData ? 'data' : 'no-data',
+        normalizedContext.hasCodeExecution ? 'code-adapter' : 'no-code-adapter',
         normalizedContext.cardIds.join(','),
         normalizedContext.suggestionIds?.join(',') ?? '',
         normalizedContext.hasCleaningRun ? 'cleaning-run' : 'no-cleaning-run',
@@ -89,7 +90,8 @@ export const resolveAllowedTools = (registry: ToolRegistry, context: ToolAvailab
         normalizedContext.settingsKey ?? 'default-settings',
     ].join('|');
     const cached = resolvedRegistryCache.get(cacheKey);
-    if (cached) return cached;
+    const hasExternal = registry.manifests.some(manifest => manifest.name.startsWith('mcp.'));
+    if (cached && !hasExternal) return cached;
 
     const descriptorMap = new Map<ToolName, ToolDescriptor>();
     const exposedTools: ToolDescriptor[] = [];
@@ -125,6 +127,6 @@ export const resolveAllowedTools = (registry: ToolRegistry, context: ToolAvailab
         allowedToolNames: governance.allowedTools.map(decision => decision.toolName),
         diagnostics: governance.diagnostics,
     };
-    resolvedRegistryCache.set(cacheKey, resolved);
+    if (!hasExternal) resolvedRegistryCache.set(cacheKey, resolved);
     return resolved;
 };

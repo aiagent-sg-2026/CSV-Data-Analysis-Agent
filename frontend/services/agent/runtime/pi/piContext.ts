@@ -116,6 +116,10 @@ const formatResolvedRequestContract = (
     return [
         'App-resolved request contract:',
         `- Task: ${artifact.taskSignal}`,
+        `- Required current-turn query scopes: ${JSON.stringify(artifact.requestedQueryScopes ?? [])}`,
+        'Historical results resolve references only. Execute fresh data_query tools for requested query scopes. A requested computation instead requires your own complete-table code_run followed by computation_validate; a preview query or provider calculation cannot complete that computation.',
+        `- Required computation scope: ${JSON.stringify(artifact.requestedComputationScope ?? null)}`,
+        `- Derived calculation: ${JSON.stringify(artifact.queryCalculation ?? null)}`,
         `- Expected output: ${artifact.expectedOutput}`,
         artifact.referencedColumns.length > 0
             ? `- Referenced dataset columns: ${artifact.referencedColumns.join(', ')}`
@@ -143,6 +147,9 @@ export const createPiFollowUpSystemPrompt = (
         groundingResult?: GroundingResult;
         allowCardCreation?: boolean;
         cardTarget?: number;
+        codingTask?: import('./piTaskContract').AgentTaskContract;
+        taskPlan?: import('./piTaskPlan').TypedTaskPlan;
+        skillsPrompt?:string;
     } = {},
 ): string => {
     const fileName = state.csvData?.fileName || 'Current dataset';
@@ -177,6 +184,19 @@ export const createPiFollowUpSystemPrompt = (
         buildSystemPrompt(state.settings.language, compactedContext, requestContext.allowCardCreation ?? false, requestContext.cardTarget ?? 1),
         `Current goal: ${state.confirmedAnalysisGoal ?? 'Answer the current follow-up accurately.'}`,
         `Recent turns:\n${formatRecentTurns(state)}`,
-        buildSkillsPromptSection(resolveAvailableSkills(state.workspaceFiles).skills),
+        requestContext.skillsPrompt??buildSkillsPromptSection(resolveAvailableSkills(state.workspaceFiles).skills),
+        ...(requestContext.codingTask ? [
+            `Host typed task plan: ${JSON.stringify(requestContext.taskPlan)}. Follow its current phase. Every successful tool result carries an updated taskPlan. nextTools are dependency steps, not permission to batch them. Copy returned refs only; a plan cannot grant execution or approval. Preserve complete fact membership, source scale, zeros and losses. Inspect actual cells before proposing any exclusion; a company/name containing Total is not a subtotal.`,
+            'Governed coding task: inspect with workspace_read/list and load relevant skills. You may write or replace revisioned /workspace/*.js function bodies and immutable JSON inputs, then run code_run using exact path/revision/SHA-256 refs returned by workspace tools.',
+            'Only independent reads may be batched. End the assistant turn after each dependency-producing tool and wait for its result before the next dependent call: workspace_write -> code_run -> candidate_stage -> candidate_validate -> candidate_request_approval, or code_run -> computation_validate. Never emit write and run together or put a placeholder in the unknown future receipt/hash. Meaning inference declares conversions; your repair program must actually apply them to produce typed rows before candidate validation.',
+            'The program is a synchronous function BODY, not a Node module: use a top-level return; module, exports and tables globals do not exist. JavaScript receives input[name].content for artifact bindings and input[name].rows for table bindings. Every code_run request requires inputs (use [] for table-only work), program and output refs; add tables bindings for complete current rows. Return JSON (or a string for text output). Use real receipt errors/stdout/stderr to repair and rerun. No async, network, packages, shell or accepted dataset writes are available. Do not invent stdout, receipt IDs or validation.',
+            'For complete current rows, code_run accepts tables:[{name,tableId}]; input[name].rows is the complete table or execution is blocked. whole_table is the default. stateful_stream uses explicit JSON carry and contiguous partition reset/finish; follow the code_run schema. Never treat a workspace/source preview or row_map declaration as a full-data repair.',
+            'For dataset repair without a configured host meaning contract, infer grain, unit, conversions and subtotal scope automatically: inspect complete source/table, then call candidate_infer_meaning BEFORE any code_run. Do not first ask the user to confirm business semantics. Host compiles the source reference and checks complete coverage, grain, types and grouped reconciliation. Interpretations remain AI-inferred assumptions; unsupported inference blocks and preserves accepted data. Then write your own code, stage and independently validate. Exact candidate mutation approval remains required.',
+            `Current task table handles: ${JSON.stringify((state.datasetBundle?.tables??[]).slice(0,20).map(table=>({tableId:table.tableId,name:table.name,rowCount:table.rowCount,datasetVersion:table.datasetVersion,storage:table.storage?.mode})))}`,
+            'After candidate_validate succeeds, use candidate_request_approval with the exact candidateId and explicit primaryTable. Human review releases the old run; approval resumes the same logical task on the committed version. Retain the task goal and execute fresh verification on the committed binding: computation_validate for a computation scope, otherwise data_query.',
+            'code_run stages experimental artifacts. For a fixed supported computation scope, call computation_validate on the successful jobId; host independent validation is required for facts. Otherwise execute data_query matching the current typed scope for factual data answers. Bounded source ranges are not evidence of complete-table coverage. Clarify ambiguity with conversation_request_clarification.',
+            ...(requestContext.codingTask.scope.answer.computation?['The current answer scope requires a complete statistical computation. PRECONDITION: if the goal also requires canonical fact-table repair, first complete candidate inference, your own candidate-envelope execution, staging, independent validation and exact approval. Numeric strings in accepted rows require this typed repair; inference and local Number() conversions do not publish it. Run the following statistical sequence only on the eligible committed table. For an already typed read-only dataset, proceed directly. Statistical sequence: (1) workspace_write your own synchronous JavaScript function body; (2) copy that returned artifact path/revision/SHA-256 exactly into code_run.program, pass inputs:[] and the complete table binding, and use a fresh JSON output path; (3) pass the actual returned jobId to computation_validate; (4) only then complete. A listed task/goal file is not a program. Never use a made-up program or placeholder hash. Follow the method output schema in the computation_validate tool. A data_query preview can help inspect columns but never substitutes for the program and independent computation receipt. The computation itself does not repair or publish dataset rows. For a read-only request, do not request mutation approval. If the user also requires a repaired canonical fact table, first infer meaning, stage and independently validate your repair, obtain exact candidate approval, then write and validate a separate computation on the committed version. A pre-commit computation cannot satisfy that combined request.']:[]),
+            `Task budget and scope: ${JSON.stringify({ taskId: requestContext.codingTask.taskId, revision: requestContext.codingTask.revision, budget: requestContext.codingTask.budget, scope: requestContext.codingTask.scope.answer })}`,
+        ] : []),
     ].filter(Boolean).join('\n\n');
 };

@@ -1,3 +1,4 @@
+import { validateComputationExecution } from './computationEvidence';
 import type {
     AiAction,
     AnalysisCardData,
@@ -22,6 +23,8 @@ import { executeCorrelationAction, executeDataOperationsAction, executeDataQuery
 import { executeDataDescribeAction, executeDataValueCountsAction, executeDataOutliersAction, executeDataMissingAction } from './diagnosticDataActions';
 import { buildCreatePlanExecutionResult } from './createPlanExecutionResult';
 import { executeWorkspaceFileAction } from './executorWorkspaceActions';
+import { executeCodeAction } from './executorCodeActions';
+import { executeCandidateAction } from './executorCandidateActions';
 import { executeMetricMappingValidationAction } from './metricMappingValidator';
 import { executePlanAndCreateCard } from './cardExecutor';
 import { createNewCard } from './cardCreator';
@@ -479,7 +482,7 @@ const executeDomAction = (toolName: 'ui.highlight_card' | 'ui.change_chart_type'
 export const handleExecutorAction = async (
     action: AiAction,
     store: StoreApi,
-    options?: { spreadsheetFilterOrigin?: SpreadsheetFilterOrigin; abortSignal?: AbortSignal },
+    options?: { spreadsheetFilterOrigin?: SpreadsheetFilterOrigin; abortSignal?: AbortSignal } & import('./codeExecutionContract').CodePolicyContext,
 ): Promise<ToolExecutionResult> => {
     if (action.type !== 'tool_call') {
         return {
@@ -490,7 +493,41 @@ export const handleExecutorAction = async (
         };
     }
 
+    if (action.toolName.startsWith('mcp.')) {
+        if (!store.mcpTools || !store.executionContext) return {status:'blocked',toolName:action.toolName,message:'mcp_task_context_required',shouldStop:false};
+        try {
+            const receipt = await store.mcpTools.execute(action.toolName, action.args, store.executionContext, options?.abortSignal);
+            return {status:'success',toolName:action.toolName,message:'External observation received; upstream scope, completeness and snapshot remain unverified.',
+                shouldStop:false,artifacts:{mcpObservation:receipt},payload:{mcpObservation:receipt}};
+        } catch (error) {
+            return {status:'blocked',toolName:action.toolName,message:error instanceof Error && /^mcp_[a-z_]+(?::\d+)?$/.test(error.message)?error.message:'mcp_execution_failed',shouldStop:false};
+        }
+    }
     switch (action.toolName) {
+        case 'computation.validate': {
+            if (!action.args || Object.keys(action.args).length !== 1 || typeof action.args.jobId !== 'string') return {status:'blocked',toolName:action.toolName,message:'Use only an owned jobId.',shouldStop:false};
+            try {
+                const receipt = await validateComputationExecution(store, action.args.jobId);
+                return {status:'success',toolName:action.toolName,message:'Independent computation reference passed.',shouldStop:false,
+                    artifacts:{computationEvidence:receipt},payload:{computationEvidence:receipt}};
+            } catch (error) {
+                const reason=error instanceof Error ? error.message : 'computation_validation_failed';
+                return {status:'blocked',toolName:action.toolName,message:reason,shouldStop:false,
+                    ...(['typed_numeric_input_required','nonnegative_safe_integer_weight_required'].includes(reason)?{retryHint:'Inspect current accepted input types and weights. Converting local computation variables does not repair the accepted dataset. Source string-to-number conversions require your own candidate program, independent validation and exact approval before a separate fresh computation. Negative or fractional frequency weights remain unsupported; do not silently exclude them.'}:{})};
+            }
+        }
+        case 'code.run':
+        case 'code.inspect':
+        case 'code.cancel':
+            return executeCodeAction(action, store, options?.abortSignal, { toolStage: options?.toolStage, allowOverrides: options?.allowOverrides, denyOverrides: options?.denyOverrides });
+        case 'candidate.stage':
+        case 'candidate.infer_meaning':
+        case 'candidate.read':
+        case 'candidate.diff':
+        case 'candidate.abandon':
+        case 'candidate.request_approval':
+        case 'candidate.validate':
+            return executeCandidateAction(action, store, options);
         case 'analysis.create_plan':
             if (action.args?.plan) {
                 const rawPlan = action.args.plan as AnalysisPlan | SqlAnalysisPlan;

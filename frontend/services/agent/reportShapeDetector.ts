@@ -22,6 +22,7 @@ import {
     roundRatio,
     sortDescriptorColumns,
 } from './reportShapeUtils';
+import { hasCompactedOuterHeader } from './reportStructureNormalization';
 import {
     HeaderLayoutCandidate,
     buildHeaderBands,
@@ -56,6 +57,12 @@ const SERIES_HEADER_PATTERN = /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:
 const SERIES_VALUE_SAMPLE_ROWS = 300;
 const MIN_SERIES_NUMERIC_VALUES = 3;
 const MIN_SERIES_NUMERIC_RATIO = 0.7;
+const hasResolvedCompactedHeader = (data: CsvData | null): boolean => Boolean(
+    data?.headerLayers?.length === 1
+    && !getColumns(data).some(column => column.includes(' :: '))
+    && hasCompactedOuterHeader(data.headerLayers[0], getColumns(data)),
+);
+
 const isNumericDominantColumn = (data: CsvData, column: string): boolean => {
     const values = getRows(data).slice(0, SERIES_VALUE_SAMPLE_ROWS)
         .map(row => String(row[column] ?? '').trim().replace(/^\((.*)\)$/, '-$1'))
@@ -107,27 +114,37 @@ const buildExplicitHeaderLayoutCandidate = (
     data: CsvData | null,
     tabularContext: ReturnType<typeof inferTabularShapeContext>,
 ): HeaderLayoutCandidate | null => {
-    if (!data || (data.headerLayers?.length ?? 0) === 0) return null;
+    if (!data || (data.headerLayers?.length ?? 0) === 0 || hasResolvedCompactedHeader(data)) return null;
 
     const columns = getColumns(data);
     if (columns.length < 5) return null;
 
-    const descriptorColumns = tabularContext?.descriptorColumns?.length
-        ? sortDescriptorColumns(tabularContext.descriptorColumns)
-        : columns.filter(column => !isCodeLike(column) && !isNumericLike(column) && !isSummaryLike(column)).slice(0, 3);
-    const descriptorColumnSet = new Set(descriptorColumns.map(column => column.toLowerCase()));
-    const summarySeriesColumns = columns.filter(column => isSummaryLike(column));
+    const periodLabels = new Set(columns.flatMap(column => {
+        const label = column.match(SERIES_HEADER_PATTERN)?.[0].toLowerCase();
+        return label && !label.startsWith('fy') ? [label] : [];
+    }));
+    // A year alongside repeated months/quarters is a rollup; a year-only
+    // comparison remains a detail axis. Numeric density cannot distinguish it.
+    const summarySeriesColumns = columns.filter(column => isSummaryLike(column)
+        || (periodLabels.size >= 2 && (
+            /^(?:sub[ _-]?total|(?:grand|net)[ _-]+total|total)(?:$|[\s_:])/i.test(column)
+            || /^(?:19|20)\d{2}(?:\s*::|$)/.test(column)
+        )));
     const summarySet = new Set(summarySeriesColumns.map(column => column.toLowerCase()));
+    const descriptorColumns = (tabularContext?.descriptorColumns?.length
+        ? sortDescriptorColumns(tabularContext.descriptorColumns)
+        : columns.filter(column => !isCodeLike(column) && !isNumericLike(column) && !isSummaryLike(column)).slice(0, 3))
+        .filter(column => !summarySet.has(column.toLowerCase()));
+    const descriptorColumnSet = new Set(descriptorColumns.map(column => column.toLowerCase()));
     const detailSeriesColumns = columns.filter(column => {
         const normalized = column.toLowerCase();
-        if (descriptorColumnSet.has(normalized) || summarySet.has(normalized)) return false;
+        // Intake may rename an empty ordinal header to RowNumber. It remains
+        // an identity column, even when numeric density resembles a measure.
+        if (PLACEHOLDER_PATTERN.test(column) || normalized === 'rownumber'
+            || descriptorColumnSet.has(normalized) || summarySet.has(normalized)) return false;
         return isCodeLike(column) || SERIES_HEADER_PATTERN.test(column) || isNumericDominantColumn(data, column);
     });
     if (detailSeriesColumns.length < 4) return null;
-    const detailSeriesCodeLikeRatio = detailSeriesColumns.filter(column => isCodeLike(column)).length / detailSeriesColumns.length;
-    if (detailSeriesCodeLikeRatio < 0.35 && (data.headerLayers?.length ?? 0) < 1) {
-        return null;
-    }
 
     const columnIndexByName = new Map(columns.map((column, index) => [column, index]));
     return {
@@ -347,8 +364,8 @@ export const detectReportShape = (data: CsvData | null): ReportShapeProfile => {
         && (labelStyleColumnCount / schemaColumnNames.length) >= 0.5;
     const parserResolvedFlatSchema = Boolean(
         data
-        && (data.headerDepth ?? 0) === 1
-        && (data.headerLayers?.length ?? 0) === 0
+        && (((data.headerDepth ?? 0) === 1 && (data.headerLayers?.length ?? 0) === 0)
+            || hasResolvedCompactedHeader(data))
         && (
             (data.metadataRows?.length ?? 0) > 0
             || columnNamesAreLabelStyle

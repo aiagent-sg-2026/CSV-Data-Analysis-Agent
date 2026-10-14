@@ -37,6 +37,7 @@ export const AgentSkillsSection: React.FC<{ language: Settings['language'] }> = 
     const snapshot = useSyncExternalStore(subscribeUserSkills, getUserSkillsSnapshot, getUserSkillsSnapshot);
     const { entries } = React.useMemo(() => resolveSkillEntries({}), [snapshot]);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const folderInputRef = useRef<HTMLInputElement>(null);
     const [lastImport, setLastImport] = useState<UserSkillImportResult | null>(null);
     const [editing, setEditing] = useState<{ name: string; text: string; error: string | null } | null>(null);
     // A skill the person saved under the name of a built-in one replaces it until restored.
@@ -49,7 +50,10 @@ export const AgentSkillsSection: React.FC<{ language: Settings['language'] }> = 
         const files: File[] = event.target.files ? Array.from(event.target.files) : [];
         event.target.value = '';
         if (files.length === 0) return;
-        const loaded = await Promise.all(files.map(async file => ({ fileName: file.name, text: await file.text() })));
+        if(files.length>512||files.reduce((bytes,file)=>bytes+file.size,0)>8*1024*1024){
+            setLastImport({added:[],rejected:[{fileName:'Selected files',reason:'Import at most 512 files and 8 MiB.'}]});return;
+        }
+        const loaded = await Promise.all(files.map(async file => ({ fileName: file.webkitRelativePath||file.name, text: await file.text() })));
         setLastImport(importUserSkills(loaded));
     };
 
@@ -59,7 +63,7 @@ export const AgentSkillsSection: React.FC<{ language: Settings['language'] }> = 
             <p className="mt-1 text-xs leading-5 text-slate-600">{getTranslation('settings_skills_detail', language)}</p>
 
             <ul className="mt-3 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
-                {entries.map(({ skill, source, enabled }) => (
+                {entries.map(({ skill, source, enabled, supportingSources }) => (
                     <li key={skill.name} className="px-3 py-2">
                         <div className="flex items-start gap-3">
                             <input
@@ -85,6 +89,11 @@ export const AgentSkillsSection: React.FC<{ language: Settings['language'] }> = 
                                     )}
                                 </p>
                                 <p className="mt-0.5 text-xs text-slate-500">{skill.description}</p>
+                                {skill.manifest&&<p className="mt-1 text-xs text-slate-500">
+                                    Version {skill.manifest.version} · Profiles: {skill.manifest.profiles.join(', ')||'guidance only'} · Required: {skill.manifest.requires.join(', ')||'none'} · Supporting files: {skill.manifest.supportingFiles.length}
+                                </p>}
+                                {skill.manifest?.supportingFiles.some(file=>typeof supportingSources[file.path]!=='string')&&<p role="status" className="text-xs text-amber-800">Supporting files missing; this skill is unavailable to the agent. Import its complete folder.</p>}
+                                {skill.disableModelInvocation&&<p className="text-xs text-amber-800">Model invocation restricted.</p>}
                             </div>
                             <div className="flex shrink-0 items-center gap-1">
                                 <button
@@ -137,7 +146,7 @@ export const AgentSkillsSection: React.FC<{ language: Settings['language'] }> = 
                                     <button
                                         type="button"
                                         onClick={() => {
-                                            const outcome = saveEditedUserSkill(skill.name, editing.text);
+                                            const outcome = saveEditedUserSkill(skill.name, editing.text,supportingSources);
                                             setEditing(outcome.ok ? null : { ...editing, error: outcome.reason ?? null });
                                         }}
                                         className="min-h-[44px] rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 md:min-h-0"
@@ -174,6 +183,9 @@ export const AgentSkillsSection: React.FC<{ language: Settings['language'] }> = 
             >
                 {getTranslation('settings_skills_import', language)}
             </button>
+            <input ref={folderInputRef} type="file" multiple {...{webkitdirectory:''}} className="sr-only" aria-label="Add skill folder" onChange={event=>void handleFiles(event)}/>
+            <button type="button" onClick={()=>folderInputRef.current?.click()} className="ml-2 mt-3 min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Add skill folder</button>
+            <p className="mt-2 text-xs text-slate-600">A task pins enabled skill versions. Edits apply to a new task; switching a skill off immediately blocks further loads. Supporting JavaScript uses the controlled code executor and existing permissions.</p>
 
             {lastImport && (lastImport.added.length > 0 || lastImport.rejected.length > 0) && (
                 <div role="status" className="mt-2 space-y-1 text-xs">

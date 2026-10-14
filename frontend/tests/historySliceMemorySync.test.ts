@@ -62,7 +62,7 @@ describe('history slice load guards', () => {
         sessionStorage.clear();
     });
 
-    it('blocks load when an AI turn is actively running', async () => {
+    it('cancels the active turn and attempts History loading', async () => {
         const addProgress = vi.fn();
         let state: Record<string, unknown> = {
             addProgress,
@@ -79,12 +79,9 @@ describe('history slice load guards', () => {
 
         await slice.handleLoadReport('report-1');
 
-        // Should show error and NOT call getReport
-        expect(addProgress).toHaveBeenCalledWith(
-            expect.stringContaining('Cannot load a report while an AI turn is running'),
-            'error',
-        );
-        expect(storageMocks.getReport).not.toHaveBeenCalled();
+        expect(state.activeTurn).toBeNull();
+        expect(storageMocks.getReport).toHaveBeenCalledWith('report-1');
+        expect(addProgress).not.toHaveBeenCalledWith(expect.stringContaining('Cannot load a report'), 'error');
     });
 
     it('allows load when activeTurn is null', async () => {
@@ -688,7 +685,7 @@ describe('history slice vector memory rebuild', () => {
         expect(storageMocks.deleteReport).toHaveBeenCalledWith(storageMocks.currentSessionKey);
     });
 
-    it('shows the new upload session before a large history archive finishes saving', async () => {
+    it('retains outgoing data until its archive is safely written', async () => {
         let finishArchive: (() => void) | null = null;
         const archivePending = new Promise<void>(resolve => {
             finishArchive = resolve;
@@ -719,14 +716,14 @@ describe('history slice vector memory rebuild', () => {
         state = { ...state, ...slice };
 
         const resetPromise = slice.handleNewSession();
-        await vi.waitFor(() => {
-            expect(state.currentView).toBe('file_upload');
-            expect(state.csvData).toBeNull();
-        });
-        expect(storageMocks.saveReport).toHaveBeenCalled();
-
+        await vi.waitFor(() => expect(storageMocks.saveReport).toHaveBeenCalled());
+        expect(state.csvData).toMatchObject({ fileName: 'large.csv' });
+        expect(state.sessionId).toBe('session-old');
+        expect(state.isBusy).toBe(true);
         finishArchive?.();
         await resetPromise;
+        expect(state.csvData).toBeNull();
+        expect(state.sessionId).not.toBe('session-old');
     });
 
     it('blocks a new upload while outgoing session cleanup is still running', async () => {
@@ -770,4 +767,64 @@ describe('history slice vector memory rebuild', () => {
         expect(state.datasetBundle).toBeNull();
         expect(state.csvData).toBeNull();
     });
+    it('installs only the last History selection when reads finish in reverse order', async () => {
+        let releaseFirst!: (report: unknown) => void;
+        const first = new Promise(resolve => { releaseFirst = resolve; });
+        const record = (id: string) => ({ id, filename: id, createdAt: new Date(), appState: {
+            sessionId: id, csvData: null, analysisCards: [], columnProfiles: [], workspaceFiles: {}, vectorStoreDocuments: [],
+        } });
+        storageMocks.getReport.mockImplementation(id => id === 'first' ? first : Promise.resolve(record('last')));
+        let state: any = { sessionId: 'outgoing', addProgress: vi.fn(), refreshDuckDbSession: vi.fn(), chatHistory: [], settings: {} };
+        const get = () => state;
+        const set = (patch: any) => { state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) }; };
+        Object.assign(state, createHistorySlice(set as never, get as never, {} as never));
+        const old = state.handleLoadReport('first');
+        await state.handleLoadReport('last');
+        const installed = state.sessionId;
+        releaseFirst(record('first'));
+        await old;
+        expect(state.sessionId).toBe(installed);
+        expect(state.agentEvents).toEqual([]);
+        expect(state.isBusy).toBe(false);
+        expect(state.addProgress).not.toHaveBeenCalledWith('Report "first" loaded.');
+    });
+    it.each(['accepted', 'checkpoint'])('archives a metadata-only %s before New Session without waiting for autosave', async (kind) => {
+        storageMocks.getReport.mockResolvedValue(undefined);
+        let state: any = { sessionId: 'metadata-outgoing', currentView: 'file_upload', csvData: null,
+            datasetBundle: { source: { fileName: 'synthetic.csv' }, tables: [], transformationPrograms: [],
+                ...(kind === 'accepted' ? { acceptedCommit: { sessionId: 'origin', commitId: 'accepted', revision: 1 } } : {}) },
+            ...(kind === 'checkpoint' ? { candidateRecovery: { checkpointId: 'preserved-checkpoint', digest: 'checkpoint-digest' } } : {}),
+            chatHistory: [{ id: 'kept-chat', role: 'assistant', content: 'Completed inspection' }],
+            settings: {}, addProgress: vi.fn() };
+        const get = () => state;
+        const set = (patch: any) => { state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) }; };
+        Object.assign(state, createHistorySlice(set as never, get as never, {} as never));
+        await state.handleNewSession();
+        expect(storageMocks.saveReport).toHaveBeenCalledWith(expect.objectContaining({ id: 'metadata-outgoing', filename: 'synthetic.csv',
+            appState: expect.objectContaining({ csvData: null, chatHistory: [expect.objectContaining({ id: 'kept-chat' })],
+                ...(kind === 'accepted' ? { datasetBundle: expect.objectContaining({ acceptedCommit: expect.objectContaining({ commitId: 'accepted' }) }) }
+                    : { candidateRecovery: expect.objectContaining({ checkpointId: 'preserved-checkpoint' }) }) }) }));
+        expect(state.sessionId).not.toBe('metadata-outgoing');
+        expect(state.datasetBundle).toBeNull();
+        expect(state.candidateRecovery).toBeNull();
+        expect(state.isBusy).toBe(false);
+    });
+
+    it('preserves completed content and restores UI when outgoing archive fails', async () => {
+        storageMocks.saveReport.mockRejectedValueOnce(new Error('archive failed'));
+        let state: any = { sessionId: 'outgoing', currentView: 'analysis_dashboard', initialAnalysisStatus: 'running',
+            csvData: { fileName: 'synthetic.csv', data: [{ Amount: 1 }] }, analysisCards: [{ id: 'kept' }], chatHistory: [],
+            settings: {}, addProgress: vi.fn() };
+        const get = () => state;
+        const set = (patch: any) => { state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) }; };
+        Object.assign(state, createHistorySlice(set as never, get as never, {} as never));
+        await state.handleNewSession();
+        expect(state.sessionId).toBe('outgoing');
+        expect(state.analysisCards).toEqual([{ id: 'kept' }]);
+        expect(state.csvData.fileName).toBe('synthetic.csv');
+        expect(state.currentView).toBe('analysis_dashboard');
+        expect(state.initialAnalysisStatus).toBe('paused');
+        expect(state.isBusy).toBe(false);
+    });
+
 });

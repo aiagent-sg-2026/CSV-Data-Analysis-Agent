@@ -169,7 +169,7 @@ export default defineConfig(({ mode }) => {
         output: {
           entryFileNames: jsFileName,
           chunkFileNames: jsFileName,
-          assetFileNames: 'assets/[name].[ext]',
+          assetFileNames: 'assets/[name]-[hash].[ext]',
           inlineDynamicImports: singleFileBuild,
         },
       },

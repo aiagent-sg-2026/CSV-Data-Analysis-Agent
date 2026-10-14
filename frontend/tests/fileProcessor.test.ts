@@ -44,6 +44,7 @@ vi.mock('../services/duckdb/queryEngine', () => ({
 const buildStore = () => {
     const agentEvents: AppStore['agentEvents'] = [];
     const state: any = {
+        sessionId: 'file-processor-test',
         settings: {
             provider: 'google',
             geminiApiKey: 'key',
@@ -181,7 +182,7 @@ describe('processAndCleanFile', () => {
         });
 
         const { store, agentEvents } = buildStore();
-        const { result, updates } = await consumeGeneratorWithUpdates(processAndCleanFile({ name: 'sample.csv', size: 1 } as File, store as any));
+        const { result, updates } = await consumeGeneratorWithUpdates(processAndCleanFile(new File(['name,amount\nexample,1\n'], 'sample.csv'), store as any));
 
         expect(result.rawData.data).toHaveLength(3);
         expect(result.dataForAnalysis.data).toHaveLength(3);
@@ -272,7 +273,7 @@ describe('processAndCleanFile', () => {
 
         const { store, agentEvents } = buildStore();
         const { result, updates } = await consumeGeneratorWithUpdates(
-            processAndCleanFile({ name: fixture.fileName, size: 1 } as File, store as any),
+            processAndCleanFile(new File(['name,amount\nexample,1\n'], fixture.fileName), store as any),
         );
 
         expect(result.rawData.intakeDetection?.warnings.map(warning => warning.code)).toEqual(fixture.expectedWarningCodes);
@@ -338,7 +339,7 @@ describe('processAndCleanFile', () => {
         extractAiReportContextMock.mockResolvedValue(null);
 
         const { store } = buildStore();
-        const result = await consumeGenerator(processAndCleanFile({ name: 'ragged.csv', size: 1 } as File, store as any));
+        const result = await consumeGenerator(processAndCleanFile(new File(['name,amount\nexample,1\n'], 'ragged.csv'), store as any));
 
         expect(result.rawData.data).toEqual([
             { Region: 'East', Revenue: '1200' },
@@ -425,7 +426,7 @@ describe('processAndCleanFile', () => {
         extractAiReportContextMock.mockResolvedValue(null);
 
         const { store } = buildStore();
-        const result = await consumeGenerator(processAndCleanFile({ name: 'sales.csv', size: 1 } as File, store as any));
+        const result = await consumeGenerator(processAndCleanFile(new File(['name,amount\nexample,1\n'], 'sales.csv'), store as any));
 
         expect(Object.keys(result.rawData.data[0] ?? {})).toContain('_unnamed_column_1');
         expect(Object.keys(result.rawData.data[0] ?? {})).toContain('_unnamed_column_3');
@@ -557,7 +558,7 @@ describe('processAndCleanFile', () => {
 
         const updates: any[] = [];
         const generator = processAndCleanFile(
-            { name: 'too-many-rows.csv', size: 1024 } as File,
+            new File(['name,amount\nexample,1\n'], 'too-many-rows.csv'),
             store as any,
         );
 

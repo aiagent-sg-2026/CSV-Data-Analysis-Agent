@@ -9,6 +9,7 @@ import {
 } from './workerDiagnostics';
 import { createDuckDbWorker } from './duckDbWorkerFactory';
 import { WorkerHealthMonitor, HEALTH_PING_TIMEOUT_MS } from './workerHealthMonitor';
+import { assertSqlBinding, sqlTimeout, validateSqlLimit, validateSqlText, type SqlBinding } from '../duckdb/sqlSecurity';
 
 type DuckDbWorkerTask = 'initDuckDb' | 'loadCleanDataset' | 'loadFileDataset' | 'executeCompiledQuery' | 'executeRawQuery' | 'disposeDuckDbSession' | 'ping';
 
@@ -16,6 +17,7 @@ type WorkerRequest = {
     id: number;
     task: DuckDbWorkerTask;
     payload?: any;
+    resourceGeneration: number;
 };
 
 type WorkerResponse = {
@@ -50,8 +52,22 @@ export function validateDuckDbWorkerResponse(data: unknown): string | null {
     return null;
 }
 
-class DuckDbWorkerClient {
+export class DuckDbWorkerClient {
+    constructor(private readonly onSqlStarted?: () => void) {}
     private worker: Worker | null = null;
+    private generation = 0;
+
+    retireSession() {
+        this.generation += 1;
+        this.lastLoad = null;
+        this.restorePromise = null;
+        this.needsRestore = false;
+        this.resetWorker(normalizeAbortError('The DuckDB session was replaced.'), 'abort');
+    }
+
+    private assertGeneration(generation: number) {
+        if (generation !== this.generation) throw normalizeAbortError('The DuckDB session was replaced.');
+    }
     private initPromise: Promise<any> | null = null;
     /** True once the WASM engine has been successfully instantiated in the worker. */
     private initCompleted = false;
@@ -116,20 +132,24 @@ class DuckDbWorkerClient {
     private restoreDatasetIfNeeded(abortSignal?: AbortSignal, reportDiagnostics?: WorkerDiagnosticsReporter): Promise<void> {
         if (!this.needsRestore || !this.lastLoad) return Promise.resolve();
         if (!this.restorePromise) {
+            const generation = this.generation;
             const load = this.lastLoad;
-            this.restorePromise = (async () => {
+            const restore = (async () => {
                 await this.initDuckDb(45_000, abortSignal, reportDiagnostics);
+                this.assertGeneration(generation);
                 if (load.kind === 'file') {
                     await this.call('loadFileDataset', load.payload, { timeoutMs: 180_000, abortSignal, reportDiagnostics });
                 } else {
                     await this.call('loadCleanDataset', load.payload, { timeoutMs: 45_000, abortSignal, reportDiagnostics });
                 }
                 // A newer load or a dispose during the restore supersedes it.
+                this.assertGeneration(generation);
                 if (this.lastLoad === load) this.needsRestore = false;
                 console.warn(`[DuckDbWorker] Restored table "${load.payload.tableName}" after a worker reset.`);
             })().finally(() => {
-                this.restorePromise = null;
+                if (this.restorePromise === restore) this.restorePromise = null;
             });
+            this.restorePromise = restore;
         }
         return this.restorePromise;
     }
@@ -138,8 +158,17 @@ class DuckDbWorkerClient {
         if (this.worker) return this.worker;
         const worker = createDuckDbWorker();
         worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+            if (this.worker !== worker) return;
             const handlerStartedAt = getNowMs();
             const data = event.data;
+            const progress = data as unknown as {id?: number; progress?: string};
+            if (progress?.progress === 'sql_started') {
+                const pending = typeof progress.id === 'number' ? this.callbacks.get(progress.id) : undefined;
+                if (pending && ['executeRawQuery', 'executeCompiledQuery'].includes(pending.task)) {
+                    try {this.onSqlStarted?.();} catch { /* Observers cannot change execution ownership. */ }
+                }
+                return;
+            }
 
             // Validate response shape before routing to any callback.
             // Malformed messages must reject (not silently corrupt caller state).
@@ -207,6 +236,7 @@ class DuckDbWorkerClient {
             }
         };
         worker.onerror = event => {
+            if (this.worker !== worker) return;
             this.resetWorker(event.error || new Error('DuckDB worker crashed.'));
         };
         this.worker = worker;
@@ -239,7 +269,7 @@ class DuckDbWorkerClient {
             }));
             throw abortError;
         }
-        const request: WorkerRequest = { id, task, payload };
+        const request: WorkerRequest = { id, task, payload, resourceGeneration: this.generation };
         return new Promise((resolve, reject) => {
             const callback: {
                 resolve: (value: any) => void;
@@ -327,15 +357,17 @@ class DuckDbWorkerClient {
         if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('wasm-loading', { detail: { id: 'duckdb', label: 'SQL Engine (DuckDB WASM)', action: 'start' } }));
         }
+        const generation = this.generation;
         const initPromise = this.call('initDuckDb', { assetBaseUrl }, { timeoutMs, abortSignal, reportDiagnostics })
             .then((result: any) => {
+                this.assertGeneration(generation);
                 this.initCompleted = true;
                 if (!this.healthMonitor) {
                     this.healthMonitor = new WorkerHealthMonitor({
                         workerFamily: 'duckdb',
                         pingFn: () => this.ping(),
                         onUnhealthy: (_failures, error) => {
-                            this.resetWorker(new Error(`DuckDB worker unresponsive: ${error.message}`));
+                            if (this.generation === generation) this.resetWorker(new Error(`DuckDB worker unresponsive: ${error.message}`));
                         },
                     });
                     this.healthMonitor.start();
@@ -367,9 +399,11 @@ class DuckDbWorkerClient {
         abortSignal?: AbortSignal,
         reportDiagnostics?: WorkerDiagnosticsReporter,
     ) {
+        const generation = this.generation;
         this.lastLoad = null;
         this.needsRestore = false;
         const result = await this.call('loadCleanDataset', payload, { timeoutMs, abortSignal, reportDiagnostics });
+        this.assertGeneration(generation);
         this.lastLoad = { kind: 'clean', payload };
         return result;
     }
@@ -392,9 +426,11 @@ class DuckDbWorkerClient {
         rowCount: number;
         preview: CsvRow[];
     }> {
+        const generation = this.generation;
         this.lastLoad = null;
         this.needsRestore = false;
         const result = await this.call('loadFileDataset', payload, { timeoutMs, abortSignal, reportDiagnostics });
+        this.assertGeneration(generation);
         this.lastLoad = { kind: 'file', payload };
         return result;
     }
@@ -405,26 +441,53 @@ class DuckDbWorkerClient {
         selectedColumns: string[];
         appliedOrderBy: QueryOrderByClause[];
         appliedLimit: number;
+        expectedBinding?: SqlBinding;
     }, timeoutMs = 1500, abortSignal?: AbortSignal, reportDiagnostics?: WorkerDiagnosticsReporter): Promise<DataQueryResult> {
+        const generation = this.generation;
+        const load = this.lastLoad;
+        const binding = load ? {tableName: load.payload.tableName, loadVersion: load.payload.loadVersion} : undefined;
+        if (payload.expectedBinding) assertSqlBinding(payload.expectedBinding, binding ?? null);
+        validateSqlText(payload.sql); validateSqlText(payload.countSql); validateSqlLimit(payload.appliedLimit);
+        const boundedTimeout = sqlTimeout(timeoutMs);
         await this.restoreDatasetIfNeeded(abortSignal, reportDiagnostics);
-        return this.call('executeCompiledQuery', payload, { timeoutMs, abortSignal, reportDiagnostics });
+        this.assertGeneration(generation);
+        if (this.lastLoad !== load) throw new Error('sql_binding_mismatch');
+        const result = await this.call('executeCompiledQuery', {...payload, expectedBinding: binding}, { timeoutMs: boundedTimeout, abortSignal, reportDiagnostics });
+        this.assertGeneration(generation);
+        if (this.lastLoad !== load) throw new Error('sql_binding_mismatch');
+        return result;
     }
 
     async executeRawQuery(payload: {
         sql: string;
         selectedColumns: string[];
         limit: number;
+        expectedBinding?: SqlBinding;
     }, timeoutMs = 5000, abortSignal?: AbortSignal, reportDiagnostics?: WorkerDiagnosticsReporter): Promise<DataQueryResult> {
+        const generation = this.generation;
+        const load = this.lastLoad;
+        const binding = load ? {tableName: load.payload.tableName, loadVersion: load.payload.loadVersion} : undefined;
+        if (payload.expectedBinding) assertSqlBinding(payload.expectedBinding, binding ?? null);
+        validateSqlText(payload.sql); validateSqlLimit(payload.limit);
+        const boundedTimeout = sqlTimeout(timeoutMs);
         await this.restoreDatasetIfNeeded(abortSignal, reportDiagnostics);
-        return this.call('executeRawQuery', payload, { timeoutMs, abortSignal, reportDiagnostics });
+        this.assertGeneration(generation);
+        if (this.lastLoad !== load) throw new Error('sql_binding_mismatch');
+        const result = await this.call('executeRawQuery', {...payload, expectedBinding: binding}, { timeoutMs: boundedTimeout, abortSignal, reportDiagnostics });
+        this.assertGeneration(generation);
+        if (this.lastLoad !== load) throw new Error('sql_binding_mismatch');
+        return result;
     }
 
     async disposeDuckDbSession(timeoutMs = 1500, reportDiagnostics?: WorkerDiagnosticsReporter) {
+        const worker = this.ensureWorker();
+        const generation = this.generation;
         this.lastLoad = null;
         this.needsRestore = false;
         try {
             await this.call('disposeDuckDbSession', undefined, { timeoutMs, reportDiagnostics });
         } finally {
+            if (this.worker !== worker || this.generation !== generation) return;
             this.healthMonitor?.stop();
             this.healthMonitor = null;
             this.worker?.terminate();

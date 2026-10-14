@@ -23,6 +23,10 @@ describe('GitHub Pages PWA source contract', () => {
         const offline = readFileSync(resolve('public/offline.html'), 'utf8');
 
         expect(html).toContain('http-equiv="Content-Security-Policy"');
+        const connect = html.match(/connect-src ([^;]+);/)![1].split(/\s+/);
+        expect(connect).toContain('http://127.0.0.1:*');
+        expect(connect).toContain('http://localhost:*');
+        expect(connect).not.toContain('http:');
         expect(worker).toContain("event.data?.type === 'SKIP_WAITING'");
         expect(worker).not.toContain('self.skipWaiting();\n  })());');
         expect(worker).not.toContain('clients.claim()');

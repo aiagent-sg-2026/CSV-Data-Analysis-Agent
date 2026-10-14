@@ -1,3 +1,4 @@
+import { beginSessionTransition, cancelOwnedRun } from '../services/session/sessionOwnership';
 // @vitest-environment node
 
 /**
@@ -18,6 +19,7 @@ import {
 import type { AgentRuntimeEvent, AgentTurn, ClarificationRequest } from '../types';
 
 const {
+    providerHealthMock,
     isProviderConfiguredMock,
     classifyChatIntentMock,
     resolveEffectivePendingClarificationMock,
@@ -26,6 +28,7 @@ const {
     runPiFollowUpTurnMock,
     resumePiMutationApprovalMock,
 } = vi.hoisted(() => ({
+    providerHealthMock: vi.fn(),
     isProviderConfiguredMock: vi.fn(),
     classifyChatIntentMock: vi.fn(),
     resolveEffectivePendingClarificationMock: vi.fn(),
@@ -44,7 +47,7 @@ vi.mock('../services/agent/runtime/pi/piMutationApproval', () => ({
 
 vi.mock('../services/ai/providerConfig', () => ({
     isProviderConfigured: isProviderConfiguredMock,
-    validateProviderHealth: () => Promise.resolve({ status: 'healthy', checkedAt: new Date().toISOString() }),
+    validateProviderHealth: providerHealthMock,
     invalidateProviderHealthCache: () => {},
 }));
 
@@ -127,6 +130,7 @@ describe('chatOrchestrator resilience — Pi follow-up guard (P0)', () => {
         vi.spyOn(console, 'error').mockImplementation(() => undefined);
         vi.spyOn(console, 'log').mockImplementation(() => undefined);
         isProviderConfiguredMock.mockReturnValue(true);
+        providerHealthMock.mockResolvedValue({ status: 'healthy' });
         classifyChatIntentMock.mockResolvedValue({ findings: { intent: 'conversation', classifiedBy: 'deterministic', confidence: 'high' } });
         tryHandlePendingMutationConfirmationMock.mockResolvedValue(false);
         classifyRowDeleteIntentMock.mockReturnValue({ kind: 'unsupported' });
@@ -150,6 +154,32 @@ describe('chatOrchestrator resilience — Pi follow-up guard (P0)', () => {
         // Message must be in Mandarin (settings.language = 'Mandarin') and contain Chinese
         // The message comes from formatUserError({ surface: 'chat', language: 'Mandarin' })
         expect(String(errorMessages[0].text)).toContain('意外错误');
+    });
+
+    it('constructs the host task before provider health and classification preflight', async () => {
+        const store = createStore();
+        providerHealthMock.mockImplementationOnce(async () => {
+            const task = (store.getState() as unknown as {activeAgentTask: {taskId: string; status: string; scope: unknown}}).activeAgentTask;
+            expect(task.taskId).toMatch(/^task-/); expect(task.status).toBe('inspecting'); expect(task.scope).toBeDefined();
+            return {status: 'healthy'};
+        });
+        runPiFollowUpTurnMock.mockResolvedValueOnce({status: 'completed'});
+        await orchestrateChatResponse('Hello', store as never);
+        expect(classifyChatIntentMock).toHaveBeenCalled();
+    });
+
+    it('clears an unavailable saved task locator and permits a fresh request without invoking its provider', async () => {
+        const store = createStore({pendingClarification: {question: 'Continue?', options: [], resumeContext: {
+            piTaskContinuation: {taskId: 'unavailable-task', revision: 1, scopeDigest: 'a'.repeat(64)},
+        }}});
+        await orchestrateChatResponse('Continue', store as never);
+        expect(providerHealthMock).not.toHaveBeenCalled();
+        expect(store.getState().pendingClarification).toBeNull();
+        expect(store.getState().isBusy).toBe(false);
+        expect(store.getState().chatHistory.at(-1)?.text).toContain('Start a new request');
+        runPiFollowUpTurnMock.mockResolvedValueOnce({status: 'completed'});
+        await orchestrateChatResponse('Hello', store as never);
+        expect(providerHealthMock).toHaveBeenCalledOnce(); expect(runPiFollowUpTurnMock).toHaveBeenCalledOnce();
     });
 
     it('does not propagate the Pi error to the caller', async () => {
@@ -192,7 +222,7 @@ describe('chatOrchestrator resilience — Pi follow-up guard (P0)', () => {
                     intent: 'conversation',
                 }),
             }),
-            store,
+            expect.objectContaining({ executionContext: expect.objectContaining({ lease: expect.any(Object) }) }),
         );
     });
 });
@@ -231,7 +261,7 @@ describe('chatOrchestrator resilience — Pi approval guard (P0)', () => {
         resumePiMutationApprovalMock.mockResolvedValueOnce(undefined);
         const choice = { label: 'Approve', value: 'approve' };
         await handleClarificationResponse(choice, store as never);
-        expect(resumePiMutationApprovalMock).toHaveBeenCalledWith(pending, choice, store);
+        expect(resumePiMutationApprovalMock).toHaveBeenCalledWith(pending, choice, expect.objectContaining({ executionContext: expect.objectContaining({ lease: expect.any(Object) }) }));
     });
 
     it('denies interrupted older approval without executing it', async () => {
@@ -246,5 +276,68 @@ describe('chatOrchestrator resilience — Pi approval guard (P0)', () => {
         expect(resumePiMutationApprovalMock).not.toHaveBeenCalled();
         expect(store.getState().pendingClarification).toBeNull();
         expect(String(store.getState().chatHistory.at(-1)?.text)).toContain('No changes were made');
+    });
+});
+
+
+describe('follow-up preflight ownership', () => {
+    it('finalizes failed health preflight and allows the next request to start', async () => {
+        vi.clearAllMocks();
+        tryHandlePendingMutationConfirmationMock.mockResolvedValue(false);
+        classifyRowDeleteIntentMock.mockReturnValue({ kind: 'unsupported' });
+        providerHealthMock.mockResolvedValueOnce({ status: 'unreachable' }).mockResolvedValueOnce({ status: 'healthy' });
+        classifyChatIntentMock.mockResolvedValue({ findings: { intent: 'conversation', classifiedBy: 'deterministic', confidence: 'high' } });
+        runPiFollowUpTurnMock.mockResolvedValue(undefined);
+        const store = createStore();
+        await orchestrateChatResponse('first request', store as never);
+        expect(store.getState().activeTurn?.status).toBe('failed');
+        expect(store.getState().isBusy).toBe(false);
+        expect(store.getState().chatHistory).toHaveLength(1);
+        expect(store.getState().runtimeEvents.filter(event => event.type === 'turn_failed')).toHaveLength(1);
+        await orchestrateChatResponse('second request', store as never);
+        expect(runPiFollowUpTurnMock).toHaveBeenCalledTimes(1);
+        expect(store.getState().activeTurn?.status).toBe('completed');
+    });
+
+    it('finalizes cancelled preflight once without waiting for provider completion', async () => {
+        vi.clearAllMocks();
+        tryHandlePendingMutationConfirmationMock.mockResolvedValue(false);
+        let entered!: () => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        providerHealthMock.mockImplementationOnce(() => { entered(); return new Promise(() => {}); });
+        const store = createStore();
+        const task = orchestrateChatResponse('waiting request', store as never);
+        await started;
+        cancelOwnedRun(store as never);
+        await task;
+        expect(store.getState().activeTurn?.status).toBe('cancelled');
+        expect(store.getState().isBusy).toBe(false);
+        expect(store.getState().runtimeEvents.filter(event => event.type === 'turn_cancelled')).toHaveLength(1);
+        expect(runPiFollowUpTurnMock).not.toHaveBeenCalled();
+    });
+
+    it.each(['health', 'classification'])('does not start Pi after switching during %s', async phase => {
+        vi.clearAllMocks();
+        isProviderConfiguredMock.mockReturnValue(true);
+        tryHandlePendingMutationConfirmationMock.mockResolvedValue(false);
+        classifyRowDeleteIntentMock.mockReturnValue({ kind: 'unsupported' });
+        providerHealthMock.mockResolvedValue({ status: 'healthy' });
+        let release!: (value: unknown) => void;
+        let entered!: () => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const pending = new Promise(resolve => { release = resolve; });
+        const selected = phase === 'health' ? providerHealthMock : classifyChatIntentMock;
+        selected.mockImplementationOnce(() => { entered(); return pending; });
+        const store = createStore();
+        const old = orchestrateChatResponse('October total', store as never);
+        await started;
+        beginSessionTransition(store as never);
+        store.setState({ isBusy: false, chatHistory: [{ text: 'replacement' }] });
+        await old;
+        release(phase === 'health' ? { status: 'healthy' } : { findings: { intent: 'data_query' } });
+        await Promise.resolve();
+        expect(runPiFollowUpTurnMock).not.toHaveBeenCalled();
+        expect(store.getState().chatHistory).toEqual([{ text: 'replacement' }]);
+        expect(store.getState().isBusy).toBe(false);
     });
 });

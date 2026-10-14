@@ -14,6 +14,7 @@ import type { StoreApi } from '../types';
 import { createChatMessage } from '../../../utils/messageState';
 import { recordRuntimeEvent } from './runtimeHelpers';
 import { normalizeRuntimeOutcomeEnvelope } from './runtimeControlPlaneContract';
+import { assessTaskOutputs } from './taskOutputContract';
 
 const MAX_RUNTIME_RUN_HISTORY = 50;
 
@@ -199,6 +200,7 @@ const buildRunRecord = (
     createdAt: new Date(),
     ...resolveReviewDetail(outcome, store),
     recoveryTrace: buildRecoveryTrace(turn, outcome),
+    ...(outcome.taskOutputs ? {taskOutputs:outcome.taskOutputs} : {}),
 });
 
 export const finalizeRuntimeOutcome = ({
@@ -212,7 +214,19 @@ export const finalizeRuntimeOutcome = ({
     outcome: RuntimeOutcomeEnvelope;
     preserveActiveTurn?: boolean;
 }) => {
-    const normalizedOutcome = normalizeRuntimeOutcomeEnvelope(outcome);
+    const taskOutputs = outcome.taskOutputs ? assessTaskOutputs(outcome.taskOutputs) : undefined;
+    const state = store.getState();
+    if (taskOutputs && (state.sessionId !== taskOutputs.sessionId
+        || state.activeExecution && state.activeExecution.runId !== outcome.runId
+        || state.activeAgentTask && (state.activeAgentTask.taskId !== taskOutputs.taskId || state.activeAgentTask.revision !== taskOutputs.taskRevision))) return;
+    const completionRejected = (outcome.outcomeKind === 'accepted' || outcome.lifecycleState === 'completed')
+        && (taskOutputs ? taskOutputs.status !== 'complete' || taskOutputs.runId !== outcome.runId || taskOutputs.sessionId !== outcome.sessionId
+            : outcome.reason.startsWith('pi_follow_up_'));
+    const normalizedOutcome = normalizeRuntimeOutcomeEnvelope({ ...outcome, ...(taskOutputs ? {taskOutputs} : {}),
+        ...(completionRejected ? {outcomeKind:'blocked' as const,lifecycleState:'waiting_for_clarification' as const,eventType:'turn_blocked' as const,
+            reason:'task_output_contract_rejected',retryable:false,assistantCardId:null,eventMessage:'Required task outputs or accepted evidence are missing or mismatched.',
+            assistantMessage:`The task cannot complete: ${taskOutputs?.reasons.join(' ') || 'The required output/evidence assessment is missing or mismatched.'} Review the retained work and execute the missing verified step.`} : {}) });
+    if (taskOutputs && (store.getState().runtimeRunHistory ?? []).some(record => record.runId === outcome.runId && record.turnId === (outcome.turnId ?? turn?.turnId ?? null))) return;
     store.getState().syncTelemetryToStore?.();
 
     // BUG-UI-204: Set chatLifecycleState to the real terminal state
@@ -240,13 +254,17 @@ export const finalizeRuntimeOutcome = ({
         // Only waiting_for_clarification preserves recoveryState for resume path.
         if (turn && preserveActiveTurn) {
             const isTerminal = normalizedOutcome.lifecycleState !== 'waiting_for_clarification';
-            patch.activeTurn = isTerminal
+            patch.activeTurn = completionRejected ? {...turn,status:'waiting_for_clarification',lifecycleState:'waiting_for_clarification',finalMessage:normalizedOutcome.assistantMessage}
+                : isTerminal
                 ? { ...turn, recoveryState: null }
                 : turn;
         } else if (!preserveActiveTurn) {
             patch.activeTurn = null;
             patch.isBusy = false;
             patch.chatLifecycleState = 'idle' as ChatLifecycleState;
+        }
+        if (normalizedOutcome.outcomeKind === 'blocked' && (taskOutputs || completionRejected)) {
+            patch.isBusy = false; patch.chatLifecycleState = 'blocked';
         }
 
         // (was standalone setState for isBusy + chatLifecycleState)
@@ -277,7 +295,7 @@ export const finalizeRuntimeOutcome = ({
 
         // (was appendRuntimeRunRecord)
         patch.runtimeRunHistory = [
-            ...prev.runtimeRunHistory,
+            ...(prev.runtimeRunHistory ?? []),
             runRecord,
         ].slice(-MAX_RUNTIME_RUN_HISTORY);
 

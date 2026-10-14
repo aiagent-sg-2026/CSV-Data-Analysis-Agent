@@ -1,3 +1,7 @@
+import { normalizeEvidenceQueryPlan } from '../services/agent/execution/queryEvidencePolicy';
+import { beginSessionTransition, cancelOwnedRun, beginRun, finishRun } from '../services/session/sessionOwnership';
+import { captureQueryIdentity } from '../services/agent/runtime/pi/queryEvidence';
+import { rootStore } from '../services/session/sessionOwnership';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
@@ -47,6 +51,8 @@ import { runPiFollowUpTurn } from '../services/agent/runtime/pi/piFollowUpRuntim
 import { runPiInitialAnalysis } from '../services/agent/runtime/pi/piInitialAnalysisRuntimeService';
 import { cancelPiInitialAnalysis, recoverPiInitialAnalysisIfNeeded } from '../services/agent/runtime/pi/piInitialAnalysisRuntimeService';
 import { getCurrentAnalysisDatasetVersion } from '../services/agent/artifactProvenance';
+import { createSingleTableDatasetBundle } from '../services/data/datasetBundle';
+import { buildDatasetFingerprint } from '../utils/datasetId';
 import { ensureGoogleHistoryEndsWithUserTurn, createPiProviderContextTransform, resolvePiProviderFetch } from '../services/agent/runtime/pi/piProvider';
 import { createPiAppTools } from '../services/agent/runtime/pi/piAppTools';
 
@@ -121,6 +127,29 @@ describe('Pi production runtime', () => {
         gateMock.mockReturnValue({ rejected: [], tableOnlyIds: [] });
     });
 
+    it('clears its own streaming bubble when cancelled before the transport finishes', async () => {
+        const store = createStore();
+        store.setState({ streamingMessage: 'Old partial answer' });
+        let entered!: () => void, release!: () => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const stream: StreamFn = model => {
+            const output = createAssistantMessageEventStream();
+            const message: AssistantMessage = { role: 'assistant', content: [{ type: 'text', text: 'Old partial answer' }],
+                api: model.api, provider: model.provider, model: model.id, usage, stopReason: 'stop', timestamp: Date.now() };
+            output.push({ type: 'start', partial: message });
+            release = () => output.push({ type: 'done', reason: 'stop', message });
+            entered();
+            return output;
+        };
+        const pending = runPiFollowUpTurn({ message: 'Hello' }, store as never, stream);
+        await started;
+        cancelOwnedRun(store as never);
+        expect((await pending).status).toBe('cancelled');
+        expect(store.getState().streamingMessage).toBeNull();
+        release();
+        expect(finalizeMock).toHaveBeenCalledOnce();
+    });
+
     it('uses the app-selected OpenAI, Google, and shared gateway models', () => {
         const settings = createStore().getState().settings;
         expect(resolvePiModel(settings).id).toBe('gpt-5.4-mini');
@@ -159,16 +188,16 @@ describe('Pi production runtime', () => {
     it('completes a keyless Pi follow-up and projects the answer into the app contract', async () => {
         const store = createStore();
         const result = await runPiFollowUpTurn(
-            { message: 'Summarize the current data.' },
+            { message: 'Hello, explain how this app works.' },
             store as never,
-            answerStream('The dataset has one row.'),
+            answerStream('Use a CSV to begin an analysis.'),
         );
 
-        expect(result).toMatchObject({ status: 'completed', text: 'The dataset has one row.' });
+        expect(result).toMatchObject({ status: 'completed', text: 'Use a CSV to begin an analysis.' });
         expect(finalizeMock).toHaveBeenCalledWith(expect.objectContaining({
             outcome: expect.objectContaining({
                 outcomeKind: 'accepted',
-                assistantMessage: 'The dataset has one row.',
+                assistantMessage: 'Use a CSV to begin an analysis.',
                 eventDetail: { runtimeOwner: 'pi' },
             }),
         }));
@@ -253,7 +282,8 @@ describe('Pi production runtime', () => {
 
         expect(actionMock).toHaveBeenCalledWith(expect.objectContaining({
             toolName: 'analysis.create_plan',
-        }), store, expect.any(Object));
+        }), expect.objectContaining({ executionContext: expect.objectContaining({ toolCallId: 'create-card-1' }) }), expect.any(Object));
+        expect(rootStore(actionMock.mock.calls[0][1])).toBe(store);
         expect(result.status).toBe('completed');
         expect(store.getState().resultsViewMode).toBe('explore');
         expect(finalizeMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -361,6 +391,107 @@ describe('Pi production runtime', () => {
         actionMock.mockReset();
     });
 
+    it('preserves a saved batch card without turning a later provider failure into completion', async () => {
+        const store = createStore();
+        const plan = { title: 'Amount by Town', description: 'Amount', chartType: 'bar', groupByColumn: 'Town', valueColumn: 'Amount', aggregation: 'sum' };
+        actionMock.mockImplementationOnce(async () => {
+            store.setState({ analysisCards: [{ id: 'partial-card', plan, aggregatedData: [{ Town: 'A', Amount: 10 }] }] });
+            return { status: 'success', message: 'Created card.', artifacts: { createdCardId: 'partial-card' } };
+        });
+        let call = 0;
+        const stream: StreamFn = model => {
+            if (call++) throw new Error('Synthetic provider unavailable');
+            const output = createAssistantMessageEventStream();
+            const message: AssistantMessage = { role: 'assistant', content: [{ type: 'toolCall', id: 'partial', name: 'analysis_create_plan', arguments: { plan } }],
+                api: model.api, provider: model.provider, model: model.id, usage, stopReason: 'toolUse', timestamp: Date.now() };
+            output.push({ type: 'start', partial: message }); output.push({ type: 'done', reason: 'toolUse', message }); return output;
+        };
+        const result = await runPiFollowUpTurn({ message: 'Explore several angles.', intentFindings: { intent: 'batch_analysis' } as never }, store as never, stream);
+        expect(result.status).toBe('failed');
+        expect(store.getState().analysisCards.map((c: any) => c.id)).toEqual(['partial-card']);
+        expect(finalizeMock).toHaveBeenCalledWith(expect.objectContaining({ outcome: expect.objectContaining({ outcomeKind: 'failed' }) }));
+        actionMock.mockReset();
+    });
+
+    it('does not use a created card to complete an unresolved factual answer without a query artifact', async () => {
+        const store = createStore();
+        const plan = { title: 'Amount by Town', description: 'Amount', chartType: 'bar', groupByColumn: 'Town', valueColumn: 'Amount', aggregation: 'sum' };
+        actionMock.mockImplementationOnce(async () => {
+            store.setState({ analysisCards: [{ id: 'unscoped-card', plan, aggregatedData: [{ Town: 'A', Amount: 999 }] }] });
+            return { status: 'success', message: 'Created card.', artifacts: { createdCardId: 'unscoped-card' } };
+        });
+        const stream: StreamFn = model => {
+            const output = createAssistantMessageEventStream();
+            const message: AssistantMessage = { role: 'assistant', content: [{ type: 'toolCall', id: 'unscoped', name: 'analysis_create_plan', arguments: { plan } }],
+                api: model.api, provider: model.provider, model: model.id, usage, stopReason: 'toolUse', timestamp: Date.now() };
+            output.push({ type: 'start', partial: message }); output.push({ type: 'done', reason: 'toolUse', message }); return output;
+        };
+        const result = await runPiFollowUpTurn({ message: 'What is the October total? Add a card.', intentFindings: { intent: 'precise_card' } as never }, store as never, stream);
+        expect(result.status).toBe('blocked');
+        expect(result.text).not.toContain('999');
+        actionMock.mockReset();
+    });
+
+    it('blocks all batch outputs rejected by the real evidence gate', async () => {
+        const store = createStore();
+        const actualGate = await vi.importActual<typeof import('../services/agent/runtime/pi/piCardEvidenceGate')>(
+            '../services/agent/runtime/pi/piCardEvidenceGate',
+        );
+        gateMock.mockImplementation(actualGate.gatePiCreatedCards);
+        store.setState({
+            latestAnalysisSession: { semanticUnderstanding: {
+                businessGrains: ['Town'], candidateMetrics: ['Amount'], timeGrains: [], helperDimensions: [],
+                blockedDimensions: [], detailRowPolicy: 'exclude_non_detail_rows', businessGlossary: [],
+                businessGrainConfidence: 'high', unsafeForBusinessNarrative: false,
+            } },
+            queryHistory: [],
+            columnProfiles: [{ name: 'Town', type: 'categorical' }, { name: 'Row Number', type: 'numerical' }],
+            deleteAnalysisCard: (id: string) => store.setState((prev: any) => ({
+                analysisCards: prev.analysisCards.filter((card: any) => card.id !== id),
+            })),
+        });
+        const plans = ['First', 'Second', 'Third'].map(title => ({
+            title, description: title, chartType: 'bar', groupByColumn: 'Town',
+            valueColumn: 'Row Number', aggregation: 'sum',
+        }));
+        let created = 0;
+        actionMock.mockImplementation(async () => {
+            const index = created++;
+            const id = `rejected-${index}`;
+            store.setState((prev: any) => ({
+                analysisCards: [...prev.analysisCards, { id, plan: plans[index],
+                    aggregatedData: [{ Town: 'A', helper_sum: 10 }, { Town: 'B', helper_sum: 20 }],
+                    provenance: { queryEvidence: { traceId: id } } }],
+                queryHistory: [...prev.queryHistory, { id,
+                    plan: { select: ['Town', 'helper_sum'], groupBy: ['Town'],
+                        aggregates: [{ function: 'sum', column: 'Row Number', as: 'helper_sum' }] },
+                    result: { totalMatchedRows: 2, truncated: false, selectedColumns: ['Town', 'helper_sum'] } }],
+            }));
+            return { status: 'success', message: 'Created candidate.', artifacts: { createdCardId: id } };
+        });
+        const stream: StreamFn = model => {
+            const output = createAssistantMessageEventStream();
+            const message: AssistantMessage = { role: 'assistant',
+                content: plans.map((plan, index) => ({ type: 'toolCall' as const, id: `reject-${index}`,
+                    name: 'analysis_create_plan', arguments: { plan } })),
+                api: model.api, provider: model.provider, model: model.id, usage,
+                stopReason: 'toolUse', timestamp: Date.now() };
+            output.push({ type: 'start', partial: message });
+            output.push({ type: 'done', reason: 'toolUse', message });
+            return output;
+        };
+        const result = await runPiFollowUpTurn({ message: 'Analyze this dataset from several angles.',
+            intentFindings: { intent: 'batch_analysis' } as never }, store as never, stream);
+        expect(result.status).toBe('blocked');
+        expect(result.text).toContain('helper_metric');
+        expect(store.getState().analysisCards).toEqual([]);
+        expect(gateMock).toHaveBeenCalledOnce();
+        expect(finalizeMock).toHaveBeenCalledWith(expect.objectContaining({
+            outcome: expect.objectContaining({ outcomeKind: 'blocked', assistantCardId: null }),
+        }));
+        actionMock.mockReset();
+    });
+
     it('does not apply the evidence gate to an explicit card request', async () => {
         const store = createStore();
         const plan = { title: 'T', description: 'T', chartType: 'bar', groupByColumn: 'Town', valueColumn: 'Amount', aggregation: 'sum' };
@@ -388,18 +519,18 @@ describe('Pi production runtime', () => {
         expect(gateMock).not.toHaveBeenCalled();
     });
 
-    it('accepts a text answer for batch analysis when Pi finds no card worth saving', async () => {
+    it('blocks a batch data answer without current-turn evidence', async () => {
         const store = createStore();
         const result = await runPiFollowUpTurn({
             message: 'Analyze this dataset from several angles.',
             intentFindings: { intent: 'batch_analysis' } as never,
         }, store as never, answerStream('The data has a single row, so no angle is meaningful.'));
 
-        expect(result).toMatchObject({ status: 'completed' });
+        expect(result).toMatchObject({ status: 'blocked' });
         expect(actionMock).not.toHaveBeenCalled();
     });
 
-    it('keeps a saved card as completed when the turn fails after card creation', async () => {
+    it('does not complete with a card produced for an invalidated dataset binding', async () => {
         const store = createStore();
         const plan = {
             title: 'Average Amount by Town',
@@ -434,12 +565,12 @@ describe('Pi production runtime', () => {
             intentFindings: { intent: 'precise_card' } as never,
         }, store as never, stream);
 
-        expect(result.status).toBe('completed');
+        expect(result.status).toBe('failed');
         expect(finalizeMock).toHaveBeenCalledWith(expect.objectContaining({
             outcome: expect.objectContaining({
-                outcomeKind: 'accepted',
-                retryable: false,
-                assistantCardId: 'created-card',
+                outcomeKind: 'failed',
+                retryable: true,
+                assistantCardId: null,
             }),
         }));
     });
@@ -530,6 +661,225 @@ describe('Pi production runtime', () => {
         appSessionId: 'session-1', datasetId: 'dataset-1', datasetVersion: 'version-1',
         researchGoal: 'Find patterns.', provider: { provider: 'openai', modelId: 'gpt-5.4-mini' },
     }, createStore() as never, stream);
+
+    it.each([false,true])('keeps nine ordered stages with shared initial preparation enabled=%s',async enabled=>{
+        const names: string[]=[];const contexts: any[]=[];
+        stageMock.mockImplementation(async ({toolName,phase,context})=>{names.push(toolName);contexts.push(context.store);
+            return {decision:'pass',phase,toolName,datasetVersion:context.request.datasetVersion,summary:'ok',warningCodes:[],artifactRefs:[],transformationIds:[],cardIds:[]};});
+        const store=createStore();
+        const result=await runPiInitialAnalysis({appSessionId:'session-1',datasetId:'dataset-1',datasetVersion:'version-1',researchGoal:'Find patterns.',provider:{provider:'openai',modelId:'mock'}},
+            store as never,stageToolStream(),enabled?{codingPreparation:{enabled:true}}:{});
+        expect(result.status).toBe('completed');expect(names).toEqual(['dataset.profileStructure','dataset.detectNoiseRows','dataset.suggestCleaningPlan','dataset.applyTransform',
+            'dataset.validatePreparedData','dataset.bindQueryEngine','analysis.researchQuestions','analysis.executeEvidence','analysis.finalizeArtifacts']);
+        contexts.forEach((context,index)=>{
+            expect(context.executionContext).toMatchObject({stepId:expect.stringContaining(`stage-${index}-`),toolCallId:expect.any(String)});
+            if(enabled)expect(context.executorPreparation).toMatchObject({mode:'staging_only',entryPoint:'initial_analysis',stage:{stageIndex:index,pendingStageIndex:index}});
+            else {expect(context.piTask).toBeUndefined();expect(context.codeExecution).toBeUndefined();}
+        });
+        expect(store.getState().csvData.data).toEqual([{Town:'A',Amount:10}]);
+    });
+    it('preserves optional skips with preparation enabled',async()=>{
+        const names:string[]=[];passingStages(names);
+        const result=await runPiInitialAnalysis({appSessionId:'session-1',datasetId:'dataset-1',datasetVersion:'version-1',researchGoal:'Find patterns.',provider:{provider:'openai',modelId:'mock'}},
+            createStore() as never,scriptedStageStream([{}, {}, {stage:'dataset.validatePreparedData'},{}]),{codingPreparation:{enabled:true}});
+        expect(result.status).toBe('completed');expect(names).toHaveLength(7);expect(names).not.toContain('dataset.applyTransform');
+    });
+    it('does not complete or advance a shared initial task past a failed mandatory stage', async () => {
+        const store = createStore();
+        store.setState({ confirmedAnalysisGoal: 'Find patterns.', datasetBundle: createSingleTableDatasetBundle({
+            datasetId: 'synthetic', sourceFingerprint: 'synthetic', file: { name: 'synthetic.csv', size: 20, lastModified: 1 }, data: store.getState().csvData,
+        }) });
+        const before = JSON.stringify(store.getState().datasetBundle);
+        stageMock.mockImplementation(async ({ toolName, phase, context }) => ({
+            decision: 'fail', phase, toolName, datasetVersion: context.request.datasetVersion,
+            summary: 'Independent host meaning is unavailable.', warningCodes: ['validation_host_contract_required'],
+            artifactRefs: [], transformationIds: [], cardIds: [],
+        }));
+        const outcome = await runPiInitialAnalysis({ appSessionId: 'session-1', datasetId: 'synthetic', datasetVersion: getCurrentAnalysisDatasetVersion(store.getState())!,
+            researchGoal: 'Find patterns.', provider: { provider: 'openai', modelId: 'mock' } }, store as never, stageToolStream(), { codingPreparation: { enabled: true } });
+        expect(outcome.status).toBe('failed');
+        expect(store.getState().activeAgentTask.status).toBe('blocked');
+        expect(stageMock).toHaveBeenCalledOnce();
+        expect(JSON.stringify(store.getState().datasetBundle)).toBe(before);
+        const checkpoint = JSON.parse(localStorage.getItem('pi-initial-analysis-v1:session-1')!);
+        expect(checkpoint).toMatchObject({ nextStageIndex: 0, pendingStageIndex: 0, stageReceipts: [{ decision: 'fail', stageIndex: 0 }] });
+        localStorage.removeItem('pi-initial-analysis-v1:session-1');
+    });
+    it('preserves provider failure after partial work in a shared initial task', async () => {
+        const store = createStore();
+        const names: string[] = []; passingStages(names);
+        let calls = 0;
+        const stream: StreamFn = (...args) => {
+            if (++calls === 1) return stageToolStream()(...args);
+            const model = args[0], output = createAssistantMessageEventStream();
+            const message: AssistantMessage = { role: 'assistant', content: [], api: model.api, provider: model.provider, model: model.id,
+                usage, stopReason: 'error', errorMessage: 'Upstream request failed', timestamp: Date.now() };
+            output.push({ type: 'start', partial: message }); output.push({ type: 'error', reason: 'error', error: message });
+            return output;
+        };
+        const result = await runPiInitialAnalysis({ appSessionId: 'session-1', datasetId: 'dataset-1', datasetVersion: 'version-1',
+            researchGoal: 'Find patterns.', provider: { provider: 'openai', modelId: 'mock' } }, store as never, stream, { codingPreparation: { enabled: true } });
+        expect(names).toEqual(['dataset.profileStructure']);
+        expect(result.status).toBe('failed');
+        expect(store.getState().activeAgentTask.status).toBe('failed');
+        expect(store.getState().initialAnalysisFailureKind).toBe('provider');
+        localStorage.removeItem('pi-initial-analysis-v1:session-1');
+    });
+    it.each(['stop','switch'] as const)('fences prepared stage wait after %s and protects a newer run',async action=>{
+        const store=createStore();let enter!:()=>void,release!:()=>void,late!:()=>void;
+        const entered=new Promise<void>(resolve=>{enter=resolve;}),wait=new Promise<void>(resolve=>{release=resolve;}),settled=new Promise<void>(resolve=>{late=resolve;});
+        const pending=runPiInitialAnalysis({appSessionId:'session-1',datasetId:'dataset-1',datasetVersion:'version-1',researchGoal:'Find patterns.',provider:{provider:'openai',modelId:'mock'}},
+            store as never,stageToolStream(),{codingPreparation:{enabled:true,prepareStage:async owned=>{enter();await wait;owned.setState({finalSummary:{language:'English',text:'stale'}});late();}}});
+        await entered;
+        if(action==='stop')cancelPiInitialAnalysis('session-1');else beginSessionTransition(store as never);
+        const result=await pending;expect(result.status).toBe('cancelled');
+        const next=beginRun(store as never,'follow_up','new-run','new-turn');store.setState({finalSummary:'current',isBusy:true});
+        release();await settled;
+        expect(store.getState()).toMatchObject({finalSummary:'current',isBusy:true,activeExecution:{runId:'new-run'}});
+        expect(stageMock).not.toHaveBeenCalled();finishRun(store as never,next);
+    });
+    it('stores preparation metadata without restoring task/grant authority',async()=>{
+        const store=createStore();store.setState({confirmedAnalysisGoal:'Find patterns.'});const names:string[]=[];passingStages(names);
+        let enter!:()=>void;const entered=new Promise<void>(resolve=>{enter=resolve;});let calls=0,saved='';
+        const stream:StreamFn=(...args)=>{if(++calls===2){saved=localStorage.getItem('pi-initial-analysis-v1:session-1')!;enter();return createAssistantMessageEventStream();}return stageToolStream()(...args);};
+        const pending=runPiInitialAnalysis({appSessionId:'session-1',datasetId:'dataset-1',datasetVersion:getCurrentAnalysisDatasetVersion(store.getState())!,researchGoal:'Find patterns.',provider:{provider:'openai',modelId:'mock'}},
+            store as never,stream,{codingPreparation:{enabled:true}});
+        await entered;const checkpoint=JSON.parse(saved);
+        expect(checkpoint.executorPreparation).toMatchObject({mode:'staging_only',entryPoint:'initial_analysis',taskId:expect.any(String)});
+        expect(checkpoint.stageReceipts[0].execution).toMatchObject({toolCallId:expect.any(String),stepId:expect.any(String)});
+        expect(saved).not.toContain('capabilityGrants');expect(saved).not.toContain('controller');
+        cancelPiInitialAnalysis('session-1');await pending;localStorage.setItem('pi-initial-analysis-v1:session-1',saved);
+        stageMock.mockImplementation(async({toolName,phase,context})=>{
+            expect(context.store.piTask).toBeUndefined();expect(context.store.codeExecution).toBeUndefined();
+            return {decision:'pass',phase,toolName,datasetVersion:context.request.datasetVersion,summary:'ok',warningCodes:[],artifactRefs:[],transformationIds:[],cardIds:[]};});
+        expect((await recoverPiInitialAnalysisIfNeeded(store as never,stageToolStream()))?.status).toBe('completed');
+    });
+
+    it('resumes after a committed transformation using the latest material version without repeating the mutation', async () => {
+        const store = createStore();
+        store.setState({ rawCsvData: store.getState().csvData, confirmedAnalysisGoal: 'Find patterns.' });
+        const initialVersion = getCurrentAnalysisDatasetVersion(store.getState())!;
+        const names: string[] = [];
+        let stable!: () => void;
+        const captured = new Promise<void>(resolve => { stable = resolve; });
+        let saved = '';
+        stageMock.mockImplementation(async ({ toolName, phase, context }) => {
+            names.push(toolName);
+            if (toolName === 'dataset.applyTransform') context.store.setState({
+                csvData: { fileName: 'sample.csv', data: [{ Town: 'A', Amount: 20 }] },
+                dataPreparationPlan: { operations: [{ id: 'clean-1', type: 'trim_whitespace', columns: '*', reason: 'Trim' }] },
+            });
+            return { decision: 'pass', phase, toolName, datasetVersion: getCurrentAnalysisDatasetVersion(context.store.getState()),
+                summary: 'ok', warningCodes: [], artifactRefs: [], transformationIds: toolName === 'dataset.applyTransform' ? ['clean-1'] : [], cardIds: [] };
+        });
+        let calls = 0;
+        const stream: StreamFn = (model, context, options) => {
+            if (++calls === 5) {
+                saved = localStorage.getItem('pi-initial-analysis-v1:session-1')!;
+                stable();
+                return createAssistantMessageEventStream();
+            }
+            return stageToolStream()(model, context, options);
+        };
+        const running = runPiInitialAnalysis({ appSessionId: 'session-1', datasetId: 'dataset-1', datasetVersion: initialVersion,
+            researchGoal: 'Find patterns.', provider: { provider: 'openai', modelId: 'gpt-5.4-mini' } }, store as never, stream);
+        await captured;
+        // The captured stable boundary represents browser termination before the next tool starts.
+        cancelPiInitialAnalysis('session-1');
+        await running;
+        localStorage.setItem('pi-initial-analysis-v1:session-1', saved);
+        expect(JSON.parse(saved).datasetVersion).toBe(getCurrentAnalysisDatasetVersion(store.getState()));
+        names.length = 0;
+        const outcome = await recoverPiInitialAnalysisIfNeeded(store as never, stageToolStream());
+        expect(outcome?.status).toBe('completed');
+        expect(names[0]).toBe('dataset.validatePreparedData');
+        expect(names).not.toContain('dataset.applyTransform');
+        expect(store.getState().csvData.data[0].Amount).toBe(20);
+    });
+
+    it('projects awaiting_source after metadata-only reload without deleting the stable checkpoint or starting a tool', async () => {
+        const store = createStore();
+        const source = store.getState().csvData;
+        store.setState({ confirmedAnalysisGoal: 'Find patterns.', rawCsvData: source,
+            datasetBundle: createSingleTableDatasetBundle({ datasetId: 'dataset-1', sourceFingerprint: buildDatasetFingerprint(source.fileName, source.data),
+                file: { name: source.fileName, size: 20, lastModified: 1 }, data: source }) });
+        let entered!: () => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const stream: StreamFn = () => { entered(); return createAssistantMessageEventStream(); };
+        const running = runPiInitialAnalysis({ appSessionId: 'session-1', datasetId: 'dataset-1',
+            datasetVersion: getCurrentAnalysisDatasetVersion(store.getState())!, researchGoal: 'Find patterns.',
+            provider: { provider: 'openai', modelId: 'gpt-5.4-mini' } }, store as never, stream);
+        await started;
+        const saved = localStorage.getItem('pi-initial-analysis-v1:session-1')!;
+        cancelPiInitialAnalysis('session-1');
+        await running;
+        localStorage.setItem('pi-initial-analysis-v1:session-1', saved);
+        store.setState({ csvData: null, rawCsvData: null });
+        stageMock.mockClear();
+        expect(await recoverPiInitialAnalysisIfNeeded(store as never, stageToolStream())).toBeNull();
+        expect(store.getState().initialAnalysisRecovery.status).toBe('awaiting_source');
+        expect(localStorage.getItem('pi-initial-analysis-v1:session-1')).toBe(saved);
+        expect(stageMock).not.toHaveBeenCalled();
+        expect(store.getState().isBusy).toBe(false);
+        const legacy = JSON.stringify({ ...JSON.parse(saved), schemaVersion: 1 });
+        localStorage.setItem('pi-initial-analysis-v1:session-1', legacy);
+        expect(await recoverPiInitialAnalysisIfNeeded(store as never, stageToolStream())).toBeNull();
+        expect(store.getState().initialAnalysisRecovery.reason).toBe('legacy_checkpoint_requires_prepared_rows');
+        expect(localStorage.getItem('pi-initial-analysis-v1:session-1')).toBe(legacy);
+        expect(stageMock).not.toHaveBeenCalled();
+    });
+
+    it('does not commit a suspended initial stage or its finalizer into a replacement session', async () => {
+        let release!: () => void;
+        let started!: () => void;
+        const entered = new Promise<void>(resolve => { started = resolve; });
+        const suspended = new Promise<void>(resolve => { release = resolve; });
+        stageMock.mockImplementation(async ({ toolName, phase, context }) => {
+            started();
+            await suspended;
+            context.store.setState({ finalSummary: 'Old session result' });
+            return { decision: 'pass', phase, toolName, datasetVersion: context.request.datasetVersion,
+                summary: 'ok', warningCodes: [], artifactRefs: [], transformationIds: [], cardIds: [] };
+        });
+        const store = createStore();
+        const pending = runPiInitialAnalysis({
+            appSessionId: 'session-1', datasetId: 'dataset-1', datasetVersion: 'version-1',
+            researchGoal: 'Find patterns.', provider: { provider: 'openai', modelId: 'gpt-5.4-mini' },
+        }, store as never, stageToolStream());
+        await entered;
+        store.setState({ sessionId: 'session-2', finalSummary: 'New session',
+            initialAnalysisStatus: 'idle', isBusy: false, isGeneratingReport: false });
+        release();
+        const result = await pending;
+        expect(result.status).toBe('cancelled');
+        expect(stageMock).toHaveBeenCalledTimes(1);
+        expect(store.getState()).toMatchObject({ sessionId: 'session-2', finalSummary: 'New session',
+            initialAnalysisStatus: 'idle', isBusy: false, isGeneratingReport: false });
+    });
+
+    it('blocks an October data answer without current-turn evidence instead of reusing 999', async () => {
+        const store = createStore();
+        store.setState({ activeDataQuery: {
+            source: 'execute_data_query', plan: { groupBy: ['Town'], aggregates: [{ function: 'sum', column: 'Amount', as: 'Total' }] },
+            result: { rows: [{ Town: 'A', Total: 999 }], selectedColumns: ['Town', 'Total'],
+                totalMatchedRows: 1, returnedRows: 1, appliedLimit: 500, appliedOrderBy: [] },
+        } });
+        const result = await runPiFollowUpTurn({ message: 'List all totals by Town for October only.',
+            queryUnderstandingArtifact: { taskSignal: 'inspect_data', expectedOutput: 'data_table',
+                intent: 'follow_up', subjectRefs: [], unresolvedReferences: [], needsGrounding: false,
+                comparisonScope: { kind: 'none' }, reason: 'October query', classifiedBy: 'ai',
+                hasExplicitColumns: true, hasAggregationFunction: true, hasGroupingDirective: true, hasFilterCondition: true,
+                groupingColumns: ['Town'], referencedColumns: ['Amount'], aggregationFunctions: ['SUM'],
+                filterDescription: 'October only', timeScope: { kind: 'explicit', value: 'October' },
+                confidence: 'high' } as never,
+        }, store as never, answerStream('October evidence is unavailable.'));
+        expect(result.status).toBe('blocked');
+        // UUID evidence references may contain these digits without asserting the old value.
+        expect(result.text.split('\n\nEvidence:')[0]).not.toContain('999');
+        expect(finalizeMock).not.toHaveBeenCalledWith(expect.objectContaining({
+            outcome: expect.objectContaining({ outcomeKind: 'accepted' }),
+        }));
+    });
 
     it('lets Pi skip the optional cleaning stages and still completes the run', async () => {
         const names: string[] = [];
@@ -711,4 +1061,131 @@ describe('Pi production runtime', () => {
         // Diagnostics keep the raw text.
         expect(outcome.error?.message).toContain('content is not allowed in reasoning items');
     });
+    it('answers with the current executed October value instead of provider text 999', async () => {
+        const store = createStore();
+        store.setState({ csvData: { fileName: 'synthetic.csv', data: [{ Town: 'A', Amount: 10, Date: '2026-10-03' }] },
+            columnProfiles: [{ name: 'Town', type: 'categorical' }, { name: 'Amount', type: 'numerical' }, { name: 'Date', type: 'date' }] });
+        const plan = { groupBy: ['Town'], aggregates: [{ function: 'sum', column: 'Amount', as: 'Total' }],
+            where: { predicates: [{ column: 'Date', operator: 'gte', value: '2026-10-01' }, { column: 'Date', operator: 'lt', value: '2026-11-01' }] } };
+        actionMock.mockImplementationOnce(async (_action, owned) => {
+            const query = { ...captureQueryIdentity(owned).fields, queryMode: 'structured', plan, explanation: 'October total', engine: 'native',
+                result: { rows: [{ Town: 'A', Total: 10 }], selectedColumns: ['Town', 'Total'], returnedRows: 1, totalMatchedRows: 1,
+                    appliedOrderBy: [], appliedLimit: 500, truncated: false } };
+            owned.setState({ activeDataQuery: query });
+            return { status: 'success', message: 'Executed query', artifacts: { activeDataQuery: query } };
+        });
+        let calls = 0;
+        const stream: StreamFn = model => {
+            if (calls++) return answerStream('The answer is 999.')(model, {} as never, {} as never);
+            const output = createAssistantMessageEventStream();
+            const message: AssistantMessage = { role: 'assistant', content: [{ type: 'toolCall', id: 'real-october-tool', name: 'data_query', arguments: { explanation: 'October', plan } }],
+                api: model.api, provider: model.provider, model: model.id, usage, stopReason: 'toolUse', timestamp: Date.now() };
+            output.push({ type: 'start', partial: message }); output.push({ type: 'done', reason: 'toolUse', message });
+            return output;
+        };
+        const result = await runPiFollowUpTurn({ message: 'October 2026 total by Town', queryUnderstandingArtifact: {
+            taskSignal: 'inspect_data', expectedOutput: 'data_table', referencedColumns: ['Amount'], groupingColumns: ['Town'], aggregationFunctions: ['SUM'],
+            filterDescription: 'October 2026', timeScope: { kind: 'explicit', value: 'October 2026' }, unresolvedReferences: [],
+            requestedQueryScopes: [{ role: 'result', plan }],
+        } as never }, store as never, stream);
+        expect(result.status).toBe('completed');
+        expect(result.text).toContain('10');
+        expect(result.text).toContain('Evidence: query-');
+        // A UUID in the evidence reference can legitimately contain these digits.
+        expect(result.text.split('\n\nEvidence:')[0]).not.toContain('999');
+        expect(store.getState().activeDataQuery.toolCallId).toBe('real-october-tool');
+    });
+
+    it('answers a numeric lowest-margin request from fresh complete evidence in the real Pi loop', async () => {
+        const store = createStore();
+        const rows = [
+            { Customer: 'High', 'Sales Amount': 100, Profit: 50 }, { Customer: 'Low', 'Sales Amount': 100, Profit: 10 },
+            { Customer: 'Loss', 'Sales Amount': 100, Profit: -5 }, { Customer: 'Zero', 'Sales Amount': 0, Profit: 20 },
+        ];
+        store.setState({ csvData: { fileName: 'synthetic-margin.csv', data: rows }, columnProfiles: [
+            { name: 'Customer', type: 'categorical' }, { name: 'Sales Amount', type: 'numerical' }, { name: 'Profit', type: 'numerical' },
+        ] });
+        const plan = { groupBy: ['Customer'], aggregates: [
+            { function: 'sum', column: 'Sales Amount', as: 'total_sales' },
+            { function: 'sum', column: 'Profit', as: 'total_profit' },
+        ], limit: 100 };
+        actionMock.mockImplementationOnce(async (_action, owned) => {
+            const query = { ...captureQueryIdentity(owned).fields, queryMode: 'structured', plan: normalizeEvidenceQueryPlan(plan as import('../types').QueryPlan, owned.getState().activeTurn.userMessage),
+                explanation: 'Complete sales and profit by customer', engine: 'native',
+                result: { rows: rows.map(row => ({ Customer: row.Customer, total_sales: row['Sales Amount'], total_profit: row.Profit })),
+                    selectedColumns: ['Customer', 'total_sales', 'total_profit'], returnedRows: rows.length,
+                    totalMatchedRows: rows.length, appliedOrderBy: [], appliedLimit: 500, truncated: false } };
+            owned.setState({ activeDataQuery: query });
+            return { status: 'success', message: 'Executed query', artifacts: { activeDataQuery: query } };
+        });
+        let calls = 0;
+        const stream: StreamFn = model => {
+            if (calls++) return answerStream('High is the lowest customer.')(model, {} as never, {} as never);
+            const output = createAssistantMessageEventStream();
+            const message: AssistantMessage = { role: 'assistant', content: [{ type: 'toolCall', id: 'fresh-margin-call',
+                name: 'data_query', arguments: { explanation: 'Complete margin inputs', plan } }],
+                api: model.api, provider: model.provider, model: model.id, usage, stopReason: 'toolUse', timestamp: Date.now() };
+            output.push({ type: 'start', partial: message }); output.push({ type: 'done', reason: 'toolUse', message });
+            return output;
+        };
+        const result = await runPiFollowUpTurn({ message: 'List the lowest 2 customers by profit margin.',
+            queryUnderstandingArtifact: { taskSignal: 'derive_metric', expectedOutput: 'data_table',
+                referencedColumns: ['Sales Amount', 'Profit'], groupingColumns: ['Customer'], aggregationFunctions: ['SUM'],
+                timeScope: { kind: 'none' }, unresolvedReferences: [], resultCompleteness: 'complete',
+                requestedQueryScopes: [{ role: 'result', plan }] } as never }, store as never, stream);
+        expect(result.status).toBe('completed');
+        expect(result.text).toContain('| Loss | 100.00 | -5.00 | -5.00% |');
+        expect(result.text).toContain('| Low | 100.00 | 10.00 | 10.00% |');
+        expect(result.text).not.toContain('| High |');
+        expect(result.text).not.toContain('| Zero |');
+        expect(result.text).toContain(`Evidence: ${store.getState().activeDataQuery.queryId}`);
+        expect(store.getState().activeDataQuery.toolCallId).toBe('fresh-margin-call');
+        actionMock.mockReset();
+    });
+
+    it('fences late follow-up tools and finalizers while a replacement run is streaming', async () => {
+        const store = createStore();
+        let entered!: () => void;
+        let release!: () => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        actionMock.mockImplementationOnce(async (_action, owned) => {
+            entered(); await pending;
+            owned.setState({ analysisCards: [{ id: 'stale-card' }] });
+            return { status: 'success', message: 'old query' };
+        });
+        const oldStream: StreamFn = model => {
+            const output = createAssistantMessageEventStream();
+            const message: AssistantMessage = { role: 'assistant', content: [{ type: 'toolCall', id: 'old-query', name: 'data_query', arguments: { explanation: 'Old', plan: { select: ['Amount'] } } }],
+                api: model.api, provider: model.provider, model: model.id, usage, stopReason: 'toolUse', timestamp: Date.now() };
+            output.push({ type: 'start', partial: message }); output.push({ type: 'done', reason: 'toolUse', message }); return output;
+        };
+        const old = runPiFollowUpTurn({ message: 'old data' }, store as never, oldStream);
+        await started;
+        beginSessionTransition(store as never);
+        store.setState({ sessionId: 'replacement', analysisCards: [{ id: 'kept', plan: { title: 'Kept card', chartType: 'bar', groupByColumn: 'Town', valueColumn: 'Amount', aggregation: 'sum' }, aggregatedData: [{ Town: 'A', Amount: 10 }] }], isBusy: false });
+        let finish!: () => void;
+        let streaming!: () => void;
+        const streamingStarted = new Promise<void>(resolve => { streaming = resolve; });
+        const newStream: StreamFn = model => {
+            const output = createAssistantMessageEventStream();
+            const message: AssistantMessage = { role: 'assistant', content: [{ type: 'text', text: 'Hello' }], api: model.api, provider: model.provider,
+                model: model.id, usage, stopReason: 'stop', timestamp: Date.now() };
+            output.push({ type: 'start', partial: message });
+            finish = () => output.push({ type: 'done', reason: 'stop', message });
+            streaming(); return output;
+        };
+        const current = runPiFollowUpTurn({ message: 'Hello' }, store as never, newStream);
+        await Promise.race([streamingStarted, current.then(result => { throw new Error(`Replacement ended before streaming: ${result.text}`); })]);
+        const runId = store.getState().activeExecution.runId;
+        release();
+        expect((await old).status).toBe('cancelled');
+        expect(store.getState().analysisCards).toEqual([{ id: 'kept', plan: { title: 'Kept card', chartType: 'bar', groupByColumn: 'Town', valueColumn: 'Amount', aggregation: 'sum' }, aggregatedData: [{ Town: 'A', Amount: 10 }] }]);
+        expect(store.getState().isBusy).toBe(true);
+        expect(store.getState().activeExecution.runId).toBe(runId);
+        finish();
+        expect((await current).status).toBe('completed');
+        expect(finalizeMock).toHaveBeenCalledTimes(1);
+    });
+
 });

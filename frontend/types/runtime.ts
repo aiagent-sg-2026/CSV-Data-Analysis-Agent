@@ -431,6 +431,20 @@ export interface RuntimeRunRecord {
     recommendedNextMode?: 'accept' | 'retry' | 'clarify' | 'fallback_answer' | 'repair' | 'replan' | 'stop' | null;
     scorecard?: RuntimeEvaluationScorecard | null;
     recoveryTrace?: RuntimeRecoveryTrace | null;
+    taskOutputs?: RuntimeTaskOutputVerdict;
+}
+
+export type RuntimeTaskOutputKind = 'dataset' | 'answer' | 'artifact' | 'card';
+export interface RuntimeTaskOutputRequirement { id: string; kind: RuntimeTaskOutputKind; required: boolean }
+export interface RuntimeAcceptedTaskOutput { requirementId: string; kind: RuntimeTaskOutputKind; references: string[] }
+/** Host assessment only; model text and saved projections cannot issue accepted outputs. */
+export interface RuntimeTaskOutputVerdict {
+    taskId: string; taskRevision: number; runId: string; sessionId: string;
+    requiredOutputs: RuntimeTaskOutputRequirement[];
+    acceptedOutputs: RuntimeAcceptedTaskOutput[];
+    queryIds: string[]; computationIds: string[];
+    missingRequiredIds: string[]; reasons: string[];
+    status: 'complete' | 'partial' | 'missing';
 }
 
 export interface RuntimeOutcomeEnvelope {
@@ -451,6 +465,7 @@ export interface RuntimeOutcomeEnvelope {
     assistantMessageIsError?: boolean;
     assistantCardId?: string | null;
     shouldDrainQueue?: boolean;
+    taskOutputs?: RuntimeTaskOutputVerdict;
 }
 
 export type DataAnalysisSessionOrigin = 'auto_analysis' | 'chat_follow_up';
