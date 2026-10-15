@@ -280,6 +280,7 @@ export type ToolGroup =
 export type ToolName =
     | `mcp.${string}.${string}`
     | 'computation.validate'
+    | 'task.scope.repair'
     | 'code.run'
     | 'code.inspect'
     | 'code.cancel'

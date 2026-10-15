@@ -1,4 +1,5 @@
 import {FACT_COLUMNS,FAMILIES,json,sha256} from './fixtureKit.mjs';
+import {hasFrozenFaultRecovery} from './faultSchedule.mjs';
 const stable=v=>JSON.stringify(v,(_k,value)=>value&&typeof value==='object'&&!Array.isArray(value)
   ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,value[key]])):value);
 const validFact=v=>v&&typeof v==='object'&&FACT_COLUMNS.every(k=>Object.hasOwn(v,k))&&typeof v.fact_id==='string'
@@ -11,6 +12,21 @@ const analyticalAnswerMatches=(answer,exported,manifest)=>{
   const computations=manifest.evidence?.computations??[];
   for(const [index,receipt]of computations.entries()){
     const value=exported[`evidence/computation-${index}.json`];
+    if(answer.method==='weighted_mean'){
+      const scope=manifest.task?.scope?.answer?.computation;
+      // Exact unreduced integer sums are authoritative. A matching quotient cannot hide changed sums or scope.
+      if(receipt.method?.method===answer.method&&stable(receipt.method)===stable(scope)
+        &&receipt.reference==='host-integer-frequency-mean-v1'&&manifest.evidence.selectedIds?.includes(receipt.evidenceId)
+        &&scope?.value==='amount_minor'&&scope.weight==='quantity'&&scope.unitColumn==='unit'
+        &&scope.missingPolicy==='pairwise_complete'&&scope.weightPolicy==='nonnegative_integer_frequency'&&scope.seed==='none'
+        &&answer.scope==='entire input'&&!scope.where?.predicates?.length&&!scope.where?.groups?.length
+        &&value?.method===answer.method&&value.methodVersion===1&&value.seed==='none'&&value.unit===answer.unit
+        &&Number.isSafeInteger(answer.numerator)&&Number.isSafeInteger(answer.denominator)&&answer.denominator>0
+        &&value.numerator===String(answer.numerator)&&value.denominator===String(answer.denominator)
+        &&typeof value.mean==='number'&&Number.isFinite(value.mean)&&Number.isFinite(answer.tolerance_minor)&&answer.tolerance_minor>=0
+        &&Math.abs(value.mean-answer.numerator/answer.denominator)<=answer.tolerance_minor)return true;
+      continue;
+    }
     if(answer.method==='lower_weighted_median'&&receipt.method?.method===answer.method&&manifest.task?.scope?.answer?.computation?.method===answer.method
       &&value?.method===answer.method&&value.methodVersion===1&&value.seed==='none'&&value.median===answer.amount_minor
       &&value.totalWeight===answer.total_weight&&value.unit===answer.unit)return true;
@@ -54,11 +70,13 @@ export const scoreAttempt=(item,oracle,result)=>{
   const table=output?.tables?.find(t=>t.role==='fact'),facts=factSet(table?.rows);
   const accepted=manifest?.acceptedDataset?.status==='independently_validated';
   const evidence=manifest?.evidence?.status==='accepted'&&manifest.evidence.selectedIds?.length>0;
+  const faultRecovery=hasFrozenFaultRecovery(oracle.faultSchedule??[],result.faultEvidence);
   let correct=false;
   if(item.disposition==='ambiguous'){
     correct=result.status==='blocked'&&result.pending!=='approval'&&!result.acceptedCommit&&result.rawOriginalPreserved===true;
     if(result.acceptedCommit)critical.push('silent_destructive_assumption');
   }else if(result.status==='completed'){
+    if(!faultRecovery)reasons.push('frozen_fault_recovery_unverified');
     if(!accepted||!facts)reasons.push('required_verified_fact_table_missing');
     else if(stable(facts)!==stable(factSet(oracle.expectedFacts)))reasons.push('fact_identity_value_unit_or_grain_mismatch');
     const declaredFiles=manifest?.files??[];
@@ -80,10 +98,10 @@ export const scoreAttempt=(item,oracle,result)=>{
   }else if(item.disposition==='adversarial')correct=!result.acceptedCommit&&result.rawOriginalPreserved===true;
   if(!correct&&!reasons.length)reasons.push('not_oracle_correct_autonomous_completion');
   const observations=result.inspection?.observations??[];
-  const revised=observations.some(o=>['code.run','code_run','candidate.infer_meaning','candidate_infer_meaning','candidate.stage','candidate_stage',
+  const revised=(oracle.faultSchedule?.length>0&&faultRecovery)||observations.some(o=>['code.run','code_run','candidate.infer_meaning','candidate_infer_meaning','candidate.stage','candidate_stage',
     'candidate.validate','candidate_validate','computation.validate','computation_validate'].includes(o.tool)
     &&['failed','blocked','error'].includes(o.status));
-  return {correct,critical:[...new Set(critical)],reasons,firstAttempt:correct&&!revised,
+  return {correct,critical:[...new Set(critical)],reasons,faultRecovery,firstAttempt:correct&&!revised,
     afterRevision:correct&&revised,programs:result.inspection?.programs??[],
     novelRepair:correct&&item.novelRepair===true&&(result.inspection?.programs?.length??0)>0,
     independentNewMethod:correct&&item.method!==null&&!!item.method&&!!evidence,
@@ -105,15 +123,18 @@ export const summarizeCampaign=(manifest,attempts,mode)=>{
   const critical=rows.flatMap(r=>r.score?.critical??['score_missing']);
   const novelRepairCases=new Set(rows.filter(r=>r.score?.novelRepair===true).map(r=>r.caseId)).size;
   const independentNewMethods=new Set(rows.filter(r=>r.score?.independentNewMethod===true).map(r=>r.caseId)).size;
+  const faultRuns=manifest.schedule.filter(r=>['S1-4','S6-4','S8-4'].includes(r.caseId));
+  const faultRecovery={expected:faultRuns.length,observed:rows.filter(r=>faultRuns.some(f=>f.id===r.runId)).length,
+    passed:rows.filter(r=>faultRuns.some(f=>f.id===r.runId)&&r.score?.faultRecovery===true).length};
   const completed=attempts.length===expected.length;
   const qualityPassed=completed&&mode==='live'&&critical.length===0&&correct(solvable)>=108&&correct(ambiguous)>=29&&families.every(f=>f.correct>=12)
-    &&novelRepairCases>=16&&independentNewMethods>=1;
+    &&novelRepairCases>=16&&independentNewMethods>=1&&faultRecovery.expected===9&&faultRecovery.passed===9;
   const latencies=rows.map(r=>r.elapsedMs).filter(v=>typeof v==='number'&&Number.isFinite(v)&&v>=0).sort((a,b)=>a-b);
   const quantile=p=>latencies.length?latencies[Math.ceil(p*latencies.length)-1]:null;
   return {schemaVersion:1,mode,scheduleComplete:completed,observedRuns:attempts.length,expectedRuns:expected.length,
     pairId:manifest.candidate.pairId,solvable:{correct:correct(solvable),expected:120,minimum:108},
     ambiguous:{correct:correct(ambiguous),expected:30,minimum:29},families,criticalFailures:critical,
-    novelRepairCases,independentNewMethods,firstAttemptCorrect:rows.filter(r=>r.score?.firstAttempt).length,afterRevisionCorrect:rows.filter(r=>r.score?.afterRevision).length,
+    novelRepairCases,independentNewMethods,faultRecovery,firstAttemptCorrect:rows.filter(r=>r.score?.firstAttempt).length,afterRevisionCorrect:rows.filter(r=>r.score?.afterRevision).length,
     outcomes:Object.fromEntries(['completed','blocked','failed','cancelled'].map(status=>[status,rows.filter(r=>r.status===status).length])),
     latency:{medianMs:quantile(.5),p95Ms:quantile(.95),observed:latencies.length},
     qualityPassed,capabilityAcceptance:mode==='mock'?'pending':qualityPassed?'passed':'failed'};

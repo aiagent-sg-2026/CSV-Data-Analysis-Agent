@@ -17,6 +17,8 @@ import { buildTaskExport, inspectTaskExport } from '../services/agent/runtime/pi
 import { unzipSync, strFromU8 } from 'fflate';
 import { createHash } from 'node:crypto';
 import { parse } from 'papaparse';
+import {resolveAnswerScope} from '../services/agent/runtime/pi/queryEvidence';
+import {resolveComputationScopeRepair} from '../services/agent/runtime/pi/piScopeRepair';
 import { PEARSON_QUALIFICATION_PROGRAM } from '../services/agent/execution/evidenceAdmissionQualification';
 
 vi.mock('../services/persistence/currentSessionPersistence', () => ({ persistCurrentAppSessionSnapshot: vi.fn(async () => true) }));
@@ -365,7 +367,7 @@ describe('actual Pi coding loop', () => {
                     case 1:return tool('workspace_write',{path:programPath,expectedRevision:0,content:'return {ok:true};'});
                     case 2:return tool('code_run',{...runArgs(artifactRef(last.payload.workspace.artifact)),tables:[{name:'input',tableId:proposal.input.tableId}]});
                     case 3:expect(JSON.stringify(last)).toContain('candidate_meaning_required_before_execution');return tool('candidate_infer_meaning',proposal);
-                    case 4:expect(last.status).toBe('success');return tool('workspace_write',{path:programPath,expectedRevision:1,content:program});
+                    case 4:expect(last.status).toBe('success');expect(last.payload.requirements.inference.input).toEqual(proposal.input);return tool('workspace_write',{path:programPath,expectedRevision:1,content:program});
                     case 5:return tool('code_run',{...runArgs(artifactRef(last.payload.workspace.artifact)),tables:[{name:'input',tableId:proposal.input.tableId}]});
                     case 6:expect(last.receipt.status).toBe('succeeded');return tool('candidate_stage',{jobId:last.receipt.jobId});
                     case 7:candidateId=last.payload.candidate.candidateId;return tool('candidate_validate',{candidateId});
@@ -377,7 +379,7 @@ describe('actual Pi coding loop', () => {
             expect(s.task.snapshot.budget.used.transformationAttempts).toBe(2);expect(s.root.getState().csvData!.data).toEqual([{Name:'Fact',Amount:1}]);
         }finally{finishRun(s.root,s.lease);beginSessionTransition(s.root);}
     });
-    it.each(['validated','inspection','wrong-value','wrong-total','wrong-filter','unvalidated','zero','zero-weights','mixed-units','negative-weight','fractional-weight','untyped-weight','stateful','boundary','stale-version'] as const)
+    it.each(['validated','inspection','count-revision','wrong-value','wrong-total','wrong-filter','unvalidated','zero','zero-weights','mixed-units','negative-weight','fractional-weight','untyped-weight','stateful','boundary','stale-version'] as const)
         ('admits lower weighted median from the current full scope only: %s',async mode=>{
         const rows:CsvRow[]=mode==='boundary'?[...Array.from({length:5000},()=>({Amount:0,Quantity:1,Unit:'SGD',Date:'2026-10-01'})),{Amount:99,Quantity:5001,Unit:'SGD',Date:'2026-10-31'}]
             :[{Amount:-5,Quantity:2,Unit:'SGD',Date:mode==='zero'?'2026-09-01':'2026-10-01'},
@@ -388,6 +390,7 @@ describe('actual Pi coding loop', () => {
         if(mode==='zero-weights')rows.forEach(r=>r.Quantity=0);
         if(mode==='negative-weight')rows[0].Quantity=-1;if(mode==='fractional-weight')rows[0].Quantity=0.5;
         if(mode==='untyped-weight')rows[0].Quantity='2';
+        if(mode==='count-revision')rows.push({Amount:7,Quantity:1,Unit:'SGD',Date:'2026-09-29'});
         const s=await fixture(realGuest,'Calculate the lower weighted median Amount weighted by Quantity for October 2026 only.',rows);
         s.root.setState({columnProfiles:[{name:'Amount',type:'number'},{name:'Quantity',type:'number'},{name:'Unit',type:'string'},{name:'Date',type:'date'}] as never});
         const artifact={taskSignal:'statistical',expectedOutput:'scalar_answer',timeScope:{kind:'explicit',value:'October 2026'},referencedColumns:['Amount','Quantity'],unresolvedReferences:[],
@@ -407,15 +410,24 @@ describe('actual Pi coding loop', () => {
             const result=await runPiFollowUpTurn({message:s.message,queryUnderstandingArtifact:artifact as never,intentFindings:{intent:'precise_card'} as never},s.store,scripted(context=>{
                 if(mode==='inspection'&&step<4){step++;return tool('workspace_list',{path:'/intake',recursive:true});}
                 const stage=step++-(mode==='inspection'?4:0);
-                if(stage===0)return tool('workspace_write',{path:programPath,expectedRevision:0,content:program});
+                if(stage===0)return tool('workspace_write',{path:programPath,expectedRevision:0,content:mode==='count-revision'
+                    ?program.replace('return result;','result.scopedRows=rows;result.excluded=all.length-rows.length;return result;'):program});
                 if(stage===1)return tool('code_run',{...runArgs(artifactRef(observed(context).at(-1).payload.workspace.artifact)),tables:[{name:'facts',tableId:s.root.getState().datasetBundle!.primaryTableId}],
                     mode:mode==='stateful'?'stateful_stream':'whole_table',...(mode==='stateful'?{stream:{table:'facts',batchRows:2,partitionBy:[],initialState:null}}:{})});
                 if(stage===2&&mode!=='unvalidated'){job=observed(context).at(-1).receipt.jobId;return tool('computation_validate',{jobId:job});}
+                if(mode==='count-revision'&&stage===3){
+                    const failure=observed(context).at(-1);expect(failure.message).toContain('[scopedRows, excluded]');
+                    expect(failure.taskPlan.phase).toBe('compute_program');expect(failure.taskPlan.remainingTransformations).toBe(2);
+                    return tool('workspace_write',{path:programPath,expectedRevision:1,content:program});
+                }
+                if(mode==='count-revision'&&stage===4){const args=runArgs(artifactRef(observed(context).at(-1).payload.workspace.artifact));
+                    return tool('code_run',{...args,output:{...args.output,expectedRevision:1},tables:[{name:'facts',tableId:s.root.getState().datasetBundle!.primaryTableId}]});}
+                if(mode==='count-revision'&&stage===5){job=observed(context).at(-1).receipt.jobId;return tool('computation_validate',{jobId:job});}
                 if(mode==='untyped-weight'){expect(observed(context).at(-1).retryHint).toContain('Converting local computation variables does not repair');expect(s.root.getState().csvData!.data[0].Quantity).toBe('2');}
                 if(mode==='stale-version')s.root.setState({datasetBundle:{...s.root.getState().datasetBundle!,relationshipSetId:'replaced-after-validation'}});
                 return reply();
             }));
-            const accepted=['validated','inspection','zero','zero-weights','stateful','boundary'].includes(mode);
+            const accepted=['validated','inspection','count-revision','zero','zero-weights','stateful','boundary'].includes(mode);
             expect(result.status,result.text).toBe(accepted?'completed':'blocked');expect(result.text).not.toContain('Fabricated stdout');
             if(accepted){
                 if(mode==='inspection')expect(s.task.snapshot.budget).toMatchObject({limits:{toolCalls:40,providerTurns:32,transformationAttempts:3},used:{toolCalls:7,providerTurns:8,transformationAttempts:1}});
@@ -426,6 +438,104 @@ describe('actual Pi coding loop', () => {
                 const exported=await buildTaskExport(s.root,s.task.snapshot.taskId),zip=unzipSync(exported.bytes),manifest=JSON.parse(strFromU8(zip['manifest.json']));
                 expect(manifest.answerComplete).toBe(true);expect(manifest.evidence.computations[0].reference).toBe('host-lower-frequency-median-v1');
                 expect(manifest.evidence.computations[0].grain).toBe('positive_frequency_value_pairs');
+            }
+        }finally{finishRun(s.root,s.lease);beginSessionTransition(s.root);}
+    });
+    it.each(['complete','scope-only','bad-then-good'] as const)('repairs the typed filter scope under the same task budget: %s',async mode=>{
+        const message='Calculate quantity-weighted mean Amount over the entire input.',rows:CsvRow[]=[{Amount:0,Quantity:1,Unit:'SGD'},{Amount:-5,Quantity:2,Unit:'SGD'},{Amount:10,Quantity:3,Unit:'SGD'}];
+        const s=await fixture(realGuest,message,rows);
+        s.root.setState({columnProfiles:[{name:'Amount',type:'number'},{name:'Quantity',type:'number'},{name:'Unit',type:'string'}] as never});
+        const artifact={taskSignal:'statistical',expectedOutput:'scalar_answer',timeScope:{kind:'none'},referencedColumns:['Amount','Quantity'],unresolvedReferences:[],
+            groupingColumns:[],aggregationFunctions:[],subjectRefs:[],comparisonScope:{kind:'none'},filterDescription:'Entire input after repair and preservation of all records.',
+            requestedComputationScope:{method:'weighted_mean',value:'Amount',weight:'Quantity',unitColumn:'Unit',missingPolicy:'pairwise_complete',weightPolicy:'nonnegative_integer_frequency',seed:'none',where:{predicates:[]}}};
+        let step=0,revision=0;
+        try{
+            const result=await runPiFollowUpTurn({message,queryUnderstandingArtifact:artifact as never},s.store,scripted(context=>{
+                if(mode==='bad-then-good'&&step++===0)return tool('task_scope_repair',{population:'filtered',goalQuote:'entire input',where:{predicates:[{column:'Missing',operator:'eq',value:1}]}});
+                const stage=mode==='bad-then-good'?step-2:step++;
+                if(stage===0)return tool('task_scope_repair',{population:'entire_input',goalQuote:'entire input'});
+                if(mode==='scope-only')return reply();
+                if(stage===1){const last=observed(context).at(-1);expect(last.status).toBe('success');expect(last.payload.answerEvidence).toBe(false);
+                    expect(last.taskPlan.phase).toBe('compute_program');revision=last.taskPlan.taskRevision;
+                    return tool('workspace_write',{path:programPath,expectedRevision:0,content:"const rows=input.facts.rows;let num=0n,den=0n;for(const r of rows){num+=BigInt(r.Amount)*BigInt(r.Quantity);den+=BigInt(r.Quantity);}return {method:'weighted_mean',methodVersion:1,seed:'none',scopedRows:rows.length,n:rows.length,excluded:0,zeroWeightRows:0,numerator:String(num),denominator:String(den),mean:Number(num)/Number(den),unit:'SGD'};"});}
+                if(stage===2)return tool('code_run',{...runArgs(artifactRef(observed(context).at(-1).payload.workspace.artifact)),tables:[{name:'facts',tableId:s.root.getState().datasetBundle!.primaryTableId}],mode:'whole_table'});
+                if(stage===3)return tool('computation_validate',{jobId:observed(context).at(-1).receipt.jobId});
+                return reply();
+            }));
+            expect(result.status,result.text).toBe(mode==='scope-only'?'blocked':'completed');
+            if(mode!=='scope-only'){expect(result.text).toContain('Exact numerator: 20; denominator: 6');expect(s.task.snapshot.revision).toBe(revision);
+                expect(s.task.snapshot.budget.used).toMatchObject({toolCalls:mode==='bad-then-good'?5:4,transformationAttempts:1});}
+            expect(s.task.snapshot.budget.limits).toMatchObject({toolCalls:40,providerTurns:32,transformationAttempts:3});
+        }finally{finishRun(s.root,s.lease);beginSessionTransition(s.root);}
+    });
+    it('retains the two-proposal limit across a fresh lease and refuses stale input publication',async()=>{
+        const s=await fixture(realGuest,'Calculate weighted mean Amount over the entire input.',[{Amount:1,Quantity:1}]);
+        const artifact={taskSignal:'statistical',expectedOutput:'scalar_answer',timeScope:{kind:'none'},referencedColumns:['Amount','Quantity'],unresolvedReferences:[],groupingColumns:[],aggregationFunctions:[],subjectRefs:[],comparisonScope:{kind:'none'},
+            filterDescription:'Entire input',requestedComputationScope:{method:'weighted_mean',value:'Amount',weight:'Quantity',missingPolicy:'pairwise_complete',weightPolicy:'nonnegative_integer_frequency',seed:'none'}};
+        const original=resolveAnswerScope(s.message,artifact as never,undefined,s.store);await s.task.resolveScope(original);
+        const fail=()=>{throw new Error('scope_repair_proposal_invalid');};
+        let fresh:ReturnType<typeof beginRun>|undefined;
+        try{
+            await s.task.beforeTool('task.scope.repair',{},'attempt-1');await expect(s.task.repairScope(fail)).rejects.toThrow('scope_repair_proposal_invalid');
+            expect(s.task.plan.scopeRepair?.remainingProposals).toBe(1);
+            const scopeDigest=s.task.snapshot.scope.digest;
+            let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),originalHash=crypto.subtle.digest.bind(crypto.subtle);
+            const hash=vi.spyOn(crypto.subtle,'digest').mockImplementationOnce(async(...args)=>{await gate;return originalHash(...args);});
+            const valid=resolveComputationScopeRepair({message:s.message,artifact:artifact as never},{population:'entire_input',goalQuote:'entire input'},s.store);
+            const pending=s.task.repairScope(()=>valid);s.root.setState({datasetBundle:{...s.root.getState().datasetBundle!,relationshipSetId:'stale'}});release();
+            await expect(pending).rejects.toThrow('input_version_changed');hash.mockRestore();expect(s.task.snapshot.scope.digest).toBe(scopeDigest);
+            // Scope attempts survive continuation; the original task budget never resets.
+            const request=s.task.suspend({question:'Review the unresolved scope.',options:[{label:'Review',value:'review'}]} as never);
+            finishRun(s.root,s.lease);fresh=beginRun(s.root,'follow_up',crypto.randomUUID(),crypto.randomUUID());const resumed=scopeRunStore(s.root,fresh);
+            const task=await preparePiTask(resumed,s.message,request.resumeContext!.piTaskContinuation,realGuest);
+            await expect(task.repairScope(fail)).rejects.toThrow('scope_repair_attempts_exhausted');expect(task.snapshot.taskId).toBe(s.task.snapshot.taskId);
+            expect(task.snapshot.budget.used.toolCalls).toBe(1);expect(task.plan.scopeRepair?.remainingProposals).toBe(0);
+        }finally{if(fresh)finishRun(s.root,fresh);else finishRun(s.root,s.lease);beginSessionTransition(s.root);}
+    });
+    it('blocks writes/guest execution while scope is unresolved without spending a transformation',async()=>{
+        const s=await fixture(realGuest,'Calculate weighted mean Amount over the entire input.',[{Amount:1,Quantity:1}]);
+        const artifact={taskSignal:'statistical',expectedOutput:'scalar_answer',timeScope:{kind:'none'},referencedColumns:['Amount','Quantity'],unresolvedReferences:[],groupingColumns:[],aggregationFunctions:[],subjectRefs:[],comparisonScope:{kind:'none'},
+            filterDescription:'Entire input',requestedComputationScope:{method:'weighted_mean',value:'Amount',weight:'Quantity',missingPolicy:'pairwise_complete',weightPolicy:'nonnegative_integer_frequency',seed:'none'}};
+        let step=0;
+        try{const result=await runPiFollowUpTurn({message:s.message,queryUnderstandingArtifact:artifact as never},s.store,scripted(()=>step++===0
+            ?tool('workspace_write',{path:programPath,expectedRevision:0,content:'return 999;'}):reply()));
+            expect(result.status).toBe('blocked');expect(s.task.snapshot.budget.used).toMatchObject({toolCalls:1,transformationAttempts:0});
+            expect(()=>s.store.codeExecution!.workspace.read(programPath)).toThrow();
+        }finally{finishRun(s.root,s.lease);beginSessionTransition(s.root);}
+    });
+    it.each(['valid','numeric-sums','reduced','wrong-filter','fractional-value','unvalidated','stateful','stale-version'] as const)('admits exact integer weighted mean through real QuickJS: %s',async mode=>{
+        const rows:CsvRow[]=[{Amount:-5,Quantity:2,Unit:'SGD',Date:'2026-10-01'},{Amount:0,Quantity:2,Unit:'SGD',Date:'2026-10-31'},
+            {Amount:99,Quantity:100,Unit:'SGD',Date:'2026-09-30'},{Amount:null,Quantity:1,Unit:'SGD',Date:'2026-10-02'},{Amount:42,Quantity:0,Unit:'SGD',Date:'2026-10-03'}];
+        if(mode==='fractional-value')rows[0].Amount=0.5;
+        const s=await fixture(realGuest,'Calculate the quantity-weighted mean Amount for October 2026 only.',rows);
+        s.root.setState({columnProfiles:[{name:'Amount',type:'number'},{name:'Quantity',type:'number'},{name:'Unit',type:'string'},{name:'Date',type:'date'}] as never});
+        const artifact={taskSignal:'statistical',expectedOutput:'scalar_answer',timeScope:{kind:'explicit',value:'October 2026'},referencedColumns:['Amount','Quantity'],unresolvedReferences:[],
+            groupingColumns:[],aggregationFunctions:[],subjectRefs:[],comparisonScope:{kind:'none'},requestedComputationScope:{method:'weighted_mean',value:'Amount',weight:'Quantity',unitColumn:'Unit',
+                missingPolicy:'pairwise_complete',weightPolicy:'nonnegative_integer_frequency',seed:'none',where:{predicates:[{column:'Date',operator:'gte',value:'2026-10-01'},{column:'Date',operator:'lt',value:'2026-11-01'}]}}};
+        const body=`const rows=ROWS.filter(r=>${mode==='wrong-filter'?'true':"r.Date>='2026-10-01'&&r.Date<'2026-11-01'"});
+            const missing=v=>v===null||v===undefined||v==='';let n=0,excluded=0,zeroWeightRows=0,num=0n,den=0n,unit=null;
+            for(const r of rows){if(missing(r.Amount)||missing(r.Quantity)){excluded++;continue;}if(r.Quantity===0){zeroWeightRows++;continue;}num+=BigInt(r.Amount)*BigInt(r.Quantity);den+=BigInt(r.Quantity);n++;unit=r.Unit;}
+            const result={method:'weighted_mean',methodVersion:1,seed:'none',scopedRows:rows.length,n,excluded,zeroWeightRows,
+                numerator:${mode==='numeric-sums'?'Number(num)':mode==='reduced'?"'-5'":'String(num)'},denominator:${mode==='reduced'?"'2'":'String(den)'},mean:den===0n?null:Number(num)/Number(den),unit};`;
+        const program=mode==='stateful'?`const state=input.stream.state||{all:[]};state.all.push(...input.facts.rows);if(input.stream.phase!=='finish')return {state,rows:[]};${body.replace('ROWS','state.all')}return {state,rows:[result]};`
+            :`${body.replace('ROWS','input.facts.rows')}return result;`;
+        let step=0;
+        try{
+            const result=await runPiFollowUpTurn({message:s.message,queryUnderstandingArtifact:artifact as never},s.store,scripted(context=>{
+                if(step++===0)return tool('workspace_write',{path:programPath,expectedRevision:0,content:program});
+                if(step===2)return tool('code_run',{...runArgs(artifactRef(observed(context).at(-1).payload.workspace.artifact)),tables:[{name:'facts',tableId:s.root.getState().datasetBundle!.primaryTableId}],
+                    mode:mode==='stateful'?'stateful_stream':'whole_table',...(mode==='stateful'?{stream:{table:'facts',batchRows:2,partitionBy:[],initialState:null}}:{})});
+                if(step===3&&mode!=='unvalidated')return tool('computation_validate',{jobId:observed(context).at(-1).receipt.jobId});
+                if(mode==='stale-version')s.root.setState({datasetBundle:{...s.root.getState().datasetBundle!,relationshipSetId:'changed'}});
+                return reply();
+            }));
+            const accepted=mode==='valid'||mode==='stateful';expect(result.status,result.text).toBe(accepted?'completed':'blocked');
+            if(accepted){
+                expect(result.text).toContain('Exact numerator: -10; denominator: 4 (unreduced)');expect(result.text).toContain('Unit label: SGD');
+                finishRun(s.root,s.lease);
+                const exported=await buildTaskExport(s.root,s.task.snapshot.taskId),zip=unzipSync(exported.bytes),manifest=JSON.parse(strFromU8(zip['manifest.json']));
+                expect(manifest.answerComplete).toBe(true);expect(manifest.evidence.computations[0]).toMatchObject({reference:'host-integer-frequency-mean-v1',coverage:{numerator:'-10',denominator:'4',completePairs:2,excluded:1,zeroWeightRows:1}});
+                expect(JSON.parse(strFromU8(zip['evidence/computation-0.json']))).toMatchObject({numerator:'-10',denominator:'4',mean:-2.5});
             }
         }finally{finishRun(s.root,s.lease);beginSessionTransition(s.root);}
     });

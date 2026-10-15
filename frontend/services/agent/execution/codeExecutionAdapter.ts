@@ -12,6 +12,7 @@ import { normalizeRuntimeAccessControlSettings } from '../../runtimeAccessContro
 import { validateCodeRunRequest, type CodeArtifactRef, type CodeExecutionReceipt, type CodeGrantOptions, type CodeRunRequest, type CodePolicyContext } from './codeExecutionContract';
 import { captureCodeTables, CODE_TABLE_LIMITS } from './codeTableInputs';
 import { executeCodeStream, planCodeStream } from './codeStatefulStream';
+import { consumeEvaluationFault, recordEvaluationExecution } from '../../sandbox/evaluationFaults';
 
 const encode = (text: string) => new TextEncoder().encode(text);
 const digest = (value: unknown) => sha256Bytes(encode(JSON.stringify(value)));
@@ -141,8 +142,11 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
                 const job = jobs.get(jobId); if (job) job.receipt = receipt;
                 return receipt;
             };
-            const finish = (status: CodeExecutionReceipt['status'], reasonCode: string, retry: CodeExecutionReceipt['retry']) =>
-                publish({ status, reasonCode, retry, finishedAt: Date.now(), durationMs: Date.now() - startedAt });
+            const finish = (status: CodeExecutionReceipt['status'], reasonCode: string, retry: CodeExecutionReceipt['retry']) => {
+                const result = publish({ status, reasonCode, retry, finishedAt: Date.now(), durationMs: Date.now() - startedAt });
+                recordEvaluationExecution(store, result);
+                return result;
+            };
             let issued: ReturnType<typeof check> | undefined;
             try {
                 own(execution);
@@ -186,8 +190,10 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
                 const inputJson = JSON.stringify(inputs);
                 if (encode(inputJson).length > issued.payload.limits.inputBytes) throw new Error('resource_limit');
                 const inputDigest = await digest(inputs);
+                const evaluationFault = consumeEvaluationFault(store);
                 const environment = { protocol: 1, runtime: JAVASCRIPT_GUEST_PIN, wasmSha256: '105c3bed22d457e43e3d1c3c1c6959fda62a8fe06f0fc8a985303c3a2be72232',
-                    mode, semantics: 1, tableLimits: CODE_TABLE_LIMITS, egress: 'denied', limits: issued.payload.limits, logBytes: GUEST_LOG_BYTES };
+                    mode, semantics: 1, tableLimits: CODE_TABLE_LIMITS, egress: 'denied', limits: issued.payload.limits, logBytes: GUEST_LOG_BYTES,
+                    ...(evaluationFault ? { evaluationFault } : {}) };
                 const environmentDigest = await digest(environment);
                 const requestDigest = await digest({ taskId, taskRevision: envelope.taskRevision, scope: lease.scope, runId: lease.runId,
                     toolCallId: execution.toolCallId, executorGeneration, workspaceRevision, grant: issued.reference, program: request.program,
@@ -204,6 +210,7 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
                     if (remaining < 1) throw new Error('execution_deadline');
                     const result = await guest.run(workspace.read(request.program.path, request.program.revision).content, json, {
                         limits: { ...issued!.payload.limits, timeoutMs: remaining }, signal: abort,
+                        ...(evaluationFault ? { evaluationFault } : {}),
                         onStarted: () => { current(); publish({ status: 'running', reasonCode: 'executing' }); },
                     });
                     if (abort.aborted || result.status === 'cancelled') throw new Error('scope_revoked');

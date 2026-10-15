@@ -168,7 +168,8 @@ export const runPiFollowUpTurn = async (
     const mcpObservations: import('../../connectors/httpMcpContract').McpObservationReceipt[] = [];
     let mcpAttempted = false;
     const computationReceipts: ComputationEvidenceReceipt[] = [];
-    const answerScope = request.continuation?.scope ?? resolveAnswerScope(request.message, request.queryUnderstandingArtifact, request.groundingResult, store, request.intentFindings);
+    let understoodArtifact=request.queryUnderstandingArtifact;
+    let answerScope = request.continuation?.scope ?? resolveAnswerScope(request.message, request.queryUnderstandingArtifact, request.groundingResult, store, request.intentFindings);
     let groundingVerdict: import('./queryEvidence').QueryGroundingVerdict | undefined;
     let agent: Agent | null = null;
     let unsubscribe: (() => void) | undefined;
@@ -226,7 +227,7 @@ export const runPiFollowUpTurn = async (
         const appMemory = await awaitOwned(readAppFollowUpMemory(store, request.message), store, lease);
         if (controller.signal.aborted) throw controller.signal.reason;
         const prompt = createPiFollowUpSystemPrompt(store.getState(), appMemory, {
-            ...request,
+            ...request,queryUnderstandingArtifact:understoodArtifact,
             allowCardCreation,
             cardTarget,
             codingTask: logicalTask.snapshot,
@@ -242,6 +243,7 @@ export const runPiFollowUpTurn = async (
                 thinkingLevel: resolvePiThinkingLevel(state.settings),
                 tools: createPiAppTools(store, datasetVersion, {
                     allowCardCreation,
+                    ...(!request.continuation&&request.queryUnderstandingArtifact?{scopeRepair:{context:{message:request.message,artifact:request.queryUnderstandingArtifact,grounding:request.groundingResult,findings:request.intentFindings},onResolved:scope=>{answerScope=scope;understoodArtifact={...understoodArtifact!,filterDescription:scope.computation?.where?understoodArtifact!.filterDescription:null,requestedComputationScope:scope.computation};}}}:{}),
                     ...(isBatchAnalysis ? { maxToolCalls: BATCH_ANALYSIS_MAX_TOOL_CALLS } : {}),
                     onComputationValidated: receipt => { computationReceipts.push(receipt); collectAcceptedWork(); },
                     onQueryExecuted: receipt => { receipts.push(receipt); collectAcceptedWork(); },
@@ -486,7 +488,7 @@ export const runPiFollowUpTurn = async (
                 try {
                     pendingClarification = logicalTask.suspend(pendingClarification);
                     if (pendingClarification.resumeContext?.piCandidateApproval) {
-                        sealPiCandidateApproval(store,pendingClarification,request,agent?.state.messages??[],answerScope,streamOverride);
+                        sealPiCandidateApproval(store,pendingClarification,{...request,queryUnderstandingArtifact:understoodArtifact},agent?.state.messages??[],answerScope,streamOverride);
                         approvalSealed=true;
                     } else store.setState({ pendingClarification });
                 } catch {

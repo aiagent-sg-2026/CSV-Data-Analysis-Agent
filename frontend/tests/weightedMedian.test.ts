@@ -3,7 +3,7 @@ import {describe,expect,it} from 'vitest';
 import {referenceWeightedMedian,type WeightedMedianScope} from '../services/agent/execution/weightedMedian';
 import {resolveAnswerScope} from '../services/agent/runtime/pi/queryEvidence';
 import type {StoreApi} from '../services/agent/types';
-import {readFileSync} from 'node:fs';
+import {buildFixtureSuite} from '../scripts/coding-agent-evaluation/fixtureKit.mjs';
 
 const scope:WeightedMedianScope={method:'lower_weighted_median',value:'Amount',weight:'Quantity',missingPolicy:'pairwise_complete',weightPolicy:'nonnegative_integer_frequency',seed:'none'};
 describe('independent lower weighted median reference',()=>{
@@ -59,7 +59,7 @@ describe('independent lower weighted median reference',()=>{
         expect(referenceWeightedMedian(rows,scope)).toMatchObject({median:99,totalWeight:10001,n:5001,scopedRows:5001});
     });
     it('matches the unchanged evaluator-only S8-2 October oracle without exposing it to the agent',()=>{
-        const oracle=JSON.parse(readFileSync(new URL('../docs/coding-agent/evidence/fixtures-v1/evaluator/S8-2/oracle.json',import.meta.url),'utf8'));
+        const oracle=JSON.parse(buildFixtureSuite().files.get('evaluator/S8-2/oracle.json'));
         const rows=oracle.expectedFacts.filter((r:Record<string,unknown>)=>String(r.date)>='2026-10-01'&&String(r.date)<'2026-11-01');
         const result=referenceWeightedMedian(rows,{...scope,value:'amount_minor',weight:'quantity',unitColumn:'unit'});
         expect(result).toMatchObject({median:oracle.answer.amount_minor,totalWeight:oracle.answer.total_weight,unit:oracle.answer.unit});

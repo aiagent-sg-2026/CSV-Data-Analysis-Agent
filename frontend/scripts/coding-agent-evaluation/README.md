@@ -1,5 +1,7 @@
 # Synthetic Coding-Agent Evaluation Foundation
 
+Public checkouts use `qualificationContract.mjs` as the pinned acceptance policy. Private historical plans and benchmark reports are not evaluator dependencies. Generate the synthetic suite with the fixture command below before running a new packet; historical operator report links in this guide refer to local, ignored evidence.
+
 The fixture foundation constructs synthetic inputs from deterministic latent facts and checks the frozen fixture contract without importing a provider or application runtime. The separately invoked campaign command now exercises the checked-in production runtime with local mocks, as described below. Fixture generation alone does not evaluate a model.
 
 Use actual Node >=22.13 and <23. Run from `frontend/`:
@@ -90,3 +92,99 @@ Use Node 22 (>=22.13 <23) and explicitly invoke `node frontend/scripts/coding-ag
 The gate requires complete oracle-equivalent facts, source preservation, exactly one approval/commit, the same logical task under a fresh run/version, matching review/program/validation digests, consumed exact approval, current computation input bindings and a complete admitted answer. Missing evidence returns a nonzero process exit. Per invocation ceilings are 40 provider calls, 3 sessions, 600,000 request bytes and 300 seconds; production task budgets remain 40 tools/8 skills/32 provider turns/3 transformations/15 active minutes. These are diagnostic limits, not qualified billing bounds.
 
 Recorded result: **0/7 diagnostic full flows; not accepted**. The final build also failed both measured invocations. All failures, partial approvals and known/unknown usage are preserved in the [AMM report](../../docs/coding-agent/ca-173-s8-2-2026-10-14.md). This does not enable the mock-only full campaign CLI or close CA-173.
+
+
+## Combined typed preparation and computation — 2026-10-14
+
+A requested canonical fact-table repair is retained as requestedDataPreparation=canonical_fact_table alongside the resolved calculation. The host plan distinguishes repair, independent candidate validation, exact approval and fresh statistical execution. Both repaired-dataset and factual-answer outputs are required. Plan metadata includes the strict candidate/cell-lineage contract and statistical count definitions; it does not grant approval or supply reference values. scopedRows is a count after the business/time filter, and excluded counts missing pairs within that scope. Reference rejection returns to program revision and requires a new execution/job without resetting counters.
+
+The separately invoked s8-2-demo.mjs --live-demo --output <report.json> command uses public frozen agent files and real Default requests through an isolated generated React runtime. Use actual Node >=22.13 and <23. It approves only the available exact synthetic review through the existing action handler; invoking the live operator test requires explicit authorization for that synthetic demo workflow. It saves a structured report and dashboard screenshot, but screenshots do not replace current-version computation evidence. Full campaign execution remains separately qualified/authorized.
+
+Final scoped S8-2 verification passes on build 1.0.0-05a1dd24d8a4 after a statistical revision, with the unchanged three-execution budget and all 11 facts preserved. Result 1199 is in amount_minor source scale; the unit label is SGD. See the [typed planning acceptance report](../../docs/coding-agent/ca-173-typed-planning-2026-10-14.md) for all failures, exact bindings and limits. Full CA-173 qualification remains Planned.
+
+## Current qualification launch preparation — 2026-10-15
+
+The [current launch packet](../../docs/coding-agent/ca-173-launch-preparation-2026-10-15.md) freezes the post-S8-2 source and evaluator without replacing historical packets. Use its new manifest for zero-call rechecks only. A successful preflight means the unchanged 60-case/three-seed packet is internally valid; it keeps `launchReady: false` and does not authorize a session handshake or model request.
+
+Five launch blockers are explicit in the preflight: unresolved physical provider/model identity, absent isolated live configuration capture, absent finite campaign authorization, unqualified live request/usage bounds, and unimplemented holdout fault injection. The durable ledger and production-runtime mock adapter are implemented; the full campaign runner still rejects a live adapter. The three frozen S1-4/S6-4/S8-4 schedules are metadata only and must be connected to actual execution before claiming recovery coverage. A separate successful S8-2 smoke cannot replace these nine scheduled case/seed outcomes.
+
+Before a live implementation is qualified, preserve the Default gateway's serialized omission of `max_output_tokens`. Request byte limits, a 32-turn task budget, alias `demo-auto`, model catalog prices and observed historical usage are insufficient evidence of enforceable live token/cost bounds. Reserve every physical attempt before dispatch, reconcile independent transport observations to the ledger, retain unknown usage conservatively, and pause without replay after uncertainty or exhaustion. Pin the actual isolated settings, prompts, eligible tool schemas, runtime and model identity; the mock's substituted `mock` model cannot supply this capture. Document how replicate seeds are supported rather than claiming the current mock forwards them to a provider.
+
+The preparation originally recorded the S8-4 `weighted_mean` admission/scoring gap. The 2026-10-15 implementation below adds that path without changing the frozen case, denominator or family threshold. Its scoped smoke does not establish full holdout qualification; never supply an oracle-derived result to the model. Manual-upload UI and independent secondary review remain separate evidence needs. No public release or Full/Python capability is enabled by this packet.
+
+## Live HTTP boundary and frozen fault execution — 2026-10-15
+
+`liveHttpAdapter.mjs` implements the final serialized Default protocol boundary with a host-supplied **local mock** transport. `createBrowserEvaluationAdapter({httpAdapter, ...})` uses the real production composer/classifier/Pi/SDK path, with all session/helper/provider/retry requests intercepted at HTTP. The full campaign CLI remains mock-only; no remote transport, credentials, pricing or spend authorization is activated by constructing this adapter. This supersedes the missing implementation statements in the earlier preparation, while remote qualification gates remain open.
+
+The adapter snapshots request/model/bounds/pricing and the transport function, rejects an unexpected origin/model or `max_output_tokens` before reservation, records the request-body SHA in the durable request kind, and dispatches only after the ledger has persisted the full finite reservation. Each physical retry consumes a separate request. Native Responses JSON/SSE usage is parsed strictly; missing, malformed, mismatched or over-bound usage stays charged and stops further dispatch. A late response after Abort cannot settle an uncertain attempt. An independent header/body-free observer reconciles every request hash/kind and usage against the ledger. It never substitutes ledger totals for transport observations. Session and explicitly configured nonbillable rejection rules in the local fixture are synthetic contracts, not production billing evidence.
+
+The configured cost reservation must cover the worst case implied by both token ceilings and pinned prices; under-reserved configurations are rejected before dispatch. This is an arithmetic guard, not evidence of real upstream output bounds or billing enforcement.
+
+`runner.mjs` now projects the unchanged evaluator-only S1-4/S6-4/S8-4 schedules into a session-owned fault port, separately from agent files. The first valid code execution encounters a real QuickJS exception before its program body; source/program bytes are unchanged, and the fault environment is bound into the host receipt digest. A new program revision can then execute under the original task budget. The port survives an approval's fresh lease within that session, retires on session replacement, and cannot be enabled by model arguments or saved settings. Audit receipts retain instrumentation; model run/inspect feedback omits the instrumented environment and exposes only a generic runtime error. No oracle values or schedule metadata belong in model input.
+
+The scorer requires the correct schedule hash, actual failed worker execution, a different program SHA that subsequently succeeds in the same task/session, and all nine frozen recovery outcomes before accepting live quality. Existing fact/evidence/ambiguity/novel-method thresholds remain unchanged. Correct recovery alone does not establish correct repaired facts or an admitted analytical answer.
+
+For explicit local HTTP diagnostics, use actual Node 22 and an absent report/ledger destination, from `frontend/`:
+
+```sh
+node scripts/coding-agent-evaluation/live-adapter-mock.mjs --output /tmp/ca-173-http-mock-new.json
+```
+
+The command uses native Chrome, the checksum-captured generated React build and nine fresh contexts. It reads only frozen agent inputs to script an identity meaning proposal, then a complete-table row-count probe, a runtime failure and a revised probe. It deliberately ends with clarification, with no repair commit or accepted answer. Every task retains 40 tools / 8 skills / 32 provider turns / 3 transformations / 15 active minutes and uses two transformation attempts. The explicit mock campaign allowance remains 1,000 requests / 100,000,000 input units / 100,000,000 output units / 1 micro-USD ceiling, settling zero cost. These are simulated usage/budget fixtures, not tokenizer or billing measurements. The frozen model qualification still requires all 180 runs; this nine-slot diagnostic is never pooled into live scores.
+
+The report records all attempts, model-visible metadata exclusion, wire keys, per-request hashes, independent usage observations and the durable ledger. It refuses an existing report and destinations inside the corpus. Inspect a failed campaign before preparing a new destination; uncertain attempts are not replayed. See [implementation, final checks and retained failures](../../docs/coding-agent/ca-173-live-adapter-2026-10-15.md). S8-4 weighted-mean admission/scoring, actual model/configuration/billing/bounds, finite paid authorization and complete live qualification remain open.
+
+
+## Exact weighted mean and bounded S8-4 smoke — 2026-10-15
+
+`weighted_mean` accepts typed safe integer value cells and nonnegative safe integer frequency/quantity weights. The result contract is `{method:"weighted_mean",methodVersion:1,seed:"none",scopedRows,n,excluded,zeroWeightRows,numerator,denominator,mean,unit}`. `numerator` and `denominator` are canonical decimal integer strings containing the **unreduced** BigInt sums, including beyond safe-number totals. `mean` is `Number(numerator) / Number(denominator)`, or null for zero denominator, and never replaces the sums. Negative/zero values remain facts; missing pairs are excluded and zero-weight pairs counted separately. Contributing units must be uniform when a unit column is declared. Source scale is preserved. Fractional/unsafe values and fractional/negative/unsafe weights are unsupported, not silently rounded or dropped.
+
+An explicitly empty computation predicate/group array canonicalizes to full input; malformed filters remain rejected. The host-compiled meaning input alias is projected into the repair program contract and must stay identical across code_run inputs and lineage. `transformationReserve` projects the still-needed repair/computation executions and the remaining allowance for diagnostic probes; it grants no extra attempts.
+
+The host re-reads the complete bound current table, applies the typed scope, independently computes the reference and rejects any output-field mismatch. Exported receipt coverage retains both exact strings. S8-4 scoring requires the current selected `host-integer-frequency-mean-v1` receipt, the matching entire-input scope/columns, exact oracle sums, correct unit and display quotient within the unchanged oracle tolerance. A reduced fraction, numeric sums, rounded text or matching provider prose is insufficient. The original frozen fault gate still requires a failed worker and different subsequent program under the same task/session.
+
+For a separately authorized live Default demo smoke, with actual Node 22 and a fresh destination, from `frontend/`:
+
+```sh
+node scripts/coding-agent-evaluation/s8-2-demo.mjs --live-demo --output /tmp/ca-173-s8-4-new.json --case S8-4
+```
+
+Omitting `--case` preserves S8-2 behavior. S8-4 installs the unchanged evaluator fault schedule only through the host test port, uses normal consent/composer/exact approval actions, and scores the exported structured artifact outside the model context. Request guards remain 40 provider / 3 session / 600,000 bytes per request / 300,000 ms per invocation; task limits remain 40 tools / 8 skills / 32 turns / 3 transformations / 900,000 active ms. The final wire rejects `max_output_tokens` and schedule metadata. This explicit smoke does not use the campaign ledger, establish remote billing/token ceilings, authorize the full campaign or prove model reliability. Preserve every development invocation and usage record separately; never pool it into the frozen holdout.
+
+
+## Bounded entire-input scope repair — 2026-10-15
+
+`task_scope_repair` is an intrinsic Pi task-metadata tool. It is offered only for the single classifier contradiction where a supported computation has no typed predicates but a nonempty free-text filter description. Its exact schema is `{population:"entire_input",goalQuote:string}`; unknown fields, business predicates and answer values are rejected. The quote must occur verbatim in the original goal and match a conservative unrestricted full-population phrase. Negation, exclusion, immediate restrictions, known entity references, unresolved references and time constraints remain blocked. Unsupported phrasing requires clarification rather than guessed intent. This validates a bounded declaration of explicit population; it is not a general natural-language proof engine.
+
+The task owns the two-proposal counter across scope revisions and fresh leases. Proposals use the existing tool/provider budgets and supply no computation receipt or dataset mutation. Current bindings are checked around the asynchronous scope digest before publishing. The shared validator rechecks the unchanged method/columns/policies and required dataset output; successful metadata advances revision and updates the host plan. Programs and candidate tools cannot run while computation scope is unresolved. Dependency-producing scope repair must finish in a separate assistant turn before program authoring/execution. Exact approval retains the repaired artifact/scope on its normal fresh lease.
+
+The operator driver supports a local protocol fixture and a deployment pin. From `frontend/`, using actual Node 22, new report destinations and the SHA-256 of the current root `SHA256SUMS.txt`:
+
+```sh
+node scripts/coding-agent-evaluation/s8-2-demo.mjs --local-scope-mock --output /tmp/scope-local-new.json --expect-site-manifest <sha256>
+node scripts/coding-agent-evaluation/s8-2-demo.mjs --live-demo --case S8-4 --output /tmp/scope-live-new.json --expect-site-manifest <sha256>
+```
+
+`--local-scope-mock` defaults to S8-4 and fulfills HTTP locally with native Responses JSON/SSE fixtures. It reads only frozen agent files, deliberately emits the contradictory classifier description and scripts scope repair, full candidate construction, a bounded revision after the worker failure, exact approval and a separate BigInt mean computation. It never reads the oracle or a canonical answer, hardcodes no fact rows or analytical sums, and makes zero actual provider calls. Synthetic protocol usage is labeled separately from live usage. The ordinary external evaluator scores the sealed export using all unchanged gates.
+
+`--expect-site-manifest` rejects a mismatched build before browser/network launch; always wait for local publication to exit before capturing this pin. Existing `--live-demo --output ...` and `--case S8-2|S8-4` behavior is retained. Request and task budgets, wire omission of `max_output_tokens`, fault metadata custody, exact approval and full qualification thresholds are unchanged. A local pass proves protocol/runtime integration, and a single real scoped pass proves that recorded invocation only; neither is full model/profile qualification.
+## Live launch prerequisites and current-context capture — 2026-10-15
+
+This section supersedes older statements that isolated settings cannot be captured. `runtimeCapture.mjs` reads only the fresh evaluation context, checks its expected provider/models/reasoning, fallback, permission policy, runtime settings, absent credentials/user or disabled skills, empty workspace/data/conversation and idle execution. The browser adapter requires the frozen candidate and performs this check before each run. It rejects drift before entering the production model path. The capture belongs to that context; a later live process must perform its own check.
+
+`liveHttpAdapter.mjs` retains request-body, prompt-input and tool-schema SHA-256 projections without persisting raw headers/prompts or granting evidence authority. HTTP 200 and 201 session responses are supported; missing/over-bound provider usage and uncertain attempts keep the original fail-closed accounting. These changes do not enable a remote transport.
+
+From `frontend/`, under actual Node >=22.13 and <23, use a fresh report destination and a current immutable qualification manifest:
+
+```sh
+node scripts/coding-agent-launch-readiness.mjs --offline --suite docs/coding-agent/evidence/fixtures-v1 --manifest <current-packet.json> --output <new-offline.json> --browser '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+node scripts/coding-agent-launch-readiness.mjs --demo-probe --suite docs/coding-agent/evidence/fixtures-v1 --manifest <current-packet.json> --output <new-demo.json> --browser '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+```
+
+The second command requires explicit demo diagnostic authorization. It sends only a short public synthetic request, at most one session plus one provider request, with no automatic retry, 4,096 request bytes, 2 MiB observed response bytes and a 45-second fetch deadline. These are client diagnostic controls, not billable token/cost bounds. `max_output_tokens` remains absent. It persists a running/uncertain record before each dispatch, omits credentials and response content, and refuses an existing output or a destination in the corpus. Do not replay an incomplete probe automatically.
+
+`launchReadiness.mjs` binds the report to the current qualification/deployment hashes, derives the process status from the same gate fields and keeps `launchReady`/`liveRunAuthorized` false. Exit 2 means valid preparation with concrete remaining blockers; exit 1 means invalid input, drift, execution or publication. The existing zero-call candidate remains immutable and intentionally reports no live capture/authorization; its offline preflight must not be edited to claim new runtime observations. The separate readiness report owns those observations.
+
+Current scoped observations expose `demo-auto` and native token usage, with session HTTP 201. They disclose no authoritative physical provider/model, routing/pricing revision, maximum billable input/output, rejection/retry billing or cancellation billing. The report lists these required provider/operator fields as null. No pricing estimate or global ceiling is invented. Positive finite campaign call/input/output/micro-USD allowances must be reviewed against that contract and exact pins before enabling full dispatch.
+
+Nine local native fault diagnostics validate per-run capture, real guest failure/revision plumbing, hashes and ledger reconciliation. They deliberately end with clarification and qualify no model autonomy or accepted analytical answer. The unchanged 180 live runs, nine live fault recoveries, 108/120 solvable, 12/15 per family, 29/30 ambiguity, zero critical failures and all deterministic/evidence/novel-method requirements remain outstanding acceptance. See the local CA-173 prerequisites report for exact commands, intermediate failures and current pins.

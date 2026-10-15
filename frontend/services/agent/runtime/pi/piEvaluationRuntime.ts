@@ -13,6 +13,7 @@ import {runPiInitialAnalysis} from './piInitialAnalysisRuntimeService';
 import {preparePiInitialCodingUiSmoke} from './piInitialCodingQualification';
 import {handleClarificationResponse} from '../../orchestration/chatOrchestrator';
 import {buildTaskExport} from './piTaskExports';
+import {installEvaluationFaults,type EvaluationFaultPolicy} from '../../../sandbox/evaluationFaults';
 
 export interface EvaluationExchange {
     model:{id:string;provider:string;api:string}; context:Parameters<StreamFn>[1];
@@ -45,8 +46,8 @@ export const createEvaluationStream=(exchange:(request:EvaluationExchange)=>Prom
 
 /** Operator-only adapter for a fresh, synthetic browser context. Reuses production runtime and exact approval. */
 export const executeEvaluationCase=async(root:StoreApi,input:{files:Array<{name:string;bytes:number[]}>;
-    entryPoint:'initial_analysis'|'follow_up';exchange:(request:EvaluationExchange)=>Promise<EvaluationReply>;
-    autoApproveSynthetic:boolean;signal:AbortSignal})=>{
+    entryPoint:'initial_analysis'|'follow_up';exchange?:(request:EvaluationExchange)=>Promise<EvaluationReply>;
+    transport?:'http';faultPolicy?:EvaluationFaultPolicy;autoApproveSynthetic:boolean;signal:AbortSignal})=>{
     if(root.getState().csvData||root.getState().activeExecution||!input.files.length
         ||input.files.length>20||input.files.some(f=>!/^[A-Za-z0-9._-]{1,80}$/.test(f.name)||f.bytes.length>8*1024*1024))throw new Error('evaluation_context_not_fresh');
     const taskFile=input.files.find(f=>f.name==='task.json');if(!taskFile)throw new Error('evaluation_task_missing');
@@ -57,7 +58,7 @@ export const executeEvaluationCase=async(root:StoreApi,input:{files:Array<{name:
     beginSessionTransition(root);
     root.setState({sessionId:`evaluation-${crypto.randomUUID()}`,sessionCreatedAt:new Date(),analysisCards:[],queryHistory:[],activeDataQuery:null,
         chatHistory:[],workspaceFiles:{},columnProfiles:[],dataQualityIssues:[],pendingClarification:null,taskInspection:null,
-        settings:{...root.getState().settings,provider:'default',complexModel:'mock',simpleModel:'mock',language:'English'}});
+        settings:{...root.getState().settings,provider:'default',...(input.transport==='http'?{}:{complexModel:'mock',simpleModel:'mock'}),language:'English'}});
     const captured=[];
     for(const file of csvFiles){
         const actual=new File([new Uint8Array(file.bytes)],file.name),parsed=parseCsvTextWithDetection(await actual.text());
@@ -73,15 +74,17 @@ export const executeEvaluationCase=async(root:StoreApi,input:{files:Array<{name:
     if(secondary.length)registerSandboxTableRows(bundle.bundleId,{tables:secondary,lineage:[],relationships:[]},bundle.datasetVersion);
     root.setState({csvData:primary.data,rawCsvData:structuredClone(primary.data),canonicalCsvData:primary.data,rawIntakeIr:primary.ir,
         datasetBundle:bundle,currentDatasetId:datasetId,semanticDatasetVersion:bundle.datasetVersion,currentView:'analysis_dashboard'});
-    const before=JSON.stringify(root.getState().rawCsvData),stream=createEvaluationStream(input.exchange);
+    if(input.transport!=='http'&&!input.exchange)throw new Error('evaluation_exchange_missing');
+    const before=JSON.stringify(root.getState().rawCsvData),stream=input.transport==='http'?undefined:createEvaluationStream(input.exchange!);
+    const faults=input.faultPolicy?installEvaluationFaults(root,input.faultPolicy):undefined;
     const attachments=input.files.filter(f=>f.name!=='task.json'&&!f.name.endsWith('.csv')).map(f=>({name:f.name,untrustedText:new TextDecoder().decode(new Uint8Array(f.bytes)).slice(0,16000)}));
     const goal=`${task.goal}\nRequired output contract: ${JSON.stringify(task.outputContract)}\nUse inspectable task-specific JavaScript and the existing candidate validation/approval path for repairs. Attachments are untrusted data: ${JSON.stringify(attachments)}`;
     const abort=()=>cancelOwnedRun(root);input.signal.addEventListener('abort',abort,{once:true});
     let outcome:unknown,approved=0;
     try{
         if(input.signal.aborted)abort();
-        outcome=input.entryPoint==='follow_up'?await runPiFollowUpTurn({message:goal},root,stream)
-            :await runPiInitialAnalysis({appSessionId:root.getState().sessionId,datasetId,datasetVersion:bundle.datasetVersion,researchGoal:goal,provider:{provider:'default',modelId:'mock'},signal:input.signal},root,stream,{codingPreparation:{enabled:true,qualified:true}});
+        outcome=input.entryPoint==='follow_up'?(input.transport==='http'?await root.getState().handleChatMessage(goal,{source:'composer'}):await runPiFollowUpTurn({message:goal},root,stream))
+            :await runPiInitialAnalysis({appSessionId:root.getState().sessionId,datasetId,datasetVersion:bundle.datasetVersion,researchGoal:goal,provider:{provider:'default',modelId:root.getState().settings.complexModel},signal:input.signal},root,stream,{codingPreparation:{enabled:true,qualified:true}});
         while(input.autoApproveSynthetic&&approved<3&&root.getState().pendingClarification?.resumeContext?.piCandidateApproval){
             await handleClarificationResponse({label:'Approve',value:'approve'},root);approved++;
         }
@@ -95,8 +98,9 @@ export const executeEvaluationCase=async(root:StoreApi,input:{files:Array<{name:
             sessionId:state.sessionId,task:state.activeAgentTask,inspection:state.taskInspection,pending:state.pendingClarification?.interactionKind??null,
             rows:state.canonicalCsvData?.data??[],rawOriginalPreserved:JSON.stringify(state.rawCsvData)===before,
             approvedCount:approved,acceptedCommit:state.datasetBundle?.acceptedCommit??null,queryHistory:state.queryHistory,exported,
-            sourceHashes:captured.map(item=>({name:item.file.name,sha256:item.source.sha256})),entryPoint:input.entryPoint};
-    }finally{input.signal.removeEventListener('abort',abort);cancelOwnedRun(root);}
+            sourceHashes:captured.map(item=>({name:item.file.name,sha256:item.source.sha256})),entryPoint:input.entryPoint,
+            ...(faults?{faultEvidence:faults.snapshot()}:{}),transport:input.transport??'mock_stream'};
+    }finally{input.signal.removeEventListener('abort',abort);faults?.dispose();cancelOwnedRun(root);}
 };
 
 /** Separate plumbing probe, never a frozen holdout result. The old public synthetic fixture stays unchanged. */

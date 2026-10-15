@@ -27,7 +27,7 @@ const BOOTSTRAP = `(() => {
         }
         return { text: slice(text, 0, i), bytes, truncated: i < text.length };
     };
-    return (code, inputJson, outputLimit) => {
+    return (code, inputJson, outputLimit, injectedFailure) => {
         let stdout = '', stderr = '', outBytes = 0, errBytes = 0, logsTruncated = false;
         const log = (error, args) => {
             const parts = []; for (let i=0;i<args.length;i++) push(parts, string(args[i]));
@@ -45,7 +45,10 @@ const BOOTSTRAP = `(() => {
         };
         const input = parse(inputJson);
         let result;
-        try { result = evaluate('(function(input) { "use strict";\\n' + code + '\\n})')(input); }
+        try {
+            if (injectedFailure) throw new ErrorType('Execution failed at the runtime boundary.');
+            result = evaluate('(function(input) { "use strict";\\n' + code + '\\n})')(input);
+        }
         catch (error) {
             const detail = create(null); detail.name='Error'; detail.message='Program failed';
             try { detail.name=bounded(string(error.name),80).text; detail.message=bounded(string(error.message),2048).text; } catch {}
@@ -86,7 +89,8 @@ export const executeQuickJsGuest = async (request: GuestRequest, load: () => Pro
         const limit = context.newNumber(request.limits.outputBytes);
         try {
             onStarted?.();
-            const result = context.callFunction(fn, context.undefined, code, input, limit);
+            const result = context.callFunction(fn, context.undefined, code, input, limit,
+                request.evaluationFault ? context.true : context.false);
             if (!('value' in result)) {
                 result.error.dispose();
                 return outcome(interrupted ? 'timeout' : 'failed', interrupted ? 'guest_deadline' : 'guest_execution_rejected');

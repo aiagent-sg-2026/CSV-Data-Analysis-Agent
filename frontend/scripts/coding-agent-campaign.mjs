@@ -14,7 +14,7 @@ try{
   const read=async file=>{const stat=await lstat(file);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>2*1024*1024)throw new Error('input_invalid');return JSON.parse(await readFile(file,'utf8'));};
   const manifest=await read(path.resolve(args[3])),limits=await read(path.resolve(args[7]));
   const controller=new AbortController(),stop=()=>controller.abort();process.once('SIGINT',stop);process.once('SIGTERM',stop);
-  adapter=await createBrowserEvaluationAdapter({site:repository,browserPath:args[9],entryPoint:args[11]});
+  adapter=await createBrowserEvaluationAdapter({site:repository,browserPath:args[9],candidate:manifest.candidate,entryPoint:args[11]});
   const result=await runQualificationCampaign({repository,suite:path.resolve(args[1]),manifest,directory:path.resolve(args[5]),adapter,limits,signal:controller.signal});
   process.stdout.write(json({status:result.status,summary:result.summary,providerCalls:0,paidSpendUsd:0,liveRunAuthorized:false}));
   process.exitCode=result.status==='finished'&&result.summary.scheduleComplete?0:2;

@@ -15,12 +15,13 @@ import {captureSkillSnapshot,assertPinnedSkillCurrent,skillAvailability,type Ski
 import {normalizeRuntimeAccessControlSettings} from '../../../runtimeAccessControl';
 import { captureMcpTask } from '../../connectors/mcpConnectorRegistry';
 import { projectTypedTaskPlan, type TypedTaskPlan, type TaskRepairCommit } from './piTaskPlan';
+import {canRepairComputationScope} from './piScopeRepair';
 import { admitComputationEvidence, type ComputationEvidenceReceipt } from '../../execution/computationEvidence';
 
 export interface PiTaskContinuation { taskId: string; revision: number; scopeDigest: string }
 type Adapter = ReturnType<typeof createCodeExecutionAdapter>;
 type Guest = Parameters<typeof createCodeExecutionAdapter>[3];
-type RecordState = { task: AgentTaskContract; workspace: TaskWorkspace; skills:SkillSnapshot; mcp:import('../../connectors/httpMcpContract').McpTaskPort; skillPrograms:Map<string,{pin:PinnedSkill;reference:import('../../execution/codeExecutionContract').CodeArtifactRef}>; coding: boolean; failureKey: string; repetitions: number; repairCommit?: TaskRepairCommit; retire?: () => void; inspection?: TaskInspectionProjection };
+type RecordState = { task: AgentTaskContract; workspace: TaskWorkspace; skills:SkillSnapshot; mcp:import('../../connectors/httpMcpContract').McpTaskPort; skillPrograms:Map<string,{pin:PinnedSkill;reference:import('../../execution/codeExecutionContract').CodeArtifactRef}>; coding: boolean; scopeRepairAttempts:number; failureKey: string; repetitions: number; repairCommit?: TaskRepairCommit; retire?: () => void; inspection?: TaskInspectionProjection };
 const tasks = new WeakMap<StoreApi['getState'], RecordState>();
 const digest = (value: unknown) => sha256Bytes(new TextEncoder().encode(JSON.stringify(value)));
 const codingTool = (name: string) => name.startsWith('code.') || name.startsWith('candidate.') || ['workspace.write', 'workspace.append', 'workspace.replace'].includes(name);
@@ -64,7 +65,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
         const mcp = await awaitOwned(captureMcpTask(store, task.taskId, () => tasks.get(key) === record), store, lease);
         const workspace = createTaskWorkspace(root, task.taskId, { allowedPrefixes: ['/workspace/'], allowedPaths: ['/dataset/cleaned.csv'] });
         task = { ...task, protectedInvariants: [...task.protectedInvariants, { id: 'mcp-snapshot', digest: mcp.digest }] };
-        record = { task, workspace, skills,mcp,skillPrograms:new Map(), coding: false, failureKey: '', repetitions: 0 };
+        record = { task, workspace, skills,mcp,skillPrograms:new Map(), coding: false, scopeRepairAttempts:0, failureKey: '', repetitions: 0 };
         tasks.set(key, record);
         const captured = record;
         registerSessionResource(lease.scope, () => { captured.retire?.(); captured.workspace.dispose(); if (tasks.get(key) === captured) tasks.delete(key); });
@@ -73,6 +74,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
     let adapter: Adapter | undefined, closed = false, blockedReason = '', executionAccepted = false, lastTick = performance.now();
     const receipts: Readonly<CodeExecutionReceipt>[] = [];
     const computations: ComputationEvidenceReceipt[] = [];
+    let computationNeedsRevision=false;
     let candidatePort: CandidateStagingPort | undefined, candidateRequested = false, candidateAccepted = false;
     let deferApprovalPublication=false;
     let validationRequested=false,validatedCandidateId='',lastValidationCandidateId='',activeValidationCall='';
@@ -144,14 +146,15 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
             let candidateId: string | undefined, candidateValidated = false;
             try {
                 const candidate = candidatePort?.list().at(-1);
-                if (candidate?.execution.jobId === successfulJobId) {
+                if (candidate && candidate.execution.jobId === successfulJobId) {
                     candidateId=candidate.candidateId;
                     candidateValidated=candidatePort?.validationReceipt(candidateId)?.decision==='validated';
                 }
             } catch { /* Invalidated candidates cannot advance the plan. */ }
-            return projectTypedTaskPlan(record.task,{meaningConfigured:Boolean(candidatePort?.validationRequirements().configured),
-                candidateId,candidateValidated,successfulJobId,repairCommit,
-                computationAccepted:Boolean(computations.length&&admitComputationEvidence(store,lease,computations).receipt)});
+            const requirements=candidatePort?.validationRequirements();
+            return projectTypedTaskPlan(record.task,{meaningConfigured:Boolean(requirements?.configured),repairInput:requirements?.inference?.input,
+                candidateId,candidateValidated,successfulJobId,repairCommit,scopeRepairRemaining:2-record.scopeRepairAttempts,
+                computationAccepted:Boolean(computations.length&&admitComputationEvidence(store,lease,computations).receipt),computationNeedsRevision});
         },
         recoverySnapshot() { current(); return { task:structuredClone(record.task),failureKey:record.failureKey,repetitions:record.repetitions }; },
         attach(target) {
@@ -164,6 +167,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
             target.candidateStaging = candidatePort;
         },
         committed() {
+            current();
             const bundle=store.getState().datasetBundle;
             if (!bundle?.acceptedCommit) throw new Error('task_repair_commit_required');
             record.repairCommit={commitId:bundle.acceptedCommit.commitId,datasetVersion:bundle.datasetVersion};
@@ -186,9 +190,10 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
             record.task = {...record.task,revision:record.task.revision+1,inputBindings:next,capabilityGrants:[]};
             receipts.length = 0; executionAccepted = false; publish();
         },
-        async resolveScope(answer) {
-            current();
+        async resolveScope(answer,checkInputs) {
+            current();checkInputs?.();
             const scopeDigest = await awaitOwned(sha256Bytes(new TextEncoder().encode(serializeTaskAnswerScope(answer))), store, lease);
+            checkInputs?.();
             const revised = reviseAgentTaskScope(store, record.task, lease, { digest: scopeDigest, intentDigest: record.task.scope.intentDigest, answer });
             if (revised.invalidated.length) record.task.capabilityGrants.forEach(grant => adapter?.revoke(grant.id));
             record.task = { ...revised.task, kind: answer.requiresEvidence ? 'analysis' : record.coding ? 'artifact' : 'conversation',
@@ -200,6 +205,22 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
             if (answer.computation || answer.dataPreparation) record.coding = true;
             if (revised.invalidated.length) { receipts.length = 0; executionAccepted = false; }
             publish();
+        },
+        async repairScope(resolve) {
+            current();
+            if(!canRepairComputationScope(record.task.scope.answer)||receipts.length||candidateRequested||record.repairCommit)
+                throw new Error('scope_repair_unavailable');
+            if(record.scopeRepairAttempts>=2)throw new Error('scope_repair_attempts_exhausted');
+            record.scopeRepairAttempts++;
+            const checkInputs=()=>{
+                const bundle=store.getState().datasetBundle;
+                if(record.task.inputBindings.some(binding=>bundle?.relationshipSetId!==binding.relationshipSetId
+                    ||!bundle.tables.some(table=>table.tableId===binding.tableId&&table.datasetVersion===binding.datasetVersion)))throw new Error('input_version_changed');
+            };
+            checkInputs();
+            const answer=resolve();
+            if(answer.unresolved.length||!answer.computation)throw new Error('scope_repair_requires_clarification');
+            await task.resolveScope(answer,checkInputs);current();return record.task.scope.answer;
         },
         providerTurn(ordinaryLimit) {
             if (!record.coding && ordinaryLimit && record.task.budget.used.providerTurns >= ordinaryLimit) {
@@ -242,6 +263,9 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
                     if(reference.revision!==support.reference.revision||reference.sha256!==support.reference.sha256)throw new Error('skill_support_artifact_changed');
                 }
             }
+            if(record.task.scope.answer.computation&&record.task.scope.answer.unresolved.length
+                &&(name==='code.run'||name.startsWith('candidate.')||['workspace.write','workspace.append','workspace.replace','computation.validate'].includes(name)))
+                {charge({toolCalls:1});throw new Error('typed_scope_unresolved: Repair the classifier scope with task_scope_repair when available, otherwise request clarification. Read-only inspection remains available; do not execute a repair or computation yet.');}
             if (name === 'code.run') executionAccepted = false;
             if (name === 'candidate.stage' || name === 'candidate.infer_meaning') { candidateRequested = true; candidateAccepted = false; }
             if (name === 'candidate.validate') {validationRequested=true;validatedCandidateId='';lastValidationCandidateId='';activeValidationCall=toolCallId??crypto.randomUUID();}
@@ -273,6 +297,8 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
             current();
             inspection.observe(record.task, name, result, context.toolCallId!, candidatePort);
             record.inspection = inspection.snapshot;
+            if(name==='computation.validate'&&result.status==='success')computationNeedsRevision=false;
+            else if(name==='computation.validate'&&result.message.startsWith('independent_reference_mismatch'))computationNeedsRevision=true;
             if (name === 'computation.validate' && result.status === 'success') {
                 const receipt=result.artifacts?.computationEvidence as ComputationEvidenceReceipt|undefined;
                 if(receipt&&admitComputationEvidence(store,lease,[receipt]).receipt===receipt)computations.push(receipt);
@@ -308,7 +334,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
                         note: 'Execution references only. Outputs remain transient; independent validation and exact commit approval are required.'}, null, 2),
                 } }));
                 if (record.task.status === 'executing') move('validating');
-                if (actual.status === 'succeeded') { executionAccepted = true; record.failureKey = ''; record.repetitions = 0; move('verifying'); return; }
+                if (actual.status === 'succeeded') { executionAccepted = true; computationNeedsRevision=false; record.failureKey = ''; record.repetitions = 0; move('verifying'); return; }
                 const failure = JSON.stringify([actual.program?.sha256, actual.inputDigest, actual.reasonCode, actual.error]);
                 record.repetitions = record.failureKey === failure ? record.repetitions + 1 : 1; record.failureKey = failure;
                 if (record.repetitions >= 2) blockedReason = 'coding_no_progress';
@@ -381,10 +407,10 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
         },
         close(status) {
             if (closed) return record.task.status;
-            if(status==='completed'&&record.task.scope.answer.dataPreparation==='canonical_fact_table'&&!task.plan.repairCommit) {
-                blockedReason='task_repair_commit_required';status='blocked';
-            }
             if (ownsRun(store, lease) && tasks.get(key) === record) {
+                if(status==='completed'&&record.task.scope.answer.dataPreparation==='canonical_fact_table'&&!task.plan.repairCommit) {
+                    blockedReason='task_repair_commit_required';status='blocked';
+                }
                 if (!['awaiting_clarification', 'awaiting_approval'].includes(record.task.status) || lease.signal.aborted) {
                     if (!lease.signal.aborted) { try { charge({}); } catch { if (status === 'completed') status = 'blocked'; } }
                     record.task = { ...record.task, status, capabilityGrants: [], budget:resumeTaskBudget(record.task.budget) };
@@ -429,7 +455,8 @@ export interface PiCodingTask {
     requireOutputs(outputs: TaskOutputRequirement[]): void;
     rejectApproval(): void;
     refreshInputs(): void;
-    resolveScope(scope: ResolvedAnswerScope): Promise<void>;
+    resolveScope(scope: ResolvedAnswerScope,checkInputs?:()=>void): Promise<void>;
+    repairScope(resolve:()=>ResolvedAnswerScope):Promise<ResolvedAnswerScope>;
     providerTurn(ordinaryLimit?: number): void;
     skillRead(toolCallId?: string): void;
     beforeTool(name: string, args: unknown, toolCallId?: string): Promise<void>;

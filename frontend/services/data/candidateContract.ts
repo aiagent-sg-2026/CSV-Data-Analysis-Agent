@@ -31,6 +31,7 @@ export const CANDIDATE_OUTPUT_FIELDS=Object.freeze({
     envelope:Object.freeze(['schemaVersion','complete','tables','relationships','excludedRows']),
     table:Object.freeze(['name','role','schema','rowCount','rows','lineage']),
     schema:Object.freeze(['name','dataType','nullable']),
+    cellLineage:Object.freeze(['row','column','origins']),
 });
 const name=(v:unknown):v is string=>typeof v==='string'&&v.length>0&&v.length<=240&&!['__proto__','constructor','prototype'].includes(v);
 const index=(v:unknown):v is number=>Number.isSafeInteger(v)&&Number(v)>=0;
@@ -56,7 +57,7 @@ export const parseCandidateOutput=(text:string):CandidateOutput=>{
         for(const r of t.rows){if(!exact(r,[...columns])||Object.values(r).some(x=>x!==null&&!['string','number','boolean'].includes(typeof x)
             ||typeof x==='number'&&!Number.isFinite(x)))fail();}
         const mapped=new Set<string>();
-        for(const l of t.lineage){if(!exact(l,['row','column','origins'])||!index(l.row)||l.row>=t.rowCount||!columns.has(l.column)
+        for(const l of t.lineage){if(!exact(l,[...CANDIDATE_OUTPUT_FIELDS.cellLineage])||!index(l.row)||l.row>=t.rowCount||!columns.has(l.column)
             ||!Array.isArray(l.origins)||!l.origins.length||l.origins.length>256||l.origins.some(o=>!cellOrigin(o)))fail();
             const key=JSON.stringify([l.row,l.column]);if(mapped.has(key)||new Set(l.origins.map(o=>JSON.stringify(o))).size!==l.origins.length)fail();mapped.add(key);}
         if(mapped.size!==t.rowCount*t.schema.length)throw new Error('candidate_lineage_incomplete');

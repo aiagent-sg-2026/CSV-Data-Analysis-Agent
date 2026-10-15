@@ -13,16 +13,18 @@ afterAll(async()=>{await rm(temporary,{recursive:true,force:true});});
 const result=()=>({status:'blocked',rawOriginalPreserved:true,approvedCount:0,acceptedCommit:null,pending:'clarification'});
 describe('frozen zero-call campaign orchestration',()=>{
     it('executes the complete 180-slot denominator with only agent artifacts and no live acceptance',async()=>{
-        let sent=0,closed=false;
+        let sent=0,closed=false;const faults:string[]=[];
         const adapter={mode:'mock',close:async()=>{closed=true;},execute:async args=>{
             expect(args.files.every(f=>!['oracle.json','canonical.csv'].includes(f.name))).toBe(true);
             const task=JSON.parse(Buffer.from(args.files.find(f=>f.name==='task.json').bytes).toString());
             expect(task).not.toHaveProperty('faultSchedule');expect(task).not.toHaveProperty('expectedFacts');
+            if(args.faultPolicy){faults.push(args.runId);expect(args.faultPolicy).toEqual({scheduleSha256:expect.stringMatching(/^[a-f0-9]{64}$/),executions:[1]});}
             await args.request('pi',{inputTokens:1,outputTokens:1,costMicrousd:0},async()=>{sent++;return {value:null,usage:{inputTokens:1,outputTokens:1,costMicrousd:0}};});return result();}};
         const directory=path.join(temporary,'complete');
         const actual=await runQualificationCampaign({repository,suite,manifest,directory,adapter,limits});
         expect(actual.status).toBe('finished');expect(actual.summary).toMatchObject({scheduleComplete:true,expectedRuns:180,qualityPassed:false,capabilityAcceptance:'pending'});
         expect(sent).toBe(180);expect(closed).toBe(true);expect(actual.ledger.used.calls).toBe(180);
+        expect(faults).toEqual(manifest.schedule.filter(run=>['S1-4','S6-4','S8-4'].includes(run.caseId)).map(run=>run.id));
         expect(JSON.parse(await readFile(path.join(directory,'summary.json'),'utf8')).providerCalls).toBe(0);
     },60000);
     it('pauses on budget exhaustion and resumes with complete partial accounting without any extra dispatch',async()=>{

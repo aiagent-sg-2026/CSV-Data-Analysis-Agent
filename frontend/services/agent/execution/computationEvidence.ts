@@ -7,19 +7,51 @@ import type { CodeExecutionReceipt } from './codeExecutionContract';
 import { JAVASCRIPT_GUEST_PIN } from '../../sandbox/javascriptGuestProtocol';
 import { orderedPredicateValue } from './queryPredicateValue';
 import { referenceWeightedMedian,type WeightedMedianScope,type WeightedMedianResult } from './weightedMedian';
+import { referenceWeightedMean,type WeightedMeanScope,type WeightedMeanResult } from './weightedMean';
 
 export interface PearsonScope {
     method: 'pearson_correlation'; x: string; y: string; where?: QueryPlan['where'];
     missingPolicy: 'pairwise_complete'; seed: 'none'; tableId?: string;
 }
-export type RequestedComputationScope = PearsonScope | WeightedMedianScope;
+export type RequestedComputationScope = PearsonScope | WeightedMedianScope | WeightedMeanScope;
+export type ComputationResult = PearsonResult | WeightedMedianResult | WeightedMeanResult;
 export interface PearsonResult { method: 'pearson_correlation'; methodVersion: 1; seed: 'none'; scopedRows: number; n: number; excluded: number; coefficient: number | null }
+export const COMPUTATION_OUTPUT_CONTRACTS=Object.freeze({
+    weighted_mean:Object.freeze({method:'literal weighted_mean',methodVersion:'literal 1',seed:'literal none',
+        scopedRows:'Integer count after the exact business/time filter, before missing/zero-weight handling.',
+        n:'Integer count of nonmissing positive-frequency pairs within scopedRows.',
+        excluded:'Integer count of missing value/weight pairs WITHIN scopedRows. Out-of-scope rows do not count.',
+        zeroWeightRows:'Integer count of nonmissing zero-frequency pairs within scopedRows.',
+        numerator:'Canonical signed decimal INTEGER STRING: unreduced sum(value * weight), accumulated with BigInt. Source values must be typed safe integers. Zero is string 0.',
+        denominator:'Canonical nonnegative decimal INTEGER STRING: unreduced sum of positive frequency weights, accumulated with BigInt. Never reduce this fraction.',
+        mean:'Number(numerator) / Number(denominator), or null when denominator is string 0. Display derivative only.',
+        unit:'Single contributing unit string, or null without a unit column.'} satisfies Record<keyof WeightedMeanResult,string>),
+    lower_weighted_median:Object.freeze({method:'literal lower_weighted_median',methodVersion:'literal 1',seed:'literal none',
+        scopedRows:'Integer count after the exact business/time filter, before missing/zero-weight handling. Never a row array.',
+        n:'Integer count of nonmissing positive-frequency pairs within scopedRows.',
+        excluded:'Integer count of missing value/weight pairs WITHIN scopedRows. Out-of-scope rows do not count.',
+        zeroWeightRows:'Integer count of nonmissing zero-frequency pairs within scopedRows.',totalWeight:'Safe integer sum of positive frequency weights.',
+        median:'Observed lower weighted median number, or null without positive weights.',unit:'Single contributing unit string, or null without a unit column.'} satisfies Record<keyof WeightedMedianResult,string>),
+    pearson_correlation:Object.freeze({method:'literal pearson_correlation',methodVersion:'literal 1',seed:'literal none',
+        scopedRows:'Integer count after the exact business/time filter. Never a row array.',n:'Integer count of complete numeric pairs within scopedRows.',
+        excluded:'Integer count of missing pairs WITHIN scopedRows, excluding out-of-scope rows.',coefficient:'Finite number, or null for insufficient/constant pairs.'} satisfies Record<keyof PearsonResult,string>),
+});
+
+/** Diagnostic field names only: never disclose reference values as a replacement for agent computation. */
+export const computationMismatchFields=(actual:Record<string,unknown>|null,expected:ComputationResult,tolerance:number):string[]=>{
+    if(!actual||Array.isArray(actual)||typeof actual!=='object')return ['output_object_required'];
+    const expectedKeys=Object.keys(expected),extra=Object.keys(actual).filter(key=>!expectedKeys.includes(key));
+    return [...(extra.length?['unexpected_fields']:[]),...Object.entries(expected).filter(([key,value])=>{
+        if(key==='coefficient')return value===null?actual[key]!==null:typeof actual[key]!=='number'||!Number.isFinite(actual[key])||Math.abs(actual[key]-value)>tolerance;
+        return actual[key]!==value;
+    }).map(([key])=>key)];
+};
 export interface ComputationEvidenceReceipt {
     evidenceId: string; taskId: string; taskRevision: number; answerScopeDigest: string;
     sessionId: string; sessionEpoch: number; runId: string; turnId?: string; toolCallId: string;
     method: RequestedComputationScope; methodVersion: 1; seed: 'none';
-    execution: Readonly<CodeExecutionReceipt>; inputSha256: string; result: PearsonResult | WeightedMedianResult;
-    reference: 'host-centered-pearson-v1' | 'host-lower-frequency-median-v1'; tolerance: number;
+    execution: Readonly<CodeExecutionReceipt>; inputSha256: string; result: ComputationResult;
+    reference: 'host-centered-pearson-v1' | 'host-lower-frequency-median-v1' | 'host-integer-frequency-mean-v1'; tolerance: number;
 }
 const issued = new WeakMap<ComputationEvidenceReceipt, () => void>();
 const freeze = <T>(value: T): T => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
@@ -81,7 +113,7 @@ export const validateComputationExecution = async (store: StoreApi, jobId: strin
         taskRevision:task.revision, answerScopeDigest:task.scope.digest, sessionId:context.lease.scope.sessionId, sessionEpoch:context.lease.scope.epoch,
         runId:context.lease.runId, turnId:context.lease.turnId, toolCallId:context.toolCallId, method:structuredClone(scope), methodVersion:1, seed:'none',
         execution, inputSha256:'', result:null as unknown as PearsonResult,
-        reference:scope.method==='pearson_correlation'?'host-centered-pearson-v1':'host-lower-frequency-median-v1',
+        reference:scope.method==='pearson_correlation'?'host-centered-pearson-v1':scope.method==='weighted_mean'?'host-integer-frequency-mean-v1':'host-lower-frequency-median-v1',
         tolerance:scope.method==='pearson_correlation'?1e-10:0};
     const check = () => currentExecution(store, receipt);
     check();
@@ -103,14 +135,13 @@ export const validateComputationExecution = async (store: StoreApi, jobId: strin
         {maxRows:CODE_TABLE_LIMITS.rows, allowedColumns:captured.tables.facts.columns});
     if (result.truncated || result.returnedRows !== result.totalMatchedRows) throw new Error('complete_scope_required');
     receipt.inputSha256 = coverage.sha256;
-    receipt.result = scope.method==='pearson_correlation'?referencePearson(result.rows, scope):referenceWeightedMedian(result.rows,scope);
+    receipt.result = scope.method==='pearson_correlation'?referencePearson(result.rows, scope)
+        :scope.method==='weighted_mean'?referenceWeightedMean(result.rows,scope):referenceWeightedMedian(result.rows,scope);
     const parsed = JSON.parse(code.workspace.read(execution.output.path).content);
     const actual = (execution.mode==='stateful_stream' && Array.isArray(parsed) && parsed.length===1 ? parsed[0] : parsed) as Record<string,unknown>;
     const expected = receipt.result;
-    if (!actual || Object.keys(actual).sort().join('|') !== Object.keys(expected).sort().join('|')
-        || !Object.entries(expected).filter(([key])=>key!=='coefficient').every(([key,value])=>actual[key]===value)
-        || (expected.method==='pearson_correlation'&&(expected.coefficient === null ? actual.coefficient !== null : typeof actual.coefficient !== 'number'
-            || !Number.isFinite(actual.coefficient) || Math.abs(actual.coefficient-expected.coefficient) > receipt.tolerance))) throw new Error('independent_reference_mismatch');
+    const mismatches=computationMismatchFields(actual,expected,receipt.tolerance);
+    if(mismatches.length)throw new Error(`independent_reference_mismatch: Revise output fields [${mismatches.join(', ')}] to match the declared computation output contract. scopedRows is a count after the exact scope filter; excluded counts missing pairs within that scope. No reference values are supplied. Write a new program revision, execute again, then validate its new jobId.`);
     check(); captured.check(); freeze(receipt); issued.set(receipt, captured.check); return receipt;
 };
 
@@ -125,6 +156,11 @@ export const admitComputationEvidence = (store: StoreApi, lease: RunLease, recei
 
 export const formatComputationEvidence = (receipt: ComputationEvidenceReceipt): string => {
     const r = receipt.result;
+    if(r.method==='weighted_mean'){
+        const value=r.mean===null?r.scopedRows===0?'No rows match the requested scope.':'Weighted mean is undefined (no positive frequency weight).'
+            :`Weighted mean (${receipt.method.method==='weighted_mean'?receipt.method.value:''}): ${r.mean} (approximate display).`;
+        return `${value}\nExact numerator: ${r.numerator}; denominator: ${r.denominator} (unreduced).${r.unit?`\nUnit label: ${r.unit}; source column scale preserved.`:''}\nContributing pairs: ${r.n}; excluded missing pairs: ${r.excluded}; zero-weight rows: ${r.zeroWeightRows}; scoped rows: ${r.scopedRows}.\nEvidence: ${receipt.evidenceId}; execution ${receipt.execution.jobId}; method v1; seed none; ${receipt.execution.environmentDigest}.`;
+    }
     if(r.method==='lower_weighted_median'){
         const value=r.median===null?r.scopedRows===0?'No rows match the requested scope.':'Weighted median is undefined (no positive frequency weight).'
             :`Lower weighted median (${receipt.method.method==='lower_weighted_median'?receipt.method.value:''}): ${r.median}.${r.unit?`\nUnit label: ${r.unit}; source column scale preserved.`:''}`;

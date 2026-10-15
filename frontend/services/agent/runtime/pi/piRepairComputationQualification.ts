@@ -8,10 +8,11 @@ import {inspectPiCandidateReview} from './piCandidateReviewState';
 import {buildTaskExport} from './piTaskExports';
 import {readExactCommit} from '../../../data/datasetRecoveryActions';
 import {getStorageDatabase} from '../../../storageService';
+import {installEvaluationFaults,type EvaluationFaultPolicy} from '../../../sandbox/evaluationFaults';
 import {unzipSync,strFromU8} from 'fflate';
 
 /** Operator QA in a fresh private context. Only frozen agent files enter the normal live Chatbox. */
-export const runRepairComputationDemoProbe=async(root:StoreApi,files:Array<{name:string;bytes:number[]}>)=>{
+export const runRepairComputationDemoProbe=async(root:StoreApi,files:Array<{name:string;bytes:number[]}>,faultPolicy?:EvaluationFaultPolicy)=>{
     if(root.getState().csvData||root.getState().activeExecution||files.length!==2)throw new Error('repair_probe_context_not_fresh');
     const taskFile=files.find(f=>f.name==='task.json');
     const task=taskFile&&JSON.parse(new TextDecoder().decode(new Uint8Array(taskFile.bytes))) as {goal:string;inputFiles:string[];outputContract:unknown}|undefined;
@@ -30,6 +31,7 @@ export const runRepairComputationDemoProbe=async(root:StoreApi,files:Array<{name
         semanticDatasetVersion:bundle.datasetVersion,columnProfiles:bundle.tables[0].schema.map(c=>({name:c.name,type:c.dataType})) as never,currentView:'analysis_dashboard'});
     const original=JSON.stringify(root.getState().rawCsvData),goal=`${task.goal}\nRequired output contract: ${JSON.stringify(task.outputContract)}\nUse inspectable task-specific JavaScript and the existing candidate validation/approval path for repairs.`;
     const approvals=[];
+    const faults=faultPolicy?installEvaluationFaults(root,faultPolicy):undefined;
     try{
         await root.getState().handleChatMessage(goal,{source:'composer'});
         // The operator explicitly authorized this public synthetic exact-approval test. Use the same action as the UI.
@@ -54,6 +56,7 @@ export const runRepairComputationDemoProbe=async(root:StoreApi,files:Array<{name
         return {status:state.activeAgentTask?.status==='completed'?'completed':state.pendingClarification?'blocked':state.activeAgentTask?.status??'failed',
             goal,chat:state.chatHistory,task:state.activeAgentTask,inspection:state.taskInspection,pending:state.pendingClarification?.interactionKind??null,
             rows:state.canonicalCsvData?.data??[],rawOriginalPreserved:JSON.stringify(state.rawCsvData)===original,sourceHashes:[{name:file.name,sha256:source.sha256}],
+            ...(faults?{faultEvidence:faults.snapshot()}:{}),
             approvedCount:approvals.length,approvals,acceptedCommit:state.datasetBundle?.acceptedCommit??null,exported,runtime:state.runtimeRunHistory};
-    }finally{cancelOwnedRun(root);}
+    }finally{faults?.dispose();cancelOwnedRun(root);}
 };

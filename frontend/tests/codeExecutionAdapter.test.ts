@@ -9,6 +9,8 @@ import { beginRun, scopeRunStore, beginSessionTransition, cancelOwnedRun } from 
 import { createAgentTask, transitionAgentTask, type AgentTaskDefinition } from '../services/agent/runtime/pi/piTaskContract';
 import { createTaskWorkspace } from '../services/agent/taskWorkspace';
 import type { StoreApi } from '../services/agent/types';
+import {installEvaluationFaults} from '../services/sandbox/evaluationFaults';
+import {frozenFaultPolicy,hasFrozenFaultRecovery} from '../scripts/coding-agent-evaluation/faultSchedule.mjs';
 
 afterEach(() => vi.restoreAllMocks());
 const hash = 'a'.repeat(64);
@@ -26,7 +28,7 @@ const setup = async (customGuest?: Guest) => {
     const program = await workspace.write('/workspace/program.js', 'console.log("computed"); return JSON.parse(input.rows.content).reduce((a,b)=>a+b,0);', 0);
     const input = await workspace.write('/workspace/input.json', '[2,3,5]', 0);
     const adapter = createCodeExecutionAdapter(store, workspace, () => task, customGuest ?? {
-        run: (code, inputJson, options) => executeQuickJsGuest({ generation: 1, code, inputJson, limits: resolveGuestLimits(options.limits) }, () => newQuickJSWASMModuleFromVariant(variant), options.onStarted),
+        run: (code, inputJson, options) => executeQuickJsGuest({ generation: 1, code, inputJson, limits: resolveGuestLimits(options.limits),evaluationFault:options.evaluationFault }, () => newQuickJSWASMModuleFromVariant(variant), options.onStarted),
         cancel() {}, dispose() {},
     });
     const issued = await adapter.issueGrant({ readPaths: [program.path, input.path], writePaths: ['/workspace/result.json'], expiresAt: Date.now() + 60000 });
@@ -39,6 +41,24 @@ const setup = async (customGuest?: Guest) => {
 };
 
 describe('host-owned code execution adapter', () => {
+    it('records actual frozen failure and revised execution under the original program/source custody',async()=>{
+        const s=await setup(),schedule=[{execution:1,observation:'injected_program_or_schema_failure',requires:'bounded_revision'}];
+        const port=installEvaluationFaults(s.root,frozenFaultPolicy(schedule));
+        const forged={...s.request,evaluationFault:{kind:'program_failure',execution:1,scheduleSha256:'f'.repeat(64)}};
+        expect(await s.adapter.run(forged,s.context)).toMatchObject({status:'blocked',reasonCode:'validation_failed'});
+        const failed=await s.adapter.run(s.request,s.context);
+        expect(failed).toMatchObject({status:'failed',reasonCode:'guest_program_failed',program:s.request.program});
+        expect(failed.output).toBeUndefined();expect(failed.workerGenerations?.length).toBe(1);
+        expect(failed.environment).toHaveProperty('evaluationFault.scheduleSha256',port.snapshot().scheduleSha256);
+        const original=s.workspace.read(s.request.program.path);
+        const revised=await s.workspace.write(original.path,original.content+'\n// Revised after rejected execution',original.revision);
+        const succeeded=await s.adapter.run({...s.request,program:{path:revised.path,revision:revised.revision,sha256:revised.sha256}},s.context);
+        expect(succeeded.status).toBe('succeeded');expect(succeeded.environment).not.toHaveProperty('evaluationFault');
+        expect(s.workspace.read('/workspace/result.json').content).toBe('10');
+        expect(hasFrozenFaultRecovery(schedule,port.snapshot())).toBe(true);
+        expect(hasFrozenFaultRecovery(schedule,{...port.snapshot(),receipts:[succeeded]})).toBe(false);
+        port.dispose();s.adapter.dispose();
+    });
     it('executes the actual guest and stages output with host lineage and immutable digests', async () => {
         const s = await setup();
         const receipt = await s.adapter.run(s.request, s.context);

@@ -513,6 +513,7 @@ export const handleExecutorAction = async (
             } catch (error) {
                 const reason=error instanceof Error ? error.message : 'computation_validation_failed';
                 return {status:'blocked',toolName:action.toolName,message:reason,shouldStop:false,
+                    ...(reason==='typed_safe_integer_value_required'?{retryHint:'Weighted mean requires typed safe integer source values. String, fractional or unsafe values cannot be made eligible by local conversion or rounding. Resolve the value scale/policy explicitly; a permitted source type repair requires independent candidate validation and exact approval.'}:{}),
                     ...(['typed_numeric_input_required','nonnegative_safe_integer_weight_required'].includes(reason)?{retryHint:'Inspect current accepted input types and weights. Converting local computation variables does not repair the accepted dataset. Source string-to-number conversions require your own candidate program, independent validation and exact approval before a separate fresh computation. Negative or fractional frequency weights remain unsupported; do not silently exclude them.'}:{})};
             }
         }

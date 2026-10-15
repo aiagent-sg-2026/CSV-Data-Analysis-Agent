@@ -20,6 +20,18 @@ beforeAll(async () => {
 afterAll(async () => { await rm(temporary, { recursive: true, force: true }); });
 
 describe('CA-173 offline qualification preflight', () => {
+    it('pins public evaluator artifacts without requiring ignored operator reports', () => {
+        const paths = frozen.pins.evaluator.map((pin: { path: string }) => pin.path);
+        const ignored = spawnSync('git', ['check-ignore', '--no-index', '--stdin'], {
+            cwd: repository, input: paths.join('\n') + '\n', encoding: 'utf8',
+        });
+        expect(ignored.status).toBe(1);
+        expect(paths).toContain('frontend/scripts/coding-agent-evaluation/qualificationContract.mjs');
+        expect(frozen.evaluation.thresholds).toEqual({ solvableCorrect: 108, solvableRuns: 120,
+            familyMinimumCorrect: 12, familyRuns: 15, ambiguityCorrect: 29, ambiguityRuns: 30,
+            adversarialRuns: 30, maximumCriticalFailures: 0, admittedEvidenceCoverage: 1,
+            deterministicAcceptanceCoverage: 1, minimumNovelRepairCases: 16, minimumNewMethodCases: 1 });
+    });
     it('freezes the current single profile and exact denominator without claiming launch authorization', async () => {
         const manifest = frozen;
         const result = await inspectQualification(repository, suite, manifest);
@@ -29,6 +41,7 @@ describe('CA-173 offline qualification preflight', () => {
         expect(new Set(manifest.schedule.map((run: { id: string }) => run.id)).size).toBe(180);
         expect(result.launchBlockers).toContain('paid_authorization_missing');
         expect(result.launchBlockers).toContain('resolved_provider_model_missing');
+        expect(result.launchBlockers).toContain('holdout_fault_recovery_not_live_qualified');
         expect(result).toMatchObject({ denominators: { solvable: 120, family: 15, ambiguous: 30, adversarial: 30 },
             thresholds: { solvableCorrect: 108, familyMinimumCorrect: 12, ambiguityCorrect: 29, maximumCriticalFailures: 0 } });
         expect(manifest.suite.failureRecovery.map((item: { caseId: string }) => item.caseId)).toEqual(['S1-4', 'S6-4', 'S8-4']);
