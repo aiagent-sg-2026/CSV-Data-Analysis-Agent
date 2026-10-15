@@ -219,14 +219,19 @@ export const resolveAnswerScope = (message: string, artifact: QueryUnderstanding
     if (computation) {
         const bundle = store.getState().datasetBundle;
         const columns=computation.method==='pearson_correlation'&&typeof computation.x==='string'&&typeof computation.y==='string'
-            ?[computation.x,computation.y]:computation.method==='lower_weighted_median'&&typeof computation.value==='string'&&typeof computation.weight==='string'
+            ?[computation.x,computation.y]:(computation.method==='lower_weighted_median'||computation.method==='weighted_mean')&&typeof computation.value==='string'&&typeof computation.weight==='string'
                 &&(computation.unitColumn===undefined||typeof computation.unitColumn==='string'&&computation.unitColumn.trim().length>0)?[computation.value,computation.weight,...(computation.unitColumn?[computation.unitColumn]:[])]:null;
         const allowed=computation.method==='pearson_correlation'?['method','x','y','where','missingPolicy','seed','tableId']
             :['method','value','weight','unitColumn','where','missingPolicy','weightPolicy','seed','tableId'];
-        const plan=columns?canonicalPlan({select:columns,where:computation.where},store):null;
+        // Classifier examples use empty arrays for the full population. Only an explicitly empty,
+        // well-shaped computation filter canonicalizes to no filter; malformed predicates still fail.
+        const where=computation.where;
+        const emptyWhere=where&&typeof where==='object'&&!Array.isArray(where)&&Object.keys(where).length>0
+            &&Object.entries(where).every(([key,value])=>['predicates','groups'].includes(key)&&Array.isArray(value)&&value.length===0);
+        const plan=columns?canonicalPlan({select:columns,where:emptyWhere?undefined:where},store):null;
         if (Object.keys(computation).some(key => !allowed.includes(key))
-            || !['pearson_correlation','lower_weighted_median'].includes(computation.method) || computation.missingPolicy !== 'pairwise_complete' || computation.seed !== 'none'
-            || computation.method==='lower_weighted_median'&&computation.weightPolicy!=='nonnegative_integer_frequency'
+            || !['pearson_correlation','lower_weighted_median','weighted_mean'].includes(computation.method) || computation.missingPolicy !== 'pairwise_complete' || computation.seed !== 'none'
+            || computation.method!=='pearson_correlation'&&computation.weightPolicy!=='nonnegative_integer_frequency'
             || !plan || !plan.select?.length || new Set(plan.select).size!==plan.select.length || !bundle?.primaryTableId
             || computation.tableId && computation.tableId !== bundle.primaryTableId || queries.length || artifact?.queryCalculation) {
             unresolved.push('Resolve one supported computation method, distinct value/weight or paired columns, typed scope, missing/weight policy and seed.');

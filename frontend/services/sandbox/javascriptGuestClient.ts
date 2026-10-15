@@ -17,7 +17,8 @@ export const createJavaScriptGuest = (store: StoreApi, factory: WorkerFactory = 
         get running() { return Boolean(active); },
         cancel() { active?.cancel(); },
         dispose() { dispose(); unregister(); },
-        run(code: string, inputJson: string, options: { limits?: Partial<GuestLimits>; signal?: AbortSignal; onStarted?: () => void } = {}): Promise<GuestOutcome> {
+        run(code: string, inputJson: string, options: { limits?: Partial<GuestLimits>; signal?: AbortSignal; onStarted?: () => void;
+            evaluationFault?: GuestRequest['evaluationFault'] } = {}): Promise<GuestOutcome> {
             const generation = ++nextGeneration;
             const rejected = (status: GuestOutcome['status'], code: string) => Promise.resolve({ generation, status, code });
             try { assertSessionResourceActive(store, scope); } catch { return rejected('cancelled', 'guest_scope_revoked'); }
@@ -27,7 +28,8 @@ export const createJavaScriptGuest = (store: StoreApi, factory: WorkerFactory = 
             if (active || executing.has(owner)) return rejected('failed', 'guest_busy');
             let request: GuestRequest;
             try {
-                request = { generation, code, inputJson, limits: resolveGuestLimits(options.limits) };
+                request = { generation, code, inputJson, limits: resolveGuestLimits(options.limits),
+                    ...(options.evaluationFault ? { evaluationFault: structuredClone(options.evaluationFault) } : {}) };
                 admitGuestRequest(request);
             } catch { return rejected('capacity', 'guest_request_rejected'); }
             let worker: Worker;

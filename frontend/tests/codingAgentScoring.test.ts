@@ -1,6 +1,7 @@
 // @vitest-environment node
 import {describe,expect,it} from 'vitest';
 import {buildFixtureSuite,sha256} from '../scripts/coding-agent-evaluation/fixtureKit.mjs';
+import {frozenFaultPolicy} from '../scripts/coding-agent-evaluation/faultSchedule.mjs';
 import {scoreAttempt,summarizeCampaign} from '../scripts/coding-agent-evaluation/scoring.mjs';
 const suite=buildFixtureSuite();
 const item=suite.manifest.cases.find(c=>c.id==='S2-1')!;
@@ -73,6 +74,35 @@ describe('independent evaluator scoring',()=>{
         expect(scoreAttempt(item,key,result)).toMatchObject({correct:true,independentNewMethod:true});
         exported['evidence/computation-0.json'].totalWeight++;
         expect(scoreAttempt(item,key,result).correct).toBe(false);
+    });
+    it.each(['valid','numeric-sums','reduced','rounded','wrong-mean','wrong-unit','filtered','wrong-columns','unselected','stale-scope','no-reference','no-fault'])(
+        'scores exact current weighted mean with frozen fault recovery: %s',mode=>{
+        const item=suite.manifest.cases.find(c=>c.id==='S8-4')!,key=JSON.parse(suite.files.get('evaluator/S8-4/oracle.json')!);
+        const policy=frozenFaultPolicy(key.faultSchedule);
+        const scope={method:'weighted_mean',value:'amount_minor',weight:'quantity',unitColumn:'unit',missingPolicy:'pairwise_complete',weightPolicy:'nonnegative_integer_frequency',seed:'none'};
+        const computation={method:'weighted_mean',methodVersion:1,seed:'none',numerator:String(key.answer.numerator),denominator:String(key.answer.denominator),mean:key.answer.numerator/key.answer.denominator,unit:key.answer.unit};
+        const receipt={evidenceId:'mean',method:structuredClone(scope),reference:'host-integer-frequency-mean-v1'};
+        const result:any={...observation(),faultEvidence:{scheduleSha256:policy.scheduleSha256,receipts:[
+            {taskId:'t',sessionId:'s',sessionEpoch:1,status:'failed',reasonCode:'guest_program_failed',program:{sha256:'a'},workerGenerations:[1],
+                environment:{evaluationFault:{kind:'program_failure',execution:1,scheduleSha256:policy.scheduleSha256}},error:{message:'Execution failed at the runtime boundary.'},finishedAt:2},
+            {taskId:'t',sessionId:'s',sessionEpoch:1,status:'succeeded',program:{sha256:'b'},startedAt:3}]}};
+        result.exported['accepted/output.json'].tables[0].rows=key.expectedFacts;
+        result.exported['evidence/computation-0.json']=computation;
+        const manifest=result.exported['manifest.json'];
+        manifest.files=[];manifest.answerComplete=true;manifest.task={scope:{answer:{computation:structuredClone(scope)}}};
+        manifest.evidence={status:'accepted',selectedIds:['mean'],computations:[receipt]};
+        if(mode==='numeric-sums')computation.numerator=key.answer.numerator;
+        if(mode==='reduced'){computation.numerator='3562';computation.denominator='3';}
+        if(mode==='rounded')computation.numerator='42744.0';
+        if(mode==='wrong-mean')computation.mean=1187;
+        if(mode==='wrong-unit')computation.unit='USD';
+        if(mode==='filtered'){manifest.task.scope.answer.computation.where={predicates:[{column:'team',operator:'eq',value:'North'}]};receipt.method=manifest.task.scope.answer.computation;}
+        if(mode==='wrong-columns'){manifest.task.scope.answer.computation.weight='amount_minor';receipt.method=manifest.task.scope.answer.computation;}
+        if(mode==='unselected')manifest.evidence.selectedIds=['other'];
+        if(mode==='stale-scope')receipt.method.weight='other';
+        if(mode==='no-reference')receipt.reference='model-assertion';
+        if(mode==='no-fault')delete result.faultEvidence;
+        expect(scoreAttempt(item,key,result)).toMatchObject(mode==='valid'?{correct:true,afterRevision:true,faultRecovery:true}:{correct:false});
     });
     it('does not promote a complete mock campaign to live qualification',()=>{
         const schedule=suite.manifest.cases.flatMap(c=>[17,41,97].map(seed=>({id:`pair/${c.id}/${seed}`,caseId:c.id})));

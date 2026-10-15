@@ -4,7 +4,8 @@ export const GUEST_CEILINGS = Object.freeze({
     heapBytes: 128 * 1024 * 1024, stackBytes: 1024 * 1024, timeoutMs: 30_000,
 });
 export type GuestLimits = { [K in keyof typeof GUEST_CEILINGS]: number };
-export type GuestRequest = { generation: number; code: string; inputJson: string; limits: GuestLimits };
+export type GuestRequest = { generation: number; code: string; inputJson: string; limits: GuestLimits;
+    evaluationFault?: import('./evaluationFaults').EvaluationFault };
 export type GuestOutcome = {
     generation: number;
     status: 'completed' | 'failed' | 'capacity' | 'timeout' | 'cancelled' | 'unavailable';
@@ -32,5 +33,8 @@ export const admitGuestRequest = (request: GuestRequest): void => {
     const encoder = new TextEncoder();
     if (encoder.encode(request.code).byteLength > request.limits.codeBytes) throw new Error('guest_code_capacity');
     if (encoder.encode(request.inputJson).byteLength > request.limits.inputBytes) throw new Error('guest_input_capacity');
+    const fault = request.evaluationFault;
+    if (fault !== undefined && (!fault || Object.keys(fault).sort().join(',') !== 'execution,kind,scheduleSha256'
+        || fault.kind !== 'program_failure' || fault.execution !== 1 || !/^[a-f0-9]{64}$/.test(fault.scheduleSha256))) throw new Error('guest_invalid_request');
     JSON.parse(request.inputJson);
 };

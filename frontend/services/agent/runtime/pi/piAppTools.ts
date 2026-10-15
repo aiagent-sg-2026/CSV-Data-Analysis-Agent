@@ -1,4 +1,5 @@
 import { scopeRunStore, assertRunActive } from '../../../session/sessionOwnership';
+import { modelExecutionReceipt } from '../../../sandbox/evaluationFaults';
 import { createQueryReceipt, type QueryExecutionReceipt } from './queryEvidence';
 import { type AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from '@earendil-works/pi-ai';
@@ -9,6 +10,8 @@ import { getPreferredAnalysisDataset } from '../../reportStructureState';
 import type { StoreApi } from '../../types';
 import { getQueryableColumnProfiles } from '../analysisContextBuilder';
 import { buildBuiltinToolRegistry } from '../../tools/toolRegistry';
+import {createPiScopeRepairTool} from './piScopeRepairTool';
+import {canRepairComputationScope,type ScopeRepairContext} from './piScopeRepair';
 import { createPiSkillTool } from './piSkillTool';
 import { buildToolAvailabilityContext } from '../../tools/toolGovernance';
 import { resolveAllowedTools } from '../../tools/toolRegistry';
@@ -23,7 +26,7 @@ const isCardCreatingTool = (manifest: ToolManifest): boolean =>
 export const createPiAppTools = (
     store: StoreApi,
     _datasetVersion: string | null,
-    options: { allowCardCreation?: boolean; maxToolCalls?: number; onCardCreated?: (cardId: string) => void; onQueryExecuted?: (receipt: QueryExecutionReceipt) => void; onComputationValidated?: (receipt: import('../../execution/computationEvidence').ComputationEvidenceReceipt) => void; onMcpObserved?: (receipt: import('../../connectors/httpMcpContract').McpObservationReceipt) => void; includeSkills?: boolean } = {},
+    options: { scopeRepair?:{context:ScopeRepairContext;onResolved:(scope:import('./queryEvidence').ResolvedAnswerScope)=>void}; allowCardCreation?: boolean; maxToolCalls?: number; onCardCreated?: (cardId: string) => void; onQueryExecuted?: (receipt: QueryExecutionReceipt) => void; onComputationValidated?: (receipt: import('../../execution/computationEvidence').ComputationEvidenceReceipt) => void; onMcpObserved?: (receipt: import('../../connectors/httpMcpContract').McpObservationReceipt) => void; includeSkills?: boolean } = {},
 ): AgentTool[] => {
     let calls = 0;
     const maxToolCalls = options.maxToolCalls ?? PI_MAX_TOOL_CALLS_PER_TURN;
@@ -131,7 +134,7 @@ export const createPiAppTools = (
                     execution:{jobId:computation.execution.jobId,mode:computation.execution.mode,program:computation.execution.program,output:computation.execution.output,
                         environmentDigest:computation.execution.environmentDigest,inputDigest:computation.execution.inputDigest,requestDigest:computation.execution.requestDigest}}}:undefined})
                 : manifest.name.startsWith('code.') ? JSON.stringify({ status: result.status, message: result.message,
-                receipt: result.artifacts?.codeExecution, retryHint: result.retryHint })
+                receipt: modelExecutionReceipt(result.artifacts?.codeExecution as Parameters<typeof modelExecutionReceipt>[0]), retryHint: result.retryHint })
                 : payload.length <= MAX_TOOL_RESULT_CHARS ? payload : JSON.stringify(summary);
             let feedback = bounded;
             if (store.piTask) {
@@ -157,6 +160,8 @@ export const createPiAppTools = (
             return { details: undefined, content: [{ type: 'text', text: feedback }] };
         },
     }));
+    if(options.scopeRepair&&store.piTask&&canRepairComputationScope(store.piTask.snapshot.scope.answer))
+        manifestTools.push(createPiScopeRepairTool(store,options.scopeRepair.context,options.scopeRepair.onResolved));
     // Skills are guidance, not data tools, so loading one does not use the app-tool budget.
     return options.includeSkills === false ? manifestTools : [...manifestTools, createPiSkillTool(store, store.piTask
         ? { maxReads: store.piTask.snapshot.budget.limits.skillReads, onRead: id => store.piTask!.skillRead(id) } : {})];

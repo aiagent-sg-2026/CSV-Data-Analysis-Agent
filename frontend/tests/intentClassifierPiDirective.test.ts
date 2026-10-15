@@ -20,14 +20,14 @@ vi.mock('../services/ai/providerConfig', () => ({
 import { classifyChatIntent } from '../services/agent/runtime/intentClassifier';
 
 describe('Pi follow-up intent directive', () => {
-    it('retains an explicit repair output alongside a statistical scope',async()=>{
+    it.each(['lower_weighted_median','weighted_mean'])('retains an explicit repair output alongside %s',async method=>{
         const artifact={intent:'precise_card',confidence:'high',taskSignal:'statistical',expectedOutput:'scalar_answer',
             referencedColumns:['Amount','Quantity'],aggregationFunctions:[],groupingColumns:[],filterDescription:null,
-            requestedDataPreparation:'canonical_fact_table',requestedComputationScope:{method:'lower_weighted_median',value:'Amount',weight:'Quantity',
+            requestedDataPreparation:'canonical_fact_table',requestedComputationScope:{method,value:'Amount',weight:'Quantity',
                 missingPolicy:'pairwise_complete',weightPolicy:'nonnegative_integer_frequency',seed:'none'},
             subjectRefs:[],timeScope:{kind:'none'},comparisonScope:{kind:'none'},unresolvedReferences:[],reason:'Repair then compute.'};
         streamTextMock.mockReturnValueOnce({fullStream:(async function*(){})(),text:Promise.resolve(JSON.stringify(artifact)),finishReason:Promise.resolve('stop')});
-        const directive=await classifyChatIntent('Publish the canonical fact table, then calculate its lower weighted median.',{provider:'default'} as never,true);
+        const directive=await classifyChatIntent(`Publish the canonical fact table, then calculate its ${method}.`,{provider:'default'} as never,true);
         expect(directive.artifact).toMatchObject({requestedDataPreparation:'canonical_fact_table',requestedComputationScope:artifact.requestedComputationScope,unresolvedReferences:[]});
         streamTextMock.mockClear();
     });

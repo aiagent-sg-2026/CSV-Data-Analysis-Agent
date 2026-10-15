@@ -46,5 +46,5 @@ export const inferCandidateMeaning=async(store:StoreApi,proposal:unknown)=>{
     check();captured?.check();
     if(captured?.coverage.some(c=>host.tableDigests[c.tableId]!==c.sha256))throw new Error('input_version_changed');
     const proposalDigest=await awaitOwned(codeDigest(p),store,lease);check();
-    return port.bindInferredMeaning({...host,inference:{kind:'ai_inferred',assumptions:compiled.assumptions,proposalDigest}},context);
+    return port.bindInferredMeaning({...host,inference:{kind:'ai_inferred',input:p.input,assumptions:compiled.assumptions,proposalDigest}},context);
 };

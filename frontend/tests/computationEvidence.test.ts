@@ -5,13 +5,26 @@ import {newQuickJSWASMModuleFromVariant} from 'quickjs-emscripten-core';
 import {executeQuickJsGuest} from '../services/sandbox/quickJsGuest';
 import {resolveGuestLimits} from '../services/sandbox/javascriptGuestProtocol';
 import {qualifyEvidenceAdmission} from '../services/agent/execution/evidenceAdmissionQualification';
-import {referencePearson,type RequestedComputationScope} from '../services/agent/execution/computationEvidence';
+import {referencePearson,computationMismatchFields,type RequestedComputationScope} from '../services/agent/execution/computationEvidence';
 
 const scope:RequestedComputationScope={method:'pearson_correlation',x:'X',y:'Y',missingPolicy:'pairwise_complete',seed:'none'};
 const guestFactory:NonNullable<Parameters<typeof qualifyEvidenceAdmission>[2]>=()=>({run:(code,inputJson,options)=>
     executeQuickJsGuest({generation:1,code,inputJson,limits:resolveGuestLimits(options.limits)},
         ()=>newQuickJSWASMModuleFromVariant(variant),options.onStarted),cancel(){},dispose(){}});
 describe('independent computation evidence',()=>{
+    it('diagnoses incorrect count shape and scope accounting without returning reference values',()=>{
+        const expected={method:'lower_weighted_median' as const,methodVersion:1 as const,seed:'none' as const,scopedRows:7,n:7,excluded:0,zeroWeightRows:0,totalWeight:19,median:1199,unit:'SGD'};
+        const fields=computationMismatchFields({...expected,scopedRows:[],excluded:4},expected,0);
+        expect(fields).toEqual(['scopedRows','excluded']);expect(JSON.stringify(fields)).not.toMatch(/1199|19|SGD/);
+        expect(computationMismatchFields({...expected,median:999},expected,0)).toEqual(['median']);
+    });
+    it('keeps exact field membership and the existing Pearson numeric tolerance',()=>{
+        const expected={method:'pearson_correlation' as const,methodVersion:1 as const,seed:'none' as const,scopedRows:3,n:3,excluded:0,coefficient:0.5};
+        expect(computationMismatchFields({...expected,coefficient:0.5+1e-11},expected,1e-10)).toEqual([]);
+        expect(computationMismatchFields({...expected,coefficient:0.51},expected,1e-10)).toEqual(['coefficient']);
+        expect(computationMismatchFields({...expected,extra:true},expected,1e-10)).toEqual(['unexpected_fields']);
+        expect(computationMismatchFields(null,expected,1e-10)).toEqual(['output_object_required']);
+    });
     it('cancels fixture preparation before starting Pi or a guest',async()=>{
         const controller=new AbortController(),reason=new Error('Stop during preparation'),run=vi.fn();
         await expect(qualifyEvidenceAdmission(controller.signal,undefined,()=>{

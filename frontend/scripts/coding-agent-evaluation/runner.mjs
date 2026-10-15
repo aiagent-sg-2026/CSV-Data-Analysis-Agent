@@ -5,6 +5,7 @@ import {readFixtureArtifact} from './preflight.mjs';
 import {createCampaign,openCampaign} from './campaign.mjs';
 import {scoreAttempt,summarizeCampaign} from './scoring.mjs';
 import {sha256,json,atomicWrite} from './fixtureKit.mjs';
+import {frozenFaultPolicy} from './faultSchedule.mjs';
 
 /** No provider SDK, credential, environment, or network import. Adapter is a host-owned execution port. */
 export const runQualificationCampaign=async({repository,suite,manifest,directory,adapter,limits=undefined,resume=false,signal=undefined,onAttempt=undefined})=>{
@@ -32,6 +33,7 @@ export const runQualificationCampaign=async({repository,suite,manifest,directory
       await campaign.startRun(run.id);const started=performance.now();let result;
       try{
         result=await adapter.execute({runId:run.id,seed:run.seed,files:files.map(f=>({name:f.name,bytes:Array.from(f.bytes)})),signal,
+          faultPolicy:frozenFaultPolicy(oracles.get(run.caseId).faultSchedule),
           request:(kind,bounds,send)=>campaign.request(run.id,kind,bounds,send)});
       }catch{result={status:signal?.aborted?'cancelled':'blocked',rawOriginalPreserved:null,approvedCount:0,acceptedCommit:null,pending:null,transportError:true};}
       const oracle=oracles.get(run.caseId);
