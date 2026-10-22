@@ -26,6 +26,15 @@
   - It then stops at about 124 s with `DEMO_INPUT_TOO_LARGE` ("token safety bound", 209 KB, 51 items, 24 tools).
   - The same live run logged `DuckDB binding unavailable` for Pi `data.missing`/`data.describe`, and `workspace_path_denied` for `workspace.list`. Both are real live tool errors, not harness artifacts. They waste agent turns and grow the transcript.
   - Owner decision still pending on the input budget.
+- **Round 3 (owner chose B)**:
+  - Workers fixed three things:
+    - the workspace path discoverability that caused `workspace_path_denied` guesses;
+    - the diagnostic tools now bind DuckDB like `data.query`, which removes `DuckDB binding unavailable`;
+    - a Default-only byte-budget compaction (150 KB). It also stops compaction from dropping later tool declarations.
+  - AGENTS.md now records the approved exception.
+  - Full Vitest run: 435 files / 3,967 tests.
+  - Real-gateway check, with candidate 558a59b666c8 served under the Pages origin: the HDB sample finished in 139 s with 2 cards (median resale price by flat model and by flat type). The largest request was 67 KB, with no 400s and no tool errors. Medians match an independent recomputation (Type S1 980,000; Multi Generation 574,500).
+  - Root published as 1.0.0-558a59b666c8.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
