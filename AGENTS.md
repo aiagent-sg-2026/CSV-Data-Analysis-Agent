@@ -22,6 +22,7 @@
 - Verify changes against the checked-in React app. Do not claim that a source file is active or a workflow works solely because it exists.
 - For the Default demo gateway, never send `max_output_tokens` in an HTTP request. Before changing provider or SDK integration, inspect the final serialized request payload and run the gateway boundary regression test; a model compatibility flag alone does not prove the wire contract.
 - Keep the app's context planning cap at 200,000 tokens and Pi auto-compaction trigger at 80% unless the current request changes that policy. Verify that compressed summaries remain visible to the model and preserve recent tool-call/result pairs.
+- Exception, approved 2026-10-22: the Default demo gateway also compacts Pi history on serialized request bytes (`DEFAULT_GATEWAY_PI_REQUEST_BYTE_BUDGET` = 150,000 bytes including tool declarations, in `frontend/config/agentDefaults.ts`), because the gateway rejects bodies above about 205 KB with `DEMO_INPUT_TOO_LARGE`. Other providers keep only the token trigger. The summary request must stay within the same byte budget.
 - For review requests, report findings and evidence without changing application code unless the user asks for a fix.
 
 ## Communication
