@@ -45,6 +45,21 @@
   - Real-AI HDB sample run on live finished in 260 s with 2 cards: 48 requests, largest 132 KB, no 400s, no DuckDB or workspace tool errors. The session-cap 429s refreshed correctly.
   - All 9 deterministic live scenarios pass.
   - Remaining quality issue: the cards still choose "Sum Resale Price", a volume metric.
+- **Round 4 (owner chose B), in progress on branch `claude/funny-lovelace-beqo7n`**:
+  - Integrated so far:
+    - `streamGenerateText` surfaces provider HTTP errors; `transientRetry` classifies by status and gateway kind, so no extra requests are spent against the demo caps;
+    - summary truncation cuts at a sentence or line boundary with an explicit "re-check" marker;
+    - `workspace.list` output fits the 3,000-char cap with totals first;
+    - `data.query select ['*']` expands to all columns;
+    - volume-driven SUM handling: planner checks against Pi's own additivity/identifier judgements, a Spearman SUM-vs-COUNT check (HDB town 0.93 / flat_model 0.97 / flat_type 0.93), `total_intent`, time dimensions exempt.
+  - Full suite 437 files / 4,026 tests; the independent review passed with P0/P1 = 0.
+  - Real-gateway runs of candidate 9f1998536172:
+    - 1 run passed, with median cards;
+    - 3 runs stalled in the stage-3 qualified coding window and hit the 240 s budget.
+  - The live build passed the same data in parallel.
+  - Saved request bodies show the trigger: with 0 planned cleaning ops, `applyTransform` returns the bare `initial_cleaning_requires_exact_candidate_approval` (`piInitialAnalysisRuntimeService.ts:247`). Some runs then loop on rejected `candidate_infer_meaning` proposals instead of skipping to `validatePreparedData`.
+  - Pi `workspace_list` results also carry no entries, so the model cannot see listings.
+  - Worker K is fixing: an actionable skip message, list entries in Pi results, and a stop when meaning proposals make no progress.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
