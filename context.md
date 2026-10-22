@@ -13,6 +13,14 @@
   - An independent reviewer reported P0=0, P1=0. Its advisory A (dead-end cleaning banner) was fixed with a test.
   - Built root `1.0.0-a8cb2c45c994`. A fake-gateway browser probe held the consent dialog for 42 s: no timeout, and no provider request before consent (the baseline failed at 32.7 s).
   - Browser checks on the published root all passed: header at 360/390/1440 px, local-only CTA re-prompts consent, Data Explorer, offline reload and History.
+- **Live incident after PR #32 deploy (Pages run 33, build a8cb2c45c994)**:
+  - **First failure:** initial analysis stopped at stage 1 with `DEMO_INPUT_INVALID: input item type 'additional_tools' is not supported`.
+    - Cause: the pi-ai catalog marks GPT-5.4 with `supportsAdditionalTools`/`supportsToolSearch`, and the Pi tool-set deltas added in PRs #28-#31 trigger it.
+    - Fix: turn both off for the Default provider in `piProvider.ts`. Regression test in `piGatewayCancellation.test.ts`; it failed before the fix.
+    - Pre-deploy check: candidate build ff9cb0d49e61 served under the real Pages origin through a Playwright route. 25 agent turns succeeded.
+  - **Second blocker:** `DEMO_INPUT_TOO_LARGE` at about 216 KB (62 input items, 24 tools), around 140 s into the run.
+    - Needs an owner decision: a Default-only Pi context budget (this changes the documented 200k/80% policy) or a gateway limit change.
+  - **Also seen (not yet confirmed outside the route harness):** `DuckDB binding unavailable` and `workspace_path_denied` tool errors.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.

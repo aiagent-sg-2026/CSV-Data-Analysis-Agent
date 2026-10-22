@@ -82,6 +82,38 @@ describe('real Pi Default gateway transport', () => {
         expect(vi.getTimerCount()).toBe(0);
     });
 
+    it('sends Pi tools as plain request tools, never as additional_tools input items', async () => {
+        let body: { input?: Array<Record<string, unknown>>; tools?: Array<Record<string, unknown>> } | undefined;
+        vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+            if (String(input).endsWith('/demo/session')) return session();
+            body = await (input as Request).json();
+            const event = { type: 'response.completed', response: {
+                id: 'resp_test', status: 'completed', output: [],
+                usage: { input_tokens: 1, output_tokens: 0, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } },
+            } };
+            return new Response(`event: response.completed\ndata: ${JSON.stringify(event)}\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
+        }));
+        const tool = (name: string) => ({
+            name,
+            description: `${name} tool`,
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+        });
+        // The live gateway answered `DEMO_INPUT_INVALID: input item type 'additional_tools' is not supported`
+        // when the agent loop declared a tool-set delta on a system message (pi-agent-core declareToolChanges).
+        const toolContext = normalizeContext({
+            systemPrompt: 'Test.',
+            tools: [tool('read_skill')],
+            messages: [
+                { role: 'system', content: '', timestamp: 1, toolsAdded: [tool('data_query')] },
+                { role: 'user', content: 'hello', timestamp: 2 },
+            ],
+        } as Parameters<typeof normalizeContext>[0]);
+        const stream = await createPiProviderStream(settings)(resolvePiModel(settings), toolContext, {});
+        expect((await stream.result()).stopReason).toBe('stop');
+        expect(body?.input?.map(item => item.type).filter(Boolean)).not.toContain('additional_tools');
+        expect(body?.tools?.map(item => item.name)).toEqual(expect.arrayContaining(['read_skill', 'data_query']));
+    });
+
     it('honors the Pi SDK deadline when the responses fetch ignores its abort signal', async () => {
         let started!: () => void;
         const entered = new Promise<void>(resolve => { started = resolve; });
