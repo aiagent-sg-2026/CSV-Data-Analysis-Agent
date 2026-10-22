@@ -9,6 +9,7 @@
 import type { AiAction, ColumnProfile, ToolExecutionResult } from '../../../types';
 import type { StoreApi } from '../types';
 import { getPreferredAnalysisDataset } from '../reportStructureState';
+import { resolveDatasetBindingTarget } from '../datasetBinding';
 import { executeUnifiedQuery, type UnifiedQueryOptions, type UnifiedQueryResult } from '../../duckdb/unifiedQueryExecutor';
 import { executeBoundDuckDbQuery } from '../../duckdb/queryEngine';
 import type { QueryIntent } from '../../duckdb/queryIntent';
@@ -22,18 +23,25 @@ type DiagnosticToolName = 'data.describe' | 'data.value_counts' | 'data.outliers
 class DiagnosticDatasetUnavailableError extends Error {}
 
 /**
- * Bind the preferred analysis dataset exactly like data.query does, then run
- * the diagnostic intent against that live binding.
+ * Bind the semantic analysis view of the preferred dataset, then run the
+ * diagnostic intent against that live binding.
  *
- * The previous implementation read a cached binding from store state
- * (duckDbSessionStatus / activeDataQuery) and compared it with the
- * semantic-view dataset. Those values are last-writer state: data.query
- * rebinds the full preferred dataset, refreshDuckDbSession binds the semantic
- * view, and ensureDatasetSemanticSnapshot can change the semantic view after
- * binding. Any divergence made these tools fail with a dead-end
- * "DuckDB binding unavailable" even though DuckDB was working. Priming through
- * the engine reuses its cached table when it is current, loads it when it is
- * not, and also returns file-backed (large) datasets already registered.
+ * The semantic view (recommendedAnalysisView) drops high-confidence
+ * subtotal, grand-total, header, footer and note rows. The diagnostic SQL
+ * templates have no row-role filter of their own, and unlike data.query no
+ * detail-row directives are injected, so binding the full dataset would let
+ * a "Grand Total" row inflate MAX/MEAN, show up as an outlier, or count as a
+ * category. Bind the same target the previous cached lookup used.
+ *
+ * The previous implementation only read a cached binding from store state
+ * (duckDbSessionStatus / activeDataQuery). That state is last-writer:
+ * data.query rebinds the full preferred dataset, and the Pi researchQuestions
+ * stage changes the semantic view right after bindQueryEngine. Any divergence
+ * made these tools fail with a dead-end "DuckDB binding unavailable" while
+ * DuckDB worked. Priming through the engine reuses its table when it is
+ * current and loads the semantic view when it is not; switching between
+ * data.query and a diagnostic may reload the table, which is the accepted
+ * cost of correct statistics.
  */
 const runBoundDiagnosticQuery = (
     store: StoreApi,
@@ -41,7 +49,13 @@ const runBoundDiagnosticQuery = (
     options: Omit<UnifiedQueryOptions, 'binding'>,
     abortSignal?: AbortSignal,
 ): Promise<UnifiedQueryResult> => {
-    const dataset = getPreferredAnalysisDataset(store.getState());
+    const state = store.getState();
+    const dataset = resolveDatasetBindingTarget({
+        mode: 'analysis',
+        csvData: getPreferredAnalysisDataset(state),
+        snapshot: state.datasetSemanticSnapshot,
+        semanticDatasetVersion: state.semanticDatasetVersion,
+    })?.dataset;
     if (!dataset) {
         throw new DiagnosticDatasetUnavailableError(
             'The prepared analysis dataset is not ready for DuckDB queries yet (it is still being prepared or bound).',
