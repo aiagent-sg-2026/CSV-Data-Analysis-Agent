@@ -1,9 +1,24 @@
 ## Current Work Context
 
 - **Goal**: Maintain the React browser app and its checked-in GitHub Pages build. The main assistant and initial analysis run through Pi Harness and the governed app tools.
-- **Current issue**: End-user QA found that saved History analyses could lose their Pi-created cards after reselecting the original CSV. The prepared table version may differ from the source table version used as card evidence. Data Explorer also mislabeled historical queries with no saved preview rows as complete and empty.
-- **Current change**: Verify the source fingerprint, reproduce the saved prepared table when needed, and restore cards/report only when both prepared and analysis evidence versions match. Keep the saved record available after a wrong-file attempt. Mark unavailable historical query previews accurately. Mobile upload, Settings, Data Explorer, and card count presentation received focused usability fixes.
-- **Verification/release**: A synthetic 90-row HDB-shaped CSV was analyzed in the in-app browser against both editable source and the checked-in static build. Pi created a new `Resale Price by Town` card with 3 rows, 30 records each, and correct averages; the table and linked chat result were inspected. The static build also passed new-session → History → original-file restore with the Pi card intact. Wrong-file retry, Data Explorer templates, card exports, and analyst report were exercised in the source browser. Typecheck, lint, targeted regression tests, bundle budget, publisher tests, and verified Pages staging passed. The full test suite initially had one obsolete label-based assertion after the upload button became semantic; its targeted rerun passed. The historical Vanilla notes below are retained as project history, not the active architecture.
+- **Current issue**: The 2026-10-22 e2e run found four problems. (1) Time spent waiting on the cloud-AI consent dialog counted toward the 30 s provider idle timeout. (2) A non-timeout topic-planning error (live gateway HTTP 413) left the analysis with empty topics. (3) On phones the header buttons covered the "AI Analysis" title. (4) In local-only mode the next step pointed to evidence review.
+- **Current change (manager round, branch `claude/funny-lovelace-beqo7n`)**:
+  - A per-model consent/connectivity preflight runs before the idle timer starts in `streamGenerateText` and the intent classifier. The middleware still enforces consent.
+  - Topic planning falls back to deterministic topics on any non-abort, non-decline error.
+  - The header wraps on phones and stays on one row from `md` up.
+  - A new `cloud_consent_declined` failure kind drives an **Allow cloud AI analysis** next step, which forgets the decline and retries. The cleaning banner is hidden in that state.
+- **Verification/release**:
+  - Full Vitest run: 432 files / 3,946 tests passed on the final commit.
+  - Typecheck, lint, bundle budget and publisher tests pass.
+  - An independent reviewer reported P0=0, P1=0. Its advisory A (dead-end cleaning banner) was fixed with a test.
+  - Built root `1.0.0-a8cb2c45c994`. A fake-gateway browser probe held the consent dialog for 42 s: no timeout, and no provider request before consent (the baseline failed at 32.7 s).
+  - Browser checks on the published root all passed: header at 360/390/1440 px, local-only CTA re-prompts consent, Data Explorer, offline reload and History.
+- **Queued**:
+  - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
+  - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
+  - Check the gateway log for the 413.
+  - Analysis quality: summing prices is a volume metric, and `block` is used as a dimension.
+  - Add a repeatable `npm run e2e` suite.
 
 ## 2026-10-22 E2E test run (no application code changed)
 
