@@ -44,6 +44,26 @@ describe('workspace path discoverability', () => {
         expect((await listed(app, { path: '/dataset/' })).files).toEqual(dataset.files);
     });
 
+    it('reports returned counts, totals and truncation when a small limit cuts the listing', async () => {
+        const app = makeStore({ '/workspace/sub/c.txt': 'c', '/workspace/a.txt': 'a', '/workspace/b.txt': 'b' });
+        type Listing = { files: { path: string; pathType: string }[]; totalFiles: number; totalDirectories: number; truncated: boolean };
+        const full = JSON.parse((await run(app, 'workspace.list', { path: '/workspace' }))!.output!) as Listing;
+        const fileCount = full.files.filter(entry => entry.pathType === 'file').length;
+        expect(fileCount).toBeGreaterThanOrEqual(3);
+        expect(full).toMatchObject({ totalFiles: fileCount, totalDirectories: 1, truncated: false });
+
+        const result = await run(app, 'workspace.list', { path: '/workspace', limit: 2 });
+        const cut = JSON.parse(result!.output!) as Listing;
+        // Directories come first, so the listing keeps navigation while flagging the hidden files.
+        expect(cut.files).toEqual([{ path: '/workspace/sub', pathType: 'directory' }, full.files[1]]);
+        expect(cut).toMatchObject({ totalFiles: fileCount, totalDirectories: 1, truncated: true });
+        expect(result!.successMessage).toBe(`Listed 1 of ${fileCount} workspace file(s) and 1 of 1 directory (truncated: raise limit or list a subdirectory).`);
+
+        const single = await run(app, 'workspace.list', { path: '/workspace', limit: 1 });
+        expect(JSON.parse(single!.output!)).toMatchObject({ files: [{ path: '/workspace/sub', pathType: 'directory' }], truncated: true });
+        expect(single!.successMessage).toContain(`Listed 0 of ${fileCount} workspace file(s)`);
+    });
+
     it('searches every readable root when path is omitted', async () => {
         const app = makeStore({ '/skills/private/SKILL.md': 'ANG MO KIO skill' });
         const matches = JSON.parse((await run(app, 'workspace.search', { query: 'ANG MO KIO' }))!.output!) as { path: string }[];

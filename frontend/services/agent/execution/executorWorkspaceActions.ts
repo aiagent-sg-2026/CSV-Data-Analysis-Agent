@@ -174,9 +174,13 @@ export const executeWorkspaceFileAction = async (
                 ? WORKSPACE_READABLE_ROOTS.filter(root => root === WORKSPACE_ROOT || readableFiles.some(file => file.path.startsWith(`${root}/`)))
                 : [...new Set(allFiles.filter(file => file.path.startsWith(prefix)).map(file => file.path.slice(prefix.length).split('/'))
                     .filter(parts => parts.length > 1).map(parts => `${prefix}${parts[0]}`))].sort();
-            const entries = [...directories.map(path => ({ path, pathType: 'directory' })), ...matched];
-            return { successMessage: `Listed ${matched.length} workspace file(s) and ${directories.length} director${directories.length === 1 ? 'y' : 'ies'}.`,
-                output: normalizeWorkspaceOutput({ operation, path: base, recursive, files: entries.slice(0, limit), ...(base === '/' ? { pathRules: WORKSPACE_PATH_RULES } : {}) }),
+            // `limit` caps the combined entries, directories first. Totals and `truncated` keep a cut listing truthful.
+            const entries = [...directories.map(path => ({ path, pathType: 'directory' })), ...matched].slice(0, limit);
+            const returnedDirectories = entries.filter(entry => entry.pathType === 'directory').length;
+            const returnedFiles = entries.length - returnedDirectories;
+            const truncated = entries.length < directories.length + matched.length;
+            return { successMessage: `Listed ${returnedFiles} of ${matched.length} workspace file(s) and ${returnedDirectories} of ${directories.length} director${directories.length === 1 ? 'y' : 'ies'}${truncated ? ' (truncated: raise limit or list a subdirectory)' : ''}.`,
+                output: normalizeWorkspaceOutput({ operation, path: base, recursive, files: entries, totalFiles: matched.length, totalDirectories: directories.length, truncated, ...(base === '/' ? { pathRules: WORKSPACE_PATH_RULES } : {}) }),
                 payload: { workspace: { operation, path: base, changed: false, affectsCleanedDataset: false } } };
         }
         if (operation === 'tree') {
