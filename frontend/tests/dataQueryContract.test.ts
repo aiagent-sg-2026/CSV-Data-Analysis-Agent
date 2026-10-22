@@ -31,6 +31,29 @@ describe('dataQueryContract', () => {
         })).toContain('"plan.select" must list plain output column names only. Use plan.aggregates for count/sum/avg instead of SQL expressions like COUNT(*) AS total_rows.');
     });
 
+    it('treats select ["*"] as every output column instead of a column named "*"', () => {
+        const normalized = normalizeDataQueryPayload({
+            explanation: 'Preview the rows.',
+            plan: { select: ['*'], orderBy: [{ column: 'Revenue', direction: 'desc' }], limit: 5 },
+        }).plan;
+        expect(normalized).toEqual({ orderBy: [{ column: 'Revenue', direction: 'desc' }], limit: 5 });
+        expect(normalizeDataQueryPayload({ plan: { select: [' * ', 'Region'], limit: 5 } }).plan).not.toHaveProperty('select');
+
+        expect(validateDataQueryPayload({
+            explanation: 'Preview the rows.',
+            plan: { select: ['*'], orderBy: [{ column: 'Revenue', direction: 'desc' }], limit: 5 },
+        })).toEqual([]);
+        // A wildcard-only plan still counts as an explicit projection request.
+        expect(validateDataQueryPayload({ explanation: 'Preview the rows.', plan: { select: ['*'] } })).toEqual([]);
+        expect(validateDataQueryPayload({
+            explanation: 'Revenue by region.',
+            plan: { select: ['*'], groupBy: ['Region'], aggregates: [{ function: 'sum', column: 'Revenue', as: 'total_revenue' }] },
+        })).toEqual([]);
+
+        // Raw SQL keeps select as its output-alias metadata.
+        expect(normalizeDataQueryPayload({ plan: { select: ['*'], rawSql: 'SELECT 1' } }).plan).toMatchObject({ select: ['*'], rawSql: 'SELECT 1' });
+    });
+
     it('accepts business column names that include units in parentheses', () => {
         expect(validateDataQueryPayload({
             explanation: 'Inspect HDB detail rows.',

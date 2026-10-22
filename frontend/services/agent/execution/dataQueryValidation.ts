@@ -20,6 +20,7 @@ import {
     normalizeQueryAggregateFunction,
     normalizeDataQueryPlanLike,
     normalizePostAggregatePredicate,
+    selectsAllColumns,
 } from './dataQueryNormalization';
 
 const SQLISH_SELECT_PATTERN = /^\s*(count|sum|avg|min|max|median|percentile)\s*\(|\s+as\s+/i;
@@ -344,7 +345,8 @@ export const validateDataQueryPayload = (args: Record<string, any>) => {
 
     const normalizedPlan = normalizeDataQueryPlanLike(args.plan) ?? {};
     validateAggregates(args.plan.aggregates, normalizedPlan, errors);
-    if (!hasSemanticQueryPlan(normalizedPlan)) {
+    // A wildcard select is normalized away, but it is still an explicit projection request.
+    if (!hasSemanticQueryPlan(normalizedPlan) && !selectsAllColumns(args.plan.select)) {
         errors.push('"plan" must include at least one structured query clause: select, where, orderBy, limit, groupBy, or aggregates.');
     }
 

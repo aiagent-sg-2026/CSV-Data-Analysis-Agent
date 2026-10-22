@@ -2,6 +2,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { compileQueryPlanToDuckDbSql } from '../services/duckdb/queryCompiler';
+import { normalizeDataQueryPayload } from '../services/agent/execution/dataQueryContract';
+import { executeDataQuery } from '../services/agent/execution/dataQueryExecutor';
 
 describe('compileQueryPlanToDuckDbSql', () => {
     it('compiles projection, filter, order, and limit into generated SQL', () => {
@@ -22,6 +24,38 @@ describe('compileQueryPlanToDuckDbSql', () => {
         expect(compiled.sql).toContain('ORDER BY "Revenue" DESC');
         expect(compiled.sql).toContain('LIMIT 10');
         expect(compiled.countSql).toContain('COUNT(*) AS total');
+    });
+
+    it('expands a normalized select ["*"] to every allowed column within the row cap', () => {
+        const { plan } = normalizeDataQueryPayload({
+            explanation: 'Preview the top rows.',
+            plan: { select: ['*'], orderBy: [{ column: 'Revenue', direction: 'desc' }], limit: 2 },
+        });
+        const options = { allowedColumns: ['Region', 'Revenue', 'Rep'], tableName: 'session_clean_dataset' };
+        const compiled = compileQueryPlanToDuckDbSql(plan, options);
+
+        expect(compiled.selectedColumns).toEqual(['Region', 'Revenue', 'Rep']);
+        expect(compiled.sql).toContain('SELECT "Region", "Revenue", "Rep"');
+        expect(compiled.sql).toContain('ORDER BY "Revenue" DESC');
+        expect(compiled.sql).toContain('LIMIT 2');
+        expect(compileQueryPlanToDuckDbSql({ ...plan, limit: 100_000 }, { ...options, maxRows: 500 }).appliedLimit).toBe(500);
+
+        // The in-memory fallback engine receives the same normalized plan.
+        const fallback = executeDataQuery([
+            { Region: 'East', Revenue: 10, Rep: 'A' },
+            { Region: 'West', Revenue: 30, Rep: 'B' },
+            { Region: 'North', Revenue: 20, Rep: 'C' },
+        ], plan, { allowedColumns: options.allowedColumns });
+        expect(fallback.selectedColumns).toEqual(['Region', 'Revenue', 'Rep']);
+        expect(fallback.rows.map(row => row.Region)).toEqual(['West', 'North']);
+    });
+
+    it('explains how to recover when "*" would exceed the column cap', () => {
+        const allowedColumns = Array.from({ length: 60 }, (_, index) => `col_${index}`);
+        const { plan } = normalizeDataQueryPayload({ explanation: 'Preview.', plan: { select: ['*'], limit: 5 } });
+
+        expect(() => compileQueryPlanToDuckDbSql(plan, { allowedColumns, tableName: 'session_clean_dataset', maxColumns: 50 }))
+            .toThrow('Query select exceeds the maximum allowed column count (50). The table has 60 columns, so list at most 50 explicit column names in plan.select instead of "*" or an omitted select.');
     });
 
     it('fails closed on invalid columns', () => {

@@ -144,12 +144,16 @@ const normalizeStringArray = (value: unknown): string[] | undefined => {
     return normalized.length > 0 ? normalized : undefined;
 };
 
+/** True when a plan's `select` contains a bare `*` entry. */
+export const selectsAllColumns = (select: unknown): boolean =>
+    Array.isArray(select) && select.some(column => typeof column === 'string' && column.trim() === '*');
+
 export const normalizeDataQueryPlanLike = (value: unknown): QueryPlan | null => {
     if (!isRecordLike(value)) {
         return null;
     }
 
-    const select = normalizeStringArray(value.select);
+    const requestedSelect = normalizeStringArray(value.select);
     const groupBy = normalizeStringArray(value.groupBy);
     const orderBy = Array.isArray(value.orderBy)
         ? value.orderBy
@@ -172,6 +176,11 @@ export const normalizeDataQueryPlanLike = (value: unknown): QueryPlan | null => 
         : (typeof value.rawSql === 'string' && value.rawSql.trim().length > 0
             ? value.rawSql.trim()
             : undefined);
+    // `select: ['*']` means every output column. Every engine already projects all output
+    // columns (bounded by its column and row caps) when select is omitted, so drop the
+    // wildcard instead of resolving "*" as a column name. Raw SQL keeps select as its
+    // output-alias metadata and is left unchanged.
+    const select = requestedSelect && !rawSql && selectsAllColumns(requestedSelect) ? undefined : requestedSelect;
 
     return {
         ...(select ? { select } : {}),
