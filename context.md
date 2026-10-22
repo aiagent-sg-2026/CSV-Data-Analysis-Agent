@@ -60,6 +60,12 @@
   - Saved request bodies show the trigger: with 0 planned cleaning ops, `applyTransform` returns the bare `initial_cleaning_requires_exact_candidate_approval` (`piInitialAnalysisRuntimeService.ts:247`). Some runs then loop on rejected `candidate_infer_meaning` proposals instead of skipping to `validatePreparedData`.
   - Pi `workspace_list` results also carry no entries, so the model cannot see listings.
   - Worker K is fixing: an actionable skip message, list entries in Pi results, and a stop when meaning proposals make no progress.
+- **Round 4 result**:
+  - Worker K's fixes (actionable skip gate, the `workStarted` flag so rejected proposals keep the skip, the no-progress stop, Pi workspace results with entries) plus the review P1 fix (count only while stages 2-3 are open) are integrated.
+  - Full suite 437 files / 4,045 tests. Root published as 1.0.0-d5b33671571d.
+  - Real-gateway runs on build 07e26a4a488c: stage 3 passed in about 15 s in 3 of 3 runs. In 2 of them the model skipped right after the new gate message.
+  - All 3 then stopped at stage 7 with `DEMO_ALL_ROUTES_EXHAUSTED`. The UI showed "Today's shared AI quota is used up" and no retry storm followed. Today's shared demo quota was exhausted, largely by these test runs, so live users see the same message until it resets.
+  - Full end-to-end verification of this exact build is pending the quota reset. An earlier round-4 build produced median cards (Median Resale Price by Flat Type; Median Floor Area by Flat Type).
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
