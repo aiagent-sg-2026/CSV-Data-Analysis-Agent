@@ -29,8 +29,15 @@ export const resolvePiModel = (settings: Settings): Model<Api> => {
         contextWindow: Math.min(model.contextWindow, PROVIDER_CONTEXT_WINDOW_CAP),
         ...(settings.provider === 'default' ? {
             baseUrl: DEFAULT_GATEWAY_BASE_URL,
-            // The shared demo gateway rejects this optional Responses API field.
-            compat: { ...model.compat, supportsMaxOutputTokens: false },
+            // The shared demo gateway rejects this optional Responses API field, and the
+            // `additional_tools` / tool-search input items the catalog enables for GPT-5.4
+            // (DEMO_INPUT_INVALID). Without them pi-ai sends the full tool set in `tools`.
+            compat: {
+                ...model.compat,
+                supportsMaxOutputTokens: false,
+                supportsAdditionalTools: false,
+                supportsToolSearch: false,
+            },
         } : {}),
     };
 };
