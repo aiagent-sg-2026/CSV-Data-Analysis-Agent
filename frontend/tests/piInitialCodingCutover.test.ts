@@ -213,6 +213,21 @@ describe('initial shared coding phase',()=>{
             expect(f.result.status).toBe('blocked');expect(root.getState().analysisCards).toHaveLength(0);expect(io.commits).toBe(0);
         }finally{beginSessionTransition(root);}
     });
+    it('stops the cleaning window after repeated rejected meaning proposals instead of spending the time budget',async()=>{
+        const root=bareStore();let calls=0;
+        try{
+            const f=await preparePiInitialCodingUiSmoke(root,{mode:'no-cleaning',wrapStream:()=>scripted(()=>{
+                const index=calls++;
+                if(index<3)return tool('run_next_analysis_stage',{});
+                // Vary the proposal so identical-failure detection cannot be what stops the loop.
+                return tool('candidate_infer_meaning',{...rejectedProposal(root),assumptions:[`Synthetic rejected proposal ${index}.`]});
+            })});
+            expect(f.result.status).toBe('blocked');
+            expect(f.result.error?.message).toMatch(/^initial_cleaning_meaning_no_progress: 4 candidate_infer_meaning proposal\(s\) were rejected \(4 in a row\)/);
+            expect(calls).toBe(7);expect(root.getState().activeAgentTask?.status).toBe('blocked');
+            expect(root.getState().analysisCards).toHaveLength(0);expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);
+        }finally{beginSessionTransition(root);}
+    });
     it.each(['switch','stop'] as const)('fences a deferred post-approval query after %s',async mode=>{
         const root=bareStore(),gate=deferred(),started=deferred();try{
             await preparePiInitialCodingUiSmoke(root);io.beforeQuery=()=>{started.resolve();return gate.promise;};
