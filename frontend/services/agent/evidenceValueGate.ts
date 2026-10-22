@@ -17,6 +17,7 @@ import { createEvidenceEvaluationSchema } from '../ai/schemas/analysisSchemas';
 import { buildEvidenceEvaluationPrompt } from '../prompts/analysisPrompts';
 import { robustlyParseJsonObject } from '../../utils/jsonParser';
 import { isTechnicalHelperDimensionColumn } from './analysisColumnRoles';
+import type { VolumeDependence } from './planning/volumeDrivenSum';
 
 const LOG_PREFIX = '[EvidenceValueGate]';
 const AI_EVAL_TIMEOUT_MS = 8000;
@@ -781,6 +782,29 @@ const enforceDecisionPriority = (
     return priority[floor] > priority[current] ? floor : current;
 };
 
+/** The measured SUM-versus-row-count dependence of a grouped SUM, with the question's stated intent. */
+export interface EvidenceVolumeDependence extends VolumeDependence {
+    totalIntentConfirmed: boolean;
+    description: string;
+}
+
+/**
+ * A volume-driven SUM is a caveat, not a rejection: the numbers are correct and
+ * the presentation decision is unchanged. Without a stated total intent it is
+ * flagged so the card is not used as a headline; with one it is only noted.
+ */
+const resolveVolumeReason = (
+    volumeDependence: EvidenceVolumeDependence | null | undefined,
+): { reasonCodes: EvidenceValueGateReasonCode[]; note: string | null } => {
+    if (!volumeDependence?.volumeDriven) return { reasonCodes: [], note: null };
+    return {
+        reasonCodes: [volumeDependence.totalIntentConfirmed ? 'volume_driven_total' : 'volume_driven_sum'],
+        note: volumeDependence.description,
+    };
+};
+
+const appendNote = (detail: string, note: string | null): string => (note ? `${detail} — ${note}` : detail);
+
 // --- Public API ---
 
 export const evaluateEvidenceValue = (params: {
@@ -790,6 +814,7 @@ export const evaluateEvidenceValue = (params: {
     existingAcceptedOutputs?: ExistingAcceptedEvidence[];
     aiEvaluation?: AiEvidenceEvaluation | null;
     harnessContext?: EvidenceHarnessContext | null;
+    volumeDependence?: EvidenceVolumeDependence | null;
 }): EvidenceValueGateResult => {
     const {
         semanticUnderstanding,
@@ -799,6 +824,7 @@ export const evaluateEvidenceValue = (params: {
         aiEvaluation,
         harnessContext,
     } = params;
+    const volumeReason = resolveVolumeReason(params.volumeDependence);
     const querySignature = buildEvidenceSignature(evidencePlan);
     const semanticSignature = buildSemanticSignature(evidencePlan, evidenceSummary, semanticUnderstanding);
 
@@ -861,6 +887,7 @@ export const evaluateEvidenceValue = (params: {
             ...safetyFloor.reasonCodes,
             ...harnessReasonCodes,
             ...aiReasonCodes,
+            ...volumeReason.reasonCodes,
         ];
         const uniqueReasonCodes = [...new Set(allReasonCodes)];
 
@@ -905,7 +932,7 @@ export const evaluateEvidenceValue = (params: {
         return {
             decision,
             reasonCodes: uniqueReasonCodes,
-            detail: aiEvaluation.reasoning || buildDetail(uniqueReasonCodes),
+            detail: appendNote(aiEvaluation.reasoning || buildDetail(uniqueReasonCodes), volumeReason.note),
             querySignature,
             semanticSignature,
             semanticRisk,
@@ -924,6 +951,7 @@ export const evaluateEvidenceValue = (params: {
         ...safetyFloor.reasonCodes,
         ...harnessReasonCodes,
         ...deterministicQuality.reasonCodes,
+        ...volumeReason.reasonCodes,
     ];
     // Deduplicate reason codes from harness (may overlap with deterministic quality)
     const uniqueReasonCodes = [...new Set(allReasonCodes)];
@@ -945,7 +973,7 @@ export const evaluateEvidenceValue = (params: {
     return {
         decision,
         reasonCodes: uniqueReasonCodes,
-        detail: buildDetail(uniqueReasonCodes),
+        detail: appendNote(buildDetail(uniqueReasonCodes), volumeReason.note),
         querySignature,
         semanticSignature,
         semanticRisk,

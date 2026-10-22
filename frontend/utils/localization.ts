@@ -3359,6 +3359,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'verdict_reason_unsafe_business_narrative': { 'English': 'Potentially misleading chart', 'Mandarin': '图表可能具有误导性', 'Japanese': '誤解を招く可能性', 'Malay': 'Carta mungkin mengelirukan' },
     'verdict_reason_dimension_quality_warning': { 'English': 'Dimension quality concern', 'Mandarin': '维度质量问题', 'Japanese': 'ディメンション品質懸念', 'Malay': 'Kebimbangan tentang kualiti dimensi' },
     'verdict_reason_metric_quality_warning': { 'English': 'Metric quality concern', 'Mandarin': '指标质量问题', 'Japanese': 'メトリック品質懸念', 'Malay': 'Kebimbangan tentang kualiti metrik' },
+    'verdict_reason_volume_driven_aggregate': { 'English': 'Ranking mostly follows row counts', 'Mandarin': '排名主要反映各组行数', 'Japanese': '順位は主に行数を反映', 'Malay': 'Kedudukan kebanyakannya mengikut bilangan baris' },
     'verdict_reason_unclassified_share_warning': { 'English': 'High unclassified data share', 'Mandarin': '未分类数据占比过高', 'Japanese': '未分類データの割合が高い', 'Malay': 'Bahagian data yang tidak dikelaskan tinggi' },
 
     // --- Card expand/collapse ---

@@ -1368,6 +1368,79 @@ describe('topicProcessor', { timeout: 15000 }, () => {
             cardCreated: true,
             accepted: true,
         });
-        expect(executeEvidenceQueryMock).toHaveBeenCalledTimes(1);
+        // The grouped SUM also runs its read-only volume check; the evidence query itself runs once.
+        const evidenceCalls = executeEvidenceQueryMock.mock.calls
+            .filter(([plan]) => !String(plan.title).startsWith('Volume check'));
+        expect(evidenceCalls).toHaveLength(1);
+    });
+
+    describe('volume-driven SUM check', () => {
+        const volumeRows = (pairs: Array<[number, number]>) => pairs.map(([sum, rows], index) => ({
+            Region: `R${index}`, volume_check_sum: sum, volume_check_rows: rows,
+        }));
+        const runWithVolumeRows = async (rows: Array<Record<string, unknown>>, options: Record<string, unknown> = {}) => {
+            // Reuse the default evidence result from beforeEach without recording a call.
+            const defaultEvidence = await executeEvidenceQueryMock.getMockImplementation()!({} as never);
+            executeEvidenceQueryMock.mockImplementation(async (plan: { title: string }) => (
+                String(plan.title).startsWith('Volume check')
+                    ? { ...defaultEvidence, result: { ...defaultEvidence.result, rows } }
+                    : defaultEvidence
+            ));
+            const { processSingleTopic } = await import('../services/agent/planning/topicProcessor');
+            const state = {
+                isChangingGoal: false,
+                columnProfiles: [
+                    { name: 'Region', type: 'categorical', uniqueValues: 4 },
+                    { name: 'Revenue', type: 'numerical' },
+                ],
+                settings: { provider: 'google', geminiApiKey: 'test-key', openAIApiKey: '', language: 'English', autoConfirmGoal: true },
+                reportContextResolution: null, datasetSemanticSnapshot: null,
+                semanticDatasetVersion: null, dataPreparationPlan: null,
+                agentMemoryHistory: [], recordAgentEvent: vi.fn(),
+            } as any;
+            const store = { getState: () => state, setState: vi.fn() };
+            await processSingleTopic('Revenue by region', {
+                fileName: 'sales.csv',
+                data: [{ Region: 'East', Revenue: 10 }],
+            } as any, store, { tableName: 'session_clean_dataset', loadVersion: 'dataset-1' }, [], options);
+            const volumeCall = executeEvidenceQueryMock.mock.calls.find(([plan]) => String(plan.title).startsWith('Volume check'));
+            const valueGate = executePresentationPlanAndCreateCardMock.mock.calls[0]?.[5]?.valueGate;
+            return { volumeCall, valueGate };
+        };
+
+        it('caveats a grouped SUM whose ranking mirrors the row counts, without changing the decision', async () => {
+            const { volumeCall, valueGate } = await runWithVolumeRows(volumeRows([[900, 90], [700, 70], [500, 52], [300, 31], [100, 9]]));
+
+            expect(volumeCall?.[0].query).toMatchObject({
+                groupBy: ['Region'],
+                aggregates: [
+                    { function: 'sum', column: 'Revenue', as: 'volume_check_sum' },
+                    { function: 'count', as: 'volume_check_rows' },
+                ],
+            });
+            expect(valueGate.reasonCodes).toContain('volume_driven_sum');
+            expect(valueGate.detail).toContain('row counts');
+            expect(valueGate.decision).not.toBe('reject');
+        });
+
+        it('only notes the dependence when the research plan asked for a total', async () => {
+            const { valueGate } = await runWithVolumeRows(volumeRows([[900, 90], [700, 70], [500, 52], [300, 31], [100, 9]]), { totalIntent: true });
+
+            expect(valueGate.reasonCodes).toContain('volume_driven_total');
+            expect(valueGate.reasonCodes).not.toContain('volume_driven_sum');
+        });
+
+        it('leaves a SUM whose ranking differs from the row counts unflagged', async () => {
+            const { valueGate } = await runWithVolumeRows(volumeRows([[900, 10], [700, 80], [500, 20], [300, 60], [100, 40]]));
+
+            expect(valueGate.reasonCodes).not.toContain('volume_driven_sum');
+            expect(valueGate.reasonCodes).not.toContain('volume_driven_total');
+        });
+
+        it('leaves aggregated rows with equal group sizes unflagged', async () => {
+            const { valueGate } = await runWithVolumeRows(volumeRows([[900, 12], [700, 12], [500, 12], [300, 12], [100, 12]]));
+
+            expect(valueGate.reasonCodes).not.toContain('volume_driven_sum');
+        });
     });
 });

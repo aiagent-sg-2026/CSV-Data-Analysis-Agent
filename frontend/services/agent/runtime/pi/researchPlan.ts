@@ -1,5 +1,6 @@
 import { AGGREGATION_TYPES, isAggregationType } from '../../../../types/analysis';
 import type { AggregationType, ColumnAdditivity, ColumnProfile, DataAnalysisHypothesis, ResearchPlan, ResearchPlanQuestion } from '../../../../types';
+import { assessVolumeDependence, describeVolumeDependence, type GroupSumAndCount } from '../../planning/volumeDrivenSum';
 
 export const MIN_PLAN_QUESTIONS = 2;
 export const MAX_PLAN_QUESTIONS = 6;
@@ -81,6 +82,8 @@ export const validateResearchQuestions = (
         if (seen.has(key)) { reject('This duplicates another question.'); continue; }
         seen.add(key);
 
+        // A total-volume intent only means something for a SUM.
+        const totalIntent = aggregation === 'sum' && (item.total_intent === true || item.totalIntent === true);
         questions.push({
             title,
             rationale: readText(item.rationale, MAX_RATIONALE_CHARS),
@@ -88,6 +91,7 @@ export const validateResearchQuestions = (
             metric: metric?.name ?? null,
             aggregation,
             comparison: readText(item.comparison, MAX_TITLE_CHARS) || null,
+            ...(totalIntent ? { totalIntent: true } : {}),
         });
     }
     return { questions, rejected };
@@ -136,12 +140,13 @@ export const applyPlanToHypotheses = (
             grain: question.dimension ?? hypothesis.grain,
             metric: question.metric ?? hypothesis.metric,
             comparisonIntent: question.comparison ?? hypothesis.comparisonIntent,
+            ...(question.totalIntent ? { totalIntent: true } : {}),
         };
     });
 };
 
 const ADDITIVITY_KINDS = new Set<ColumnAdditivity['kind']>(['additive', 'non_additive']);
-const ADDITIVITY_NATURES = new Set<ColumnAdditivity['nature']>(['flow', 'stock', 'ratio', 'unit_value', 'other']);
+const ADDITIVITY_NATURES = new Set<ColumnAdditivity['nature']>(['flow', 'stock', 'ratio', 'unit_value', 'identifier', 'other']);
 const MAX_ADDITIVITY_ENTRIES = 40;
 
 export interface ColumnAdditivityValidation {
@@ -170,11 +175,11 @@ export const validateColumnAdditivity = (
         if (!column) { reject('Unknown column.'); continue; }
         if (!NUMERIC_COLUMN_TYPES.has(column.type)) { reject(`"${column.name}" is ${column.type}, not numeric.`); continue; }
         if (!ADDITIVITY_KINDS.has(item.kind as ColumnAdditivity['kind'])) { reject('kind must be additive or non_additive.'); continue; }
-        if (!ADDITIVITY_NATURES.has(item.nature as ColumnAdditivity['nature'])) { reject('nature must be flow, stock, ratio, unit_value or other.'); continue; }
+        if (!ADDITIVITY_NATURES.has(item.nature as ColumnAdditivity['nature'])) { reject('nature must be flow, stock, ratio, unit_value, identifier or other.'); continue; }
         let kind = item.kind as ColumnAdditivity['kind'];
         const nature = item.nature as ColumnAdditivity['nature'];
-        // Ratios, unit values and balances at a point in time are not summed across rows.
-        if (kind === 'additive' && (nature === 'ratio' || nature === 'unit_value')) {
+        // Ratios, unit values and identifiers are never summed across rows.
+        if (kind === 'additive' && (nature === 'ratio' || nature === 'unit_value' || nature === 'identifier')) {
             reject(`A ${nature} cannot be additive.`); continue;
         }
         if (column.type === 'percentage') kind = 'non_additive';
@@ -189,3 +194,84 @@ export const applyColumnAdditivity = (
     accepted: Record<string, ColumnAdditivity>,
 ): ColumnProfile[] =>
     profiles.map(profile => accepted[profile.name] ? { ...profile, additivity: accepted[profile.name] } : profile);
+
+/** Judgements already on the profiles; a new submission's accepted entries are layered on top by the caller. */
+export const readProfileAdditivity = (profiles: readonly ColumnProfile[]): Record<string, ColumnAdditivity> =>
+    Object.fromEntries(profiles.filter(profile => profile.additivity).map(profile => [profile.name, profile.additivity!]));
+
+/**
+ * Holds each question to Pi's own additivity judgement. A SUM needs the metric
+ * to be judged and judged additive; a metric judged to be an identifier is not
+ * aggregated numerically at all. This checks consistency between the model's
+ * statements; it does not guess meaning from column names.
+ */
+export const checkQuestionMethods = (
+    questions: readonly ResearchPlanQuestion[],
+    additivity: Readonly<Record<string, ColumnAdditivity>>,
+): ResearchPlanValidation => {
+    const kept: ResearchPlanQuestion[] = [];
+    const rejected: ResearchPlanValidation['rejected'] = [];
+    for (const question of questions) {
+        const judgement = question.metric ? additivity[question.metric] : undefined;
+        const reject = (reason: string) => rejected.push({ title: question.title, reason });
+        if (question.metric && question.aggregation && NUMERIC_AGGREGATIONS.has(question.aggregation) && judgement?.nature === 'identifier') {
+            reject(`You judged "${question.metric}" to be an identifier, so "${question.aggregation}" of it is meaningless. Use count or count_distinct, or measure a real quantity.`);
+            continue;
+        }
+        if (question.aggregation === 'sum' && question.metric) {
+            if (!judgement) {
+                reject(`Classify "${question.metric}" in \`columns\` (additivity and nature) before summing it.`);
+                continue;
+            }
+            if (judgement.kind === 'non_additive') {
+                reject(`You judged "${question.metric}" non_additive (${judgement.nature}), so summing it across rows is not meaningful. Use median or avg.`);
+                continue;
+            }
+        }
+        kept.push(question);
+    }
+    return { questions: kept, rejected };
+};
+
+/** Reads per-group SUM and row COUNT for one dimension/metric pair; null when the data cannot be read. */
+export type MeasureGroupSumAndCount = (dimension: string, metric: string) => Promise<GroupSumAndCount[] | null>;
+
+/**
+ * Checks each grouped SUM question against the data: when the SUM ranking of
+ * the groups is essentially their row-count ranking, the question mostly
+ * measures how many rows each group has. Such a question is sent back unless
+ * Pi marked it as explicitly about total volume. A failed measurement never
+ * rejects anything.
+ */
+export const checkSumVolumeDependence = async (
+    questions: readonly ResearchPlanQuestion[],
+    measure: MeasureGroupSumAndCount,
+): Promise<ResearchPlanValidation> => {
+    const kept: ResearchPlanQuestion[] = [];
+    const rejected: ResearchPlanValidation['rejected'] = [];
+    for (const question of questions) {
+        if (question.aggregation !== 'sum' || !question.metric || !question.dimension || question.totalIntent) {
+            kept.push(question);
+            continue;
+        }
+        let groups: GroupSumAndCount[] | null = null;
+        try {
+            groups = await measure(question.dimension, question.metric);
+        } catch (error) {
+            if ((error as { name?: unknown } | null)?.name === 'AbortError') throw error;
+            groups = null;
+        }
+        const dependence = groups ? assessVolumeDependence(groups) : null;
+        if (!dependence?.volumeDriven) {
+            kept.push(question);
+            continue;
+        }
+        rejected.push({
+            title: question.title,
+            reason: `${describeVolumeDependence({ metric: question.metric, dimension: question.dimension, dependence })} `
+                + `To compare ${question.dimension} groups, use median or avg of ${question.metric} per row. `
+                + 'Keep sum only if the question is explicitly about total volume or value: then set total_intent to true and say "total" in the title.',
+        });
+    }
+    return { questions: kept, rejected };
+};

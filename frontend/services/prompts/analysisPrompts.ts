@@ -207,7 +207,7 @@ export const createAnalysisTopicsPrompt = (contextText: string, goal: string | n
     ${contextText}
 
     Based on this, generate a list of concise analysis topics.
-    - List the topics from most to least useful for a decision-maker; the order is kept. Prefer a measure that matches what the column means (for example a typical price, not a sum of prices).
+    - List the topics from most to least useful for a decision-maker; the order is kept. Prefer a measure that matches what the column means (for example a typical price, not a sum of prices). When one row is one transaction or event, compare groups by a typical value per row (median or average); a sum of a per-row value mostly reflects how many rows each group has, so use it only for an explicit total.
     - Good examples: "Sum of Revenue by Product Category", "Count of Orders per Month", "Relationship between Unit Cost and Profit".
     - Bad examples: "Chart of the data", "Analyze everything", "Make a pie chart".
 

@@ -8,8 +8,21 @@ import { getPreferredAnalysisDataset } from '../../reportStructureState';
 import type { StoreApi } from '../../types';
 import { createPiAppTools } from './piAppTools';
 import { createPiCompactionTelemetry, createPiProviderContextTransform, createPiProviderStream, resolvePiModel, resolvePiThinkingLevel } from './piProvider';
-import { applyColumnAdditivity, buildResearchPlan, MAX_PLAN_QUESTIONS, MIN_PLAN_QUESTIONS, validateColumnAdditivity, validateResearchQuestions } from './researchPlan';
+import {
+    applyColumnAdditivity,
+    buildResearchPlan,
+    checkQuestionMethods,
+    checkSumVolumeDependence,
+    MAX_PLAN_QUESTIONS,
+    MIN_PLAN_QUESTIONS,
+    readProfileAdditivity,
+    validateColumnAdditivity,
+    validateResearchQuestions,
+    type MeasureGroupSumAndCount,
+} from './researchPlan';
 import { createPiSkillTool } from './piSkillTool';
+import { executeEvidenceQuery } from '../../execution/sqlCardExecutor';
+import { buildVolumeCheckQuery, readVolumeCheckRows } from '../../planning/volumeDrivenSum';
 
 export const SUBMIT_RESEARCH_PLAN_TOOL = 'submit_research_plan';
 const PLANNER_MAX_PROVIDER_TURNS = 9;
@@ -41,8 +54,10 @@ const buildPlannerSystemPrompt = (params: {
     '1. Read the choose-metric-and-aggregation skill first, and any other listed skill that matches.',
     '2. Look at the data only as much as needed (data_describe, data_value_counts, data_missing, data_outliers, data_query) so your choices rest on what the columns actually contain.',
     `3. Call ${SUBMIT_RESEARCH_PLAN_TOOL} once with ${MIN_PLAN_QUESTIONS}-${MAX_PLAN_QUESTIONS} varied questions that a decision-maker would care about. Each question gets a short title, a one-sentence rationale, a dimension and/or a metric using exact column names, and the aggregation that matches the meaning of the metric (do not sum prices or rates; use median or average).`,
-    '4. In the same call, fill `columns` for every numeric column you looked at or plan to use as a metric: additivity (additive = summing rows is meaningful, non_additive = it is not) and nature (flow, stock, ratio, unit_value, other), judged from what the values mean, not from the column name. A rate, ratio, unit price or point-in-time balance is non_additive.',
-    '5. If the tool rejects a question, fix it and submit again.',
+    '   - When one row is one event (a sale, an order, a visit), compare groups by the typical value per event (median or avg). A sum of a per-event value mostly repeats how many events each group has. Use sum only when the question is explicitly about total volume or value; then set total_intent to true and say "total" in the title. The app compares each grouped sum with the row counts in the data and sends back sums that only mirror group size.',
+    '   - Group by a column whose values are categories a reader compares (a region, a type, a period), not by one that labels individual items (an ID, an address, a house or block number).',
+    '4. In the same call, fill `columns` for every numeric column you looked at or plan to use as a metric, and always for a metric you sum: additivity (additive = summing rows is meaningful, non_additive = it is not) and nature (flow, stock, ratio, unit_value, identifier, other), judged from what the values mean, not from the column name. A rate, ratio, unit price or point-in-time balance is non_additive. A number that labels an item rather than measuring a quantity (an ID, a code, an address number) is an identifier and is never summed or averaged.',
+    '5. If the tool rejects a question, fix it and submit the whole plan again, including `columns`.',
     'Use only the tools provided. Do not answer the questions yourself; plan them.',
 ].join('\n');
 
@@ -51,6 +66,7 @@ const optionalString = (description: string) => Type.Optional(Type.Union([Type.S
 const buildSubmitTool = (params: {
     columns: ColumnProfile[];
     datasetVersion: string;
+    measureGroups: MeasureGroupSumAndCount;
     onAccepted: (plan: ResearchPlan, additivity: Record<string, ColumnAdditivity>) => void;
 }): AgentTool => {
     let submissions = 0;
@@ -66,11 +82,12 @@ const buildSubmitTool = (params: {
                 metric: optionalString('Numeric column to measure, or null when counting rows.'),
                 aggregation: optionalString('sum, avg, median, count, count_distinct, min, max or percentile.'),
                 comparison: optionalString('Optional comparison intent such as "trend over time".'),
+                total_intent: Type.Optional(Type.Boolean({ description: 'Only with sum: true when the question is explicitly about total volume or value, not about comparing typical values.' })),
             })),
             columns: Type.Optional(Type.Array(Type.Object({
                 column: Type.String({ description: 'Exact numeric column name.' }),
                 kind: Type.String({ description: 'additive or non_additive.' }),
-                nature: Type.String({ description: 'flow, stock, ratio, unit_value or other.' }),
+                nature: Type.String({ description: 'flow, stock, ratio, unit_value, identifier or other.' }),
                 rationale: Type.Optional(Type.String({ description: 'One short sentence.' })),
             }))),
         }),
@@ -83,12 +100,22 @@ const buildSubmitTool = (params: {
                 throw new Error('The plan was not accepted after several attempts. Stop planning.');
             }
             const validation = validateResearchQuestions(args, params.columns);
-            const plan = buildResearchPlan(validation, params.datasetVersion);
-            if (!plan) {
-                const reasons = validation.rejected.map(item => `"${item.title}": ${item.reason}`).join(' ');
-                throw new Error(`Need at least ${MIN_PLAN_QUESTIONS} valid questions; ${validation.questions.length} were valid. ${reasons}`.trim());
-            }
             const additivity = validateColumnAdditivity((args as { columns?: unknown })?.columns, params.columns);
+            // Hold each question to the model's own additivity judgement, then check grouped sums against the data.
+            const methods = checkQuestionMethods(validation.questions, { ...readProfileAdditivity(params.columns), ...additivity.accepted });
+            const volume = await checkSumVolumeDependence(methods.questions, params.measureGroups);
+            const methodRejections = [...methods.rejected, ...volume.rejected];
+            const checked = { questions: volume.questions, rejected: [...validation.rejected, ...methodRejections] };
+            // A method problem is worth a corrected resubmission rather than silently dropping the question.
+            if (methodRejections.length > 0 && submissions < PLANNER_MAX_SUBMISSIONS) {
+                const reasons = methodRejections.map(item => `"${item.title}": ${item.reason}`).join(' ');
+                throw new Error(`Revise these questions and submit the whole plan again, including columns. ${reasons}`);
+            }
+            const plan = buildResearchPlan(checked, params.datasetVersion);
+            if (!plan) {
+                const reasons = checked.rejected.map(item => `"${item.title}": ${item.reason}`).join(' ');
+                throw new Error(`Need at least ${MIN_PLAN_QUESTIONS} valid questions; ${checked.questions.length} were valid. ${reasons}`.trim());
+            }
             params.onAccepted(plan, additivity.accepted);
             return {
                 details: undefined,
@@ -104,6 +131,24 @@ const buildSubmitTool = (params: {
     } as AgentTool;
 };
 
+/** Runs the per-group SUM/COUNT companion query read-only, without touching the query history. */
+const createEvidenceQueryMeasure = (store: StoreApi, signal: AbortSignal): MeasureGroupSumAndCount => {
+    const cache = new Map<string, Promise<ReturnType<typeof readVolumeCheckRows> | null>>();
+    return (dimension, metric) => {
+        const key = JSON.stringify([dimension, metric]);
+        if (!cache.has(key)) {
+            cache.set(key, executeEvidenceQuery({
+                title: `Volume check: sum of ${metric} by ${dimension}`,
+                queryMode: 'aggregate',
+                intentSummary: 'Compare the per-group sum with the per-group row count.',
+                query: buildVolumeCheckQuery({ dimension, metric }),
+            }, store, null, { suppressQueryStateUpdates: true, abortSignal: signal })
+                .then(execution => readVolumeCheckRows(execution.result.rows)));
+        }
+        return cache.get(key)!;
+    };
+};
+
 /**
  * Lets Pi decide what to investigate before the evidence stage runs. Pi can
  * use the read-only data tools and skills, then submits structured questions
@@ -116,6 +161,8 @@ export const runPiResearchPlanner = async (params: {
     datasetVersionFallback: string;
     signal: AbortSignal;
     streamFn?: StreamFn;
+    /** Test seam for the per-group SUM/COUNT measurement; defaults to a read-only evidence query. */
+    measureGroups?: MeasureGroupSumAndCount;
 }): Promise<ResearchPlan | null> => {
     const { store, goal, signal } = params;
     const state = store.getState();
@@ -142,7 +189,12 @@ export const runPiResearchPlanner = async (params: {
     const tools: AgentTool[] = [
         ...dataTools,
         createPiSkillTool(store),
-        buildSubmitTool({ columns, datasetVersion, onAccepted: (plan, additivity) => { accepted = plan; acceptedAdditivity = additivity; } }),
+        buildSubmitTool({
+            columns,
+            datasetVersion,
+            measureGroups: params.measureGroups ?? createEvidenceQueryMeasure(store, planningController.signal),
+            onAccepted: (plan, additivity) => { accepted = plan; acceptedAdditivity = additivity; },
+        }),
     ];
 
     const settings = state.settings;

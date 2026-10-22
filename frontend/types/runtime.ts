@@ -534,6 +534,8 @@ export interface DataAnalysisHypothesis {
     metric: string | null;
     filterIntent: string | null;
     comparisonIntent: string | null;
+    /** Set from a research-plan question whose SUM is explicitly about total volume or value. */
+    totalIntent?: boolean;
     priority: number;
     attemptsUsed: number;
     status: DataAnalysisHypothesisStatus;
