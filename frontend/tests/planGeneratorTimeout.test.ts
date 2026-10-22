@@ -403,6 +403,103 @@ describe('generateAnalysisTopics — timeout guard (P0)', () => {
         expect(topics).toEqual(buildDeterministicTopics(makeColumns(), makeDatasetContext()));
     });
 
+    it('falls back to deterministic topics when the provider fails with a non-timeout error', async () => {
+        // Mirrors a gateway HTTP 413 that streamGenerateText surfaces as AI_NoOutputGeneratedError.
+        const providerError = new Error('No output generated. Check the stream for errors.');
+        providerError.name = 'AI_NoOutputGeneratedError';
+        runWithOverflowCompactionMock.mockRejectedValue(providerError);
+
+        const topics = await generateAnalysisTopics(
+            makeColumns(), [], makeSettings(), 'Analyse sales', makeDatasetContext(),
+            undefined, undefined, undefined, undefined,
+            { timeoutMs: 5000 },
+        );
+
+        expect(topics).toEqual(buildDeterministicTopics(makeColumns(), makeDatasetContext()));
+        expect(topics.length).toBeGreaterThan(0);
+        // Non-timeout failures skip the simplified-prompt retry.
+        expect(streamTextMock).not.toHaveBeenCalled();
+        expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('AI_NoOutputGeneratedError'));
+    });
+
+    it('still rethrows a non-timeout error when no deterministic topics exist', async () => {
+        const providerError = new Error('Request Entity Too Large');
+        runWithOverflowCompactionMock.mockRejectedValue(providerError);
+        const emptyContext = {
+            ...makeDatasetContext(),
+            dimensionColumns: [],
+            metricColumns: [],
+            preferredGrainColumns: [],
+            preferredMetricTerms: [],
+        } as unknown as AnalysisDatasetContext;
+        const noDimensionColumns: ColumnProfile[] = [
+            { name: 'Revenue', type: 'currency', uniqueValues: 500 },
+        ];
+        expect(buildDeterministicTopics(noDimensionColumns, emptyContext)).toEqual([]);
+
+        await expect(generateAnalysisTopics(
+            noDimensionColumns, [], makeSettings(), null, emptyContext,
+            undefined, undefined, undefined, undefined,
+            { timeoutMs: 5000 },
+        )).rejects.toBe(providerError);
+    });
+
+    it('rethrows a runtime abort instead of using deterministic topics', async () => {
+        const controller = new AbortController();
+        const abortError = new Error('Cancelled the current agent run.');
+        abortError.name = 'AbortError';
+        controller.abort(abortError);
+        runWithOverflowCompactionMock.mockRejectedValue(abortError);
+
+        await expect(generateAnalysisTopics(
+            makeColumns(), [], makeSettings(), null, makeDatasetContext(),
+            undefined, undefined, undefined, undefined,
+            { timeoutMs: 5000, abortSignal: controller.signal },
+        )).rejects.toBe(abortError);
+    });
+
+    it('rethrows a declined cloud AI consent instead of using deterministic topics', async () => {
+        const { CloudAiConsentDeclinedError } = await import('../services/privacy/cloudAiConsent');
+        const consentError = new CloudAiConsentDeclinedError();
+        runWithOverflowCompactionMock.mockRejectedValue(consentError);
+
+        await expect(generateAnalysisTopics(
+            makeColumns(), [], makeSettings(), null, makeDatasetContext(),
+            undefined, undefined, undefined, undefined,
+            { timeoutMs: 5000 },
+        )).rejects.toBe(consentError);
+    });
+
+    it('falls back to deterministic topics when the simplified retry fails with a non-timeout error', async () => {
+        const { ProviderTimeoutError } = await import('../services/ai/providerActivityGuards');
+        runWithOverflowCompactionMock.mockRejectedValue(new ProviderTimeoutError(50));
+        streamTextMock.mockImplementation(() => { throw new Error('HTTP 413 Request Entity Too Large'); });
+
+        const topics = await generateAnalysisTopics(
+            makeColumns(), [], makeSettings(), 'Analyse sales', makeDatasetContext(),
+            undefined, undefined, undefined, undefined,
+            { timeoutMs: 50 },
+        );
+
+        expect(streamTextMock).toHaveBeenCalled();
+        expect(topics).toEqual(buildDeterministicTopics(makeColumns(), makeDatasetContext()));
+        expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('simplified retry failed'));
+    });
+
+    it('rethrows a declined cloud AI consent from the simplified retry', async () => {
+        const { ProviderTimeoutError } = await import('../services/ai/providerActivityGuards');
+        const { CloudAiConsentDeclinedError } = await import('../services/privacy/cloudAiConsent');
+        const consentError = new CloudAiConsentDeclinedError();
+        runWithOverflowCompactionMock.mockRejectedValue(new ProviderTimeoutError(50));
+        streamTextMock.mockImplementation(() => { throw consentError; });
+
+        await expect(generateAnalysisTopics(
+            makeColumns(), [], makeSettings(), null, makeDatasetContext(),
+            undefined, undefined, undefined, undefined,
+            { timeoutMs: 50 },
+        )).rejects.toBe(consentError);
+    });
+
     it('forwards AbortSignal to topic-generation provider calls', async () => {
         const controller = new AbortController();
         runWithOverflowCompactionMock.mockImplementation(async ({ execute }: { execute: (mode: string) => Promise<unknown> }) => await execute('normal'));

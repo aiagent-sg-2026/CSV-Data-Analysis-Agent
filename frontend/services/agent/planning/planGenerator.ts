@@ -129,6 +129,17 @@ const scoreDeterministicMetric = (
 // Timeout is now handled by streamGenerateText's activity-aware idle timer.
 // PlanGenerationTimeoutError / raceWithPlanTimeout removed — see INFRA-105.
 import { isProviderTimeoutError } from '../../ai/streamGenerateText';
+import { CloudAiConsentDeclinedError } from '../../privacy/cloudAiConsent';
+
+// Abort and declined cloud consent are user decisions, so topic planning must not hide them behind
+// the deterministic fallback. Every other provider failure (HTTP 413, schema errors, empty output)
+// is recoverable by planning from the deterministic topics instead.
+const isNonRecoverableTopicError = (error: unknown, abortSignal?: AbortSignal): boolean =>
+    isRuntimeAbortError(error, abortSignal) || error instanceof CloudAiConsentDeclinedError;
+
+const describeTopicError = (error: unknown): string => (
+    error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+);
 
 // --- Deterministic topic fallback ---
 // Used when all AI-based topic generation attempts fail or time out.
@@ -492,8 +503,13 @@ export const generateAnalysisTopics = async (
         console.warn(`${LOG_PREFIX} generateAnalysisTopics returned no executable topics, using deterministic fallback.`);
         return deterministicTopics;
     } catch (error) {
-        if (isRuntimeAbortError(error, abortSignal)) throw error;
-        if (!isProviderTimeoutError(error)) throw error;
+        if (isNonRecoverableTopicError(error, abortSignal)) throw error;
+        if (!isProviderTimeoutError(error)) {
+            // Without deterministic topics there is nothing to fall back to; let the caller handle it.
+            if (deterministicTopics.length === 0) throw error;
+            console.warn(`${LOG_PREFIX} generateAnalysisTopics failed (${describeTopicError(error)}), using deterministic fallback.`);
+            return deterministicTopics;
+        }
 
         // First attempt timed out — retry once with a simplified short prompt
         console.warn(`${LOG_PREFIX} generateAnalysisTopics timed out (first attempt), retrying with simplified prompt.`);
@@ -513,11 +529,14 @@ export const generateAnalysisTopics = async (
             console.warn(`${LOG_PREFIX} generateAnalysisTopics simplified retry returned no executable topics, using deterministic fallback.`);
             return deterministicTopics;
         } catch (retryError) {
+            if (isNonRecoverableTopicError(retryError, abortSignal)) throw retryError;
             if (isProviderTimeoutError(retryError)) {
                 console.warn(`${LOG_PREFIX} generateAnalysisTopics retry also timed out, using deterministic fallback.`);
                 return deterministicTopics;
             }
-            throw retryError;
+            if (deterministicTopics.length === 0) throw retryError;
+            console.warn(`${LOG_PREFIX} generateAnalysisTopics simplified retry failed (${describeTopicError(retryError)}), using deterministic fallback.`);
+            return deterministicTopics;
         }
     }
 };
