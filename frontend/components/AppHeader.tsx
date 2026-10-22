@@ -152,9 +152,11 @@ export const AppHeader: React.FC = () => {
 
     return (
         <>
+        {/* Six 44px touch targets plus the title do not fit one row on phones, so the actions
+            wrap to a second row there instead of covering the title. */}
         <header
             data-app-header-root="true"
-            className="flex min-w-0 flex-row flex-nowrap items-center gap-2 overflow-hidden px-0 py-2"
+            className="flex min-w-0 flex-row flex-wrap items-center gap-2 overflow-hidden px-0 py-2 md:flex-nowrap"
         >
             <div className="shrink-0">
                 <h1 className="whitespace-nowrap text-xl font-extrabold leading-tight text-slate-900">AI Analysis</h1>

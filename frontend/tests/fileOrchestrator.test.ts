@@ -11,7 +11,9 @@ const {
     enqueueDatasetMemoryDocsMock,
     resolveReportStructureArtifactsWithProposalMock,
     saveOriginalDataMock,
+    hasDeclinedCloudAiConsentMock,
 } = vi.hoisted(() => ({
+    hasDeclinedCloudAiConsentMock: vi.fn(() => false),
     processAndCleanFileMock: vi.fn(),
     orchestrateAutonomousAiCleaningMock: vi.fn(),
     getAgentMemoryRunsMock: vi.fn(),
@@ -19,6 +21,11 @@ const {
     enqueueDatasetMemoryDocsMock: vi.fn(),
     resolveReportStructureArtifactsWithProposalMock: vi.fn(),
     saveOriginalDataMock: vi.fn(),
+}));
+
+vi.mock('../services/privacy/cloudAiConsent', async importOriginal => ({
+    ...await importOriginal<typeof import('../services/privacy/cloudAiConsent')>(),
+    hasDeclinedCloudAiConsent: hasDeclinedCloudAiConsentMock,
 }));
 
 vi.mock('../services/agent/fileProcessor', () => ({
@@ -267,6 +274,24 @@ describe('orchestrateFileUpload post-import pipeline timing', () => {
         expect(state.ensureDatasetSemanticSnapshot).not.toHaveBeenCalled();
         expect(state.handleInitialAnalysis).toHaveBeenCalledTimes(1);
         expect(state.proposeAnalysisGoals).toHaveBeenCalledTimes(1);
+    });
+
+    it('marks a local-only import as cloud consent declined without starting analysis', async () => {
+        const { store, state } = createStore();
+        hasDeclinedCloudAiConsentMock.mockReturnValueOnce(true);
+
+        const generator = (await import('../services/agent/orchestration/fileOrchestrator')).orchestrateFileUpload(
+            { name: 'fr_fin_pl_prj.csv', size: 1 } as File,
+            store,
+        );
+        await drainFileOrchestrator(generator, store);
+        await flushPostImportPipeline();
+
+        expect(hasDeclinedCloudAiConsentMock).toHaveBeenCalledWith('dataset-1', state.settings.provider);
+        expect(state.handleInitialAnalysis).not.toHaveBeenCalled();
+        expect(state.initialAnalysisStatus).toBe('degraded');
+        // The results page uses this kind to offer "allow cloud AI" instead of evidence review.
+        expect(state.initialAnalysisFailureKind).toBe('cloud_consent_declined');
     });
 
     it('does not block import completion when optional memory history remains pending', async () => {

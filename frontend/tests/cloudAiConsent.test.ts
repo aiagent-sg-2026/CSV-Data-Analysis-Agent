@@ -22,6 +22,7 @@ const {
     buildCloudAiConsentKey,
     configureCloudAiConsentRuntime,
     ensureCloudAiConsent,
+    forgetCloudAiConsentDecline,
     grantCloudAiConsent,
     hasDeclinedCloudAiConsent,
 } = await import('../services/privacy/cloudAiConsent');
@@ -96,6 +97,28 @@ describe('cloud AI consent guard', () => {
         expect(requestConsent).toHaveBeenCalledOnce();
         expect(hasDeclinedCloudAiConsent('dataset-declined', 'openai')).toBe(true);
         expect(saveCloudAiConsentMock).not.toHaveBeenCalled();
+    });
+
+    it('asks again after the session decline is forgotten for that dataset and provider', async () => {
+        let allow = false;
+        const requestConsent = vi.fn(async (request: Parameters<typeof grantCloudAiConsent>[0]) => {
+            if (allow) await grantCloudAiConsent(request);
+            return allow;
+        });
+        configureCloudAiConsentRuntime(() => ({
+            datasetId: 'dataset-declined',
+            requestConsent,
+        }));
+        await expect(ensureCloudAiConsent('openai')).rejects.toBeInstanceOf(CloudAiConsentDeclinedError);
+        await expect(ensureCloudAiConsent('google')).rejects.toBeInstanceOf(CloudAiConsentDeclinedError);
+
+        forgetCloudAiConsentDecline('dataset-declined', 'openai');
+        expect(hasDeclinedCloudAiConsent('dataset-declined', 'openai')).toBe(false);
+        expect(hasDeclinedCloudAiConsent('dataset-declined', 'google')).toBe(true);
+
+        allow = true;
+        await expect(ensureCloudAiConsent('openai')).resolves.toBeUndefined();
+        expect(requestConsent).toHaveBeenCalledTimes(3);
     });
 
     it('reuses provider consent across datasets and prompts again for another provider', async () => {

@@ -725,6 +725,19 @@ describe('Pi production runtime', () => {
         expect(store.getState().initialAnalysisFailureKind).toBe('provider');
         localStorage.removeItem('pi-initial-analysis-v1:session-1');
     });
+    it('records a declined cloud AI consent instead of a provider failure', async () => {
+        const store = createStore();
+        consentMock.mockRejectedValueOnce(Object.assign(
+            new Error('Cloud AI processing was not authorized for this dataset and provider.'),
+            { code: 'cloud_ai_consent_declined' },
+        ));
+        const result = await runPiInitialAnalysis({ appSessionId: 'session-1', datasetId: 'dataset-1', datasetVersion: 'version-1',
+            researchGoal: 'Find patterns.', provider: { provider: 'openai', modelId: 'mock' } }, store as never);
+        expect(consentMock).toHaveBeenCalledOnce();
+        expect(result.status).toBe('failed');
+        expect(store.getState().initialAnalysisFailureKind).toBe('cloud_consent_declined');
+        localStorage.removeItem('pi-initial-analysis-v1:session-1');
+    });
     it.each(['stop','switch'] as const)('fences prepared stage wait after %s and protects a newer run',async action=>{
         const store=createStore();let enter!:()=>void,release!:()=>void,late!:()=>void;
         const entered=new Promise<void>(resolve=>{enter=resolve;}),wait=new Promise<void>(resolve=>{release=resolve;}),settled=new Promise<void>(resolve=>{late=resolve;});

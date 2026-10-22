@@ -195,7 +195,7 @@ export const SpreadsheetPanel: React.FC<SpreadsheetPanelProps> = ({ isVisible })
                         </div>
                     )}
 
-                    {cleaningRun && cleaningRun.status !== 'completed' && initialAnalysisFailureKind !== 'provider' && (
+                    {cleaningRun && cleaningRun.status !== 'completed' && initialAnalysisFailureKind !== 'provider' && initialAnalysisFailureKind !== 'cloud_consent_declined' && (
                         <CleaningRunBanner
                             cleaningRun={cleaningRun}
                             onContinue={() => void resumeCleaningRun()}

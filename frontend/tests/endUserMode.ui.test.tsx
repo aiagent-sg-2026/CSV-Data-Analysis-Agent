@@ -185,7 +185,7 @@ describe('end user mode UI surfaces', () => {
         expect(screen.getByRole('button', { name: 'Data Explorer' })).toBeDisabled();
     });
 
-    it('keeps the complete analysis header on one horizontally contained row', () => {
+    it('keeps the analysis header horizontally contained, on one row from md up', () => {
         setRuntimeUiConfig({
             showNewSessionButton: true,
             showHistoryButton: true,
@@ -213,7 +213,8 @@ describe('end user mode UI surfaces', () => {
 
         const header = container.querySelector('[data-app-header-root="true"]');
         const navigation = screen.getByRole('navigation', { name: 'Analysis actions' });
-        expect(header).toHaveClass('flex-row', 'flex-nowrap', 'min-w-0', 'overflow-hidden');
+        // One row from md up; on phones the actions may wrap below the title instead of covering it.
+        expect(header).toHaveClass('flex-row', 'md:flex-nowrap', 'flex-wrap', 'min-w-0', 'overflow-hidden');
         expect(navigation).toHaveClass('flex-nowrap', 'min-w-0');
         expect(screen.getByRole('heading', { name: 'AI Analysis' })).toHaveClass('whitespace-nowrap');
         expect(screen.queryByRole('menuitem', { name: 'Change goal' })).not.toBeInTheDocument();

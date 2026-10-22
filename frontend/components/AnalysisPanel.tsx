@@ -30,6 +30,7 @@ import { getCsvDataRowCount } from '../utils/datasetId';
 import { resolveAnalysisCompletionGate } from '../services/agent/analysisCompletionGate';
 import { DEFAULT_AUTO_ANALYSIS_GOAL } from '../services/agent/analysisDefaults';
 import { hasOpenableLatestReport, isLatestReportPartial, resolveLatestReportBlockedInfo } from '../services/reporting/reportArtifactManifest';
+import { forgetCloudAiConsentDecline } from '../services/privacy/cloudAiConsent';
 
 import { getTranslation } from '../utils/localization';
 
@@ -37,7 +38,7 @@ const AnalysisPanelComponent: React.FC = () => {
     const _renderT0 = performance.now(); // PERF-309 diagnostic
     // PERF-303: Full aiTaskStatus object moved to AnalysisStatusSection (independent subscription).
     // Only aiTaskDone (boolean) is kept here for conditional rendering logic.
-    const { cards, finalSummary, finalSummaryProvenance, isGeneratingReport, isBusy, language, reportTemplate, setReportTemplate, reportGenerationProgress, aiTaskDone, cleaningRun, isSpreadsheetVisible, resumeCleaningRun, restartCleaningRun, handleInitialAnalysis, confirmedAnalysisGoal, generateAnalystReport, cancelReportGeneration, openLatestAnalystReport, exportLatestAnalystReportPdf, csvData, canonicalCsvData, rawCsvData, reportContextResolution, reportStructureResolution, pipelineOutcome, initialAnalysisFailureKind, rawIntakeIr, columnProfiles, dataPreparationPlan, runWorkspaceDataQuery, setIsSpreadsheetVisible, addProgress, handleShowCardFromChat, setIsDataPreparationModalOpen, setIsReportBoundaryConfirmModalOpen, setIsSettingsModalOpen, hasLatestAnalystReport, reportBlockedInfo, isReportPartial, initialAnalysisStatus, latestAnalysisSession, visibleAnalysisTrace, storeResultsViewMode, setStoreResultsViewMode } = useAppStore(
+    const { cards, finalSummary, finalSummaryProvenance, isGeneratingReport, isBusy, language, reportTemplate, setReportTemplate, reportGenerationProgress, aiTaskDone, cleaningRun, isSpreadsheetVisible, resumeCleaningRun, restartCleaningRun, handleInitialAnalysis, confirmedAnalysisGoal, generateAnalystReport, cancelReportGeneration, openLatestAnalystReport, exportLatestAnalystReportPdf, csvData, canonicalCsvData, rawCsvData, reportContextResolution, reportStructureResolution, pipelineOutcome, initialAnalysisFailureKind, rawIntakeIr, columnProfiles, dataPreparationPlan, runWorkspaceDataQuery, setIsSpreadsheetVisible, addProgress, handleShowCardFromChat, setIsDataPreparationModalOpen, setIsReportBoundaryConfirmModalOpen, setIsSettingsModalOpen, currentDatasetId, provider, hasLatestAnalystReport, reportBlockedInfo, isReportPartial, initialAnalysisStatus, latestAnalysisSession, visibleAnalysisTrace, storeResultsViewMode, setStoreResultsViewMode } = useAppStore(
         (state: AppStore) => ({
             cards: state.analysisCards,
             finalSummary: state.finalSummary,
@@ -78,6 +79,8 @@ const AnalysisPanelComponent: React.FC = () => {
             setIsDataPreparationModalOpen: state.setIsDataPreparationModalOpen,
             setIsReportBoundaryConfirmModalOpen: state.setIsReportBoundaryConfirmModalOpen,
             setIsSettingsModalOpen: state.setIsSettingsModalOpen,
+            currentDatasetId: state.currentDatasetId,
+            provider: state.settings.provider,
             hasLatestAnalystReport: hasOpenableLatestReport(state.workspaceFiles),
             reportBlockedInfo: resolveLatestReportBlockedInfo(state.workspaceFiles),
             isReportPartial: isLatestReportPartial(state.workspaceFiles),
@@ -172,6 +175,10 @@ const AnalysisPanelComponent: React.FC = () => {
             } else {
                 setIsDataPreparationModalOpen(true);
             }
+        } else if (kind === 'enable_cloud_ai') {
+            // The decline is remembered for this session; forget it so the retry asks for consent again.
+            if (currentDatasetId) forgetCloudAiConsentDecline(currentDatasetId, provider);
+            void retryAnalysis();
         } else if (kind === 'recover_provider') {
             void retryAnalysis();
         } else if (kind === 'review_evidence') {
@@ -194,7 +201,9 @@ const AnalysisPanelComponent: React.FC = () => {
             && (cleaningRun.status !== 'completed' || dataPreparationPlan?.sqlPrecheck?.status === 'blocked' || dataPreparationPlan?.sqlPrecheck?.status === 'warning')
             && !isSpreadsheetVisible
             && !analysisAlreadyStarted
+            // Cleaning cannot continue without the provider or the cloud AI consent; the next step covers both.
             && initialAnalysisFailureKind !== 'provider'
+            && initialAnalysisFailureKind !== 'cloud_consent_declined'
             // The step tracker already shows preparation progress while the analysis runs.
             && initialAnalysisStatus !== 'running';
         const showReportHeader = Boolean(reportContext && csvData);
@@ -205,6 +214,7 @@ const AnalysisPanelComponent: React.FC = () => {
         const analysisComplete = analysisTerminal && completionGate.status === 'complete';
         // Nothing to show yet: hide the results controls and reserve the space with placeholders.
         const analysisRunning = !analysisTerminal && cards.length === 0 && !aiTaskDone;
+        const needsCloudAiConsent = initialAnalysisFailureKind === 'cloud_consent_declined';
         const needsStructureRepair = completionGate.status === 'blocked'
             && pipelineOutcome?.status === 'needs_structure_review'
             && reportStructureResolution?.requiresHumanReview === true;
@@ -213,7 +223,7 @@ const AnalysisPanelComponent: React.FC = () => {
             && (initialAnalysisStatus === 'error' || initialAnalysisStatus === 'degraded');
         const needsEvidenceReview = completionGate.status === 'blocked'
             && !needsStructureRepair && !needsProviderRecovery;
-        const nextStepKind = resolveNextStepKind({ needsStructureRepair, needsProviderRecovery, needsEvidenceReview });
+        const nextStepKind = resolveNextStepKind({ needsCloudAiConsent, needsStructureRepair, needsProviderRecovery, needsEvidenceReview });
         const showHeadlineSections = aiTaskDone;
         const showAnalystReportAction = analysisComplete && cards.length > 0;
         const isArtifactReportGeneration = reportGenerationProgress?.mode === 'artifact';
@@ -365,7 +375,7 @@ const AnalysisPanelComponent: React.FC = () => {
                             disabled={isRetryingAnalysis || isBusy || (nextStepKind === 'report' && (isGeneratingReport || isSimpleReportBlocked))}
                             blockedTitle={isSimpleReportBlocked ? getTranslation('report_blocked_title', language) : undefined}
                             onPrimaryAction={() => handleNextStepAction(nextStepKind)}
-                            onChangeProvider={nextStepKind === 'recover_provider' && shouldAllowSettingsSurface()
+                            onChangeProvider={(nextStepKind === 'recover_provider' || nextStepKind === 'enable_cloud_ai') && shouldAllowSettingsSurface()
                                 ? () => setIsSettingsModalOpen?.(true)
                                 : undefined}
                         />
