@@ -13,7 +13,8 @@ export type AutoAnalysisEvaluationReasonCode =
     | 'unsafe_business_narrative'
     | 'dimension_quality_warning'
     | 'metric_quality_warning'
-    | 'unclassified_share_warning';
+    | 'unclassified_share_warning'
+    | 'volume_driven_aggregate';
 
 export type AutoAnalysisCardVerdict = 'trusted' | 'caveated' | 'weak';
 
@@ -185,6 +186,12 @@ export const evaluateAutoAnalysisCards = (
             if (card.evidenceValueGate?.reasonCodes?.includes('unsafe_business_narrative')) {
                 reasonCodes.push('unsafe_business_narrative');
                 detailParts.push('unsafeBusinessNarrative=true');
+            }
+            // A SUM ranking that only mirrors group size stays visible but is
+            // caveated, so trusted cards are preferred for the headline.
+            if (card.evidenceValueGate?.reasonCodes?.includes('volume_driven_sum')) {
+                reasonCodes.push('volume_driven_aggregate');
+                detailParts.push('volumeDrivenSum=true');
             }
 
             if (ir.helperExposureLevel !== 'none') {

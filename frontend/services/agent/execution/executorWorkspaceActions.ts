@@ -175,12 +175,35 @@ export const executeWorkspaceFileAction = async (
                 : [...new Set(allFiles.filter(file => file.path.startsWith(prefix)).map(file => file.path.slice(prefix.length).split('/'))
                     .filter(parts => parts.length > 1).map(parts => `${prefix}${parts[0]}`))].sort();
             // `limit` caps the combined entries, directories first. Totals and `truncated` keep a cut listing truthful.
-            const entries = [...directories.map(path => ({ path, pathType: 'directory' })), ...matched].slice(0, limit);
-            const returnedDirectories = entries.filter(entry => entry.pathType === 'directory').length;
-            const returnedFiles = entries.length - returnedDirectories;
-            const truncated = entries.length < directories.length + matched.length;
-            return { successMessage: `Listed ${returnedFiles} of ${matched.length} workspace file(s) and ${returnedDirectories} of ${directories.length} director${directories.length === 1 ? 'y' : 'ies'}${truncated ? ' (truncated: raise limit or list a subdirectory)' : ''}.`,
-                output: normalizeWorkspaceOutput({ operation, path: base, recursive, files: entries, totalFiles: matched.length, totalDirectories: directories.length, truncated, ...(base === '/' ? { pathRules: WORKSPACE_PATH_RULES } : {}) }),
+            const limited = [...directories.map(path => ({ path, pathType: 'directory' })), ...matched].slice(0, limit);
+            // Workspace output is cut at WORKSPACE_ACTION_OUTPUT_LIMIT characters. Keep the summary
+            // fields ahead of `files` and return only the entries that fit, so the model sees valid
+            // JSON whose counts match the entries it actually received.
+            const listing = (count: number) => {
+                const entries = limited.slice(0, count);
+                const returnedDirectories = entries.filter(entry => entry.pathType === 'directory').length;
+                return { operation, path: base, recursive, totalFiles: matched.length, totalDirectories: directories.length,
+                    returnedFiles: entries.length - returnedDirectories, returnedDirectories,
+                    truncated: entries.length < directories.length + matched.length,
+                    ...(count < limited.length ? { outputCapped: true } : {}),
+                    ...(base === '/' ? { pathRules: WORKSPACE_PATH_RULES } : {}), files: entries };
+            };
+            const fits = (count: number) => JSON.stringify(listing(count)).length <= WORKSPACE_ACTION_OUTPUT_LIMIT;
+            let fitted = limited.length;
+            if (!fits(fitted)) {
+                // Serialized length grows with the entry count, so binary search the largest count that fits.
+                let low = 0;
+                let high = limited.length - 1;
+                while (low < high) {
+                    const middle = Math.ceil((low + high) / 2);
+                    if (fits(middle)) low = middle; else high = middle - 1;
+                }
+                fitted = low;
+            }
+            const result = listing(fitted);
+            const hint = result.outputCapped ? ' (truncated by the output size cap: list a subdirectory)' : result.truncated ? ' (truncated: raise limit or list a subdirectory)' : '';
+            return { successMessage: `Listed ${result.returnedFiles} of ${matched.length} workspace file(s) and ${result.returnedDirectories} of ${directories.length} director${directories.length === 1 ? 'y' : 'ies'}${hint}.`,
+                output: normalizeWorkspaceOutput(result),
                 payload: { workspace: { operation, path: base, changed: false, affectsCleanedDataset: false } } };
         }
         if (operation === 'tree') {

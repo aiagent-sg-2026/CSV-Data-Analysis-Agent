@@ -11,6 +11,8 @@ Pick the measure from what the numbers *mean*, not from what is easy to compute.
 2. Match the aggregation to the meaning:
    - Amounts that add up: `sum` is right; show `count` or `avg` alongside when group sizes differ a lot.
    - Prices, rates, scores, ratios: do NOT sum them. Use `median` (robust to outliers) or `avg`, and say which one. Summing the price of every transaction is not a useful number.
+   - One row per event (a sale, an order, a visit): to compare groups, use the typical value per event (`median` or `avg`). A `sum` of a per-event value mostly repeats how many events each group has, so the group with the most rows wins. Use `sum` only when the question is explicitly about total volume or value, and then say the ranking is driven by volume. The app checks grouped sums against row counts and flags sums that only mirror group size.
+   - IDs, codes and address numbers stored as numbers label items; they are not quantities. Count them (`count_distinct`), never sum or average them, and do not group by them: a reader cannot compare thousands of individual items.
    - "How many": `count` (rows) or `count_distinct` (unique entities).
    - "Which part is biggest": show a share of total with the total stated.
 3. Check the distribution first when a mean could mislead: if `data_outliers` or `data_describe` shows a long tail, prefer `median` and mention the spread.

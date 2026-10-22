@@ -114,10 +114,12 @@ export const createPiAppTools = (
                     options.onCardCreated?.(cardId);
                 }
             }
+            // A workspace observation only repeats its payload. Dropping it keeps listings, matches and file
+            // content inside the result budget as valid JSON, with the result ahead of any preview cut.
             const payload = JSON.stringify({
                 status: result.status,
                 message: result.message,
-                observation: result.observation,
+                ...(manifest.name.startsWith('workspace.') ? {} : { observation: result.observation }),
                 payload: result.payload,
                 artifacts: result.artifacts,
                 retryHint: result.retryHint,

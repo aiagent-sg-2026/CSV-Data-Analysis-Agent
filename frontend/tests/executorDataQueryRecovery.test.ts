@@ -98,6 +98,48 @@ describe('executeDataQueryAction recovery', () => {
         );
     }, 10000);
 
+    it('runs select ["*"] as an all-column projection instead of failing on a column named "*"', async () => {
+        const store = createRuntimeTestStore({
+            columnProfiles: [
+                { name: 'Project', type: 'string' },
+                { name: 'Amount', type: 'number' },
+            ],
+            csvData: {
+                fileName: 'report.csv',
+                data: [{ Project: 'A', Amount: 10 }],
+            },
+        });
+        executeManagedDataQueryMock.mockResolvedValue({
+            engine: 'duckdb',
+            sqlPreview: 'SELECT "Project", "Amount" FROM "session_clean_dataset" LIMIT 5',
+            tableName: 'session_clean_dataset',
+            loadVersion: 'dataset-report',
+            fallbackReason: null,
+            result: {
+                rows: [{ Project: 'A', Amount: 10 }],
+                totalMatchedRows: 1,
+                returnedRows: 1,
+                truncated: false,
+                selectedColumns: ['Project', 'Amount'],
+                appliedOrderBy: [],
+                appliedLimit: 5,
+                durationMs: 3,
+            },
+        });
+
+        const result = await executeDataQueryAction({
+            type: 'tool_call',
+            thought: 'Preview the rows.',
+            toolName: 'data.query',
+            args: { explanation: 'Preview every column.', plan: { select: ['*'], limit: 5 } },
+        }, store as never);
+
+        expect(result.status).toBe('success');
+        const executedPlan = executeManagedDataQueryMock.mock.calls[0]?.[1];
+        expect(executedPlan).toMatchObject({ limit: 5 });
+        expect(executedPlan?.select ?? []).not.toContain('*');
+    });
+
     it('executes chat data.query against the preferred canonical dataset when available', async () => {
         const rawPrepared = {
             fileName: 'prepared.csv',

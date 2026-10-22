@@ -3,11 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { executeWorkspaceFileAction } from '../services/agent/execution/executorWorkspaceActions';
 import { currentTaskWorkspace } from '../services/agent/taskWorkspace';
 import { createWorkspaceToolManifests } from '../services/agent/tools/manifests/workspaceToolManifests';
-import { WORKSPACE_PATH_RULES, WORKSPACE_READABLE_ROOTS } from '../services/agent/workspaceFileUtils';
+import { WORKSPACE_ACTION_OUTPUT_LIMIT, WORKSPACE_PATH_RULES, WORKSPACE_READABLE_ROOTS } from '../services/agent/workspaceFileUtils';
 import { createSingleTableDatasetBundle } from '../services/data/datasetBundle';
 import type { AppStore } from '../store/useAppStore';
 import type { StoreApi } from '../services/agent/types';
 import type { AiAction, ToolName } from '../types';
+import { createPiAppTools } from '../services/agent/runtime/pi/piAppTools';
+import { handleExecutorAction } from '../services/agent/execution/executorAgent';
 
 const makeStore = (workspaceFiles: Record<string, string> = {}) => {
     let state = { sessionId: 'discoverability-session', settings: { provider: 'default', language: 'English', complexModel: 'mock' },
@@ -64,6 +66,29 @@ describe('workspace path discoverability', () => {
         expect(single!.successMessage).toContain(`Listed 0 of ${fileCount} workspace file(s)`);
     });
 
+    it('keeps totals and truthful counts when the output cap cuts a long listing', async () => {
+        const files = Object.fromEntries(Array.from({ length: 200 }, (_, index) =>
+            [`/workspace/reports/report-${String(index).padStart(3, '0')}.json`, '{}']));
+        const app = makeStore(files);
+        const result = await run(app, 'workspace.list', { path: '/workspace/reports' });
+        const output = result!.output!;
+        // The listing is fitted to the cap, so the output stays parseable JSON with no cut marker.
+        expect(output.length).toBeLessThanOrEqual(WORKSPACE_ACTION_OUTPUT_LIMIT);
+        expect(output).not.toContain('[truncated at');
+        const listing = JSON.parse(output) as { files: { path: string }[]; totalFiles: number; returnedFiles: number; truncated: boolean; outputCapped?: boolean };
+        expect(Object.keys(listing).indexOf('totalFiles')).toBeLessThan(Object.keys(listing).indexOf('files'));
+        expect(listing).toMatchObject({ totalFiles: 200, totalDirectories: 0, truncated: true, outputCapped: true });
+        expect(listing.files.length).toBeGreaterThan(10);
+        expect(listing.files.length).toBeLessThan(200);
+        expect(listing.returnedFiles).toBe(listing.files.length);
+        expect(listing.files[0].path).toBe('/workspace/reports/report-000.json');
+        expect(result!.successMessage).toBe(`Listed ${listing.files.length} of 200 workspace file(s) and 0 of 0 directories (truncated by the output size cap: list a subdirectory).`);
+
+        // One more entry would not have fit.
+        const withNext = { ...listing, files: [...listing.files, { path: '/workspace/reports/report-199.json', pathType: 'file' }] };
+        expect(JSON.stringify(withNext).length).toBeGreaterThan(WORKSPACE_ACTION_OUTPUT_LIMIT);
+    });
+
     it('searches every readable root when path is omitted', async () => {
         const app = makeStore({ '/skills/private/SKILL.md': 'ANG MO KIO skill' });
         const matches = JSON.parse((await run(app, 'workspace.search', { query: 'ANG MO KIO' }))!.output!) as { path: string }[];
@@ -96,6 +121,57 @@ describe('workspace path discoverability', () => {
         await expect(run(app, 'workspace.write', { path: 'analysis.js', content: 'x', expectedRevision: 0 })).rejects.toThrow(WORKSPACE_PATH_RULES);
         await expect(run(app, 'workspace.write', { path: '/analysis/x.js', content: 'x', expectedRevision: 0 })).rejects.toThrow(/^workspace_path_denied: "\/analysis\/x\.js"\. Use absolute paths/);
         await expect(run(app, 'workspace.read', { path: '/etc/passwd' })).rejects.toThrow(`Workspace path not allowed: "/etc/passwd". ${WORKSPACE_PATH_RULES}`);
+    });
+});
+
+describe('Pi workspace inspection results', () => {
+    const piTool = (app: StoreApi, name: string) => createPiAppTools(app, null, { includeSkills: false, maxToolCalls: 10 }).find(tool => tool.name === name)!;
+    const piResult = async (app: StoreApi, name: string, args: Record<string, unknown>) => {
+        const result = await piTool(app, name).execute(`call-${name}`, args as never);
+        return JSON.parse(result.content.filter(part => part.type === 'text').map(part => part.text).join('')) as {
+            status: string; observation?: unknown; preview?: string;
+            payload: { workspace: { operation: string; result?: unknown; content?: string } };
+        };
+    };
+
+    it('returns the listing entries, totals and truncation flag through createPiAppTools', async () => {
+        const app = makeStore({ '/workspace/sub/c.txt': 'c', '/workspace/a.txt': 'a', '/workspace/b.txt': 'b' });
+        const full = await piResult(app, 'workspace_list', { path: '/workspace' });
+        expect(full.preview).toBeUndefined();
+        expect(full.observation).toBeUndefined();
+        const listing = full.payload.workspace.result as { files: { path: string; pathType: string }[]; totalFiles: number; totalDirectories: number; truncated: boolean };
+        expect(listing.files).toEqual(expect.arrayContaining([{ path: '/workspace/sub', pathType: 'directory' },
+            { path: '/workspace/a.txt', pathType: 'file' }, { path: '/workspace/b.txt', pathType: 'file' }]));
+        expect(listing).toMatchObject({ totalDirectories: 1, truncated: false });
+        expect(listing.totalFiles).toBe(listing.files.filter(entry => entry.pathType === 'file').length);
+
+        const cut = (await piResult(app, 'workspace_list', { path: '/workspace', limit: 2 })).payload.workspace.result;
+        expect(cut).toMatchObject({ files: [{ path: '/workspace/sub', pathType: 'directory' }, listing.files[1]], totalFiles: listing.totalFiles, truncated: true });
+    });
+
+    it('keeps a capped listing within the Pi result budget as valid JSON', async () => {
+        const app = makeStore(Object.fromEntries(Array.from({ length: 200 }, (_, index) =>
+            [`/workspace/reports/report-${String(index).padStart(3, '0')}.json`, '{}'])));
+        const result = await piTool(app, 'workspace_list').execute('call-capped', { path: '/workspace/reports' } as never);
+        const text = result.content.filter(part => part.type === 'text').map(part => part.text).join('');
+        expect(text.length).toBeLessThanOrEqual(6_000);
+        const listing = (JSON.parse(text) as { payload: { workspace: { result: { files: unknown[]; totalFiles: number; truncated: boolean; outputCapped?: boolean } } } }).payload.workspace.result;
+        expect(listing).toMatchObject({ totalFiles: 200, truncated: true, outputCapped: true });
+        expect(listing.files.length).toBeGreaterThan(10);
+    });
+
+    it('returns search matches and keeps read content in the payload', async () => {
+        const app = makeStore({ '/workspace/notes.txt': 'ANG MO KIO note' });
+        expect((await piResult(app, 'workspace_search', { query: 'ANG MO KIO' })).payload.workspace.result)
+            .toEqual(expect.arrayContaining([expect.objectContaining({ path: '/workspace/notes.txt' })]));
+        // Tree and grep are not Pi tools, but the shared executor carries their output the same way.
+        for (const [toolName, args] of [['workspace.tree', { path: '/workspace' }], ['workspace.grep', { query: 'ANG MO KIO', path: '/workspace' }]] as const) {
+            const result = await handleExecutorAction(action(toolName, args), app);
+            expect(JSON.stringify((result.payload as { workspace: { result?: unknown } }).workspace.result), toolName).toContain('/workspace/notes.txt');
+        }
+        const read = await piResult(app, 'workspace_read', { path: '/workspace/notes.txt' });
+        expect(read.payload.workspace).toMatchObject({ operation: 'read', content: 'ANG MO KIO note' });
+        expect(read.payload.workspace.result).toBeUndefined();
     });
 });
 

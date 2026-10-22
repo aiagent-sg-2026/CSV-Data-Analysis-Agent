@@ -79,7 +79,8 @@ export interface PivotMatrixConfig {
 /** Whether a numeric column's values can be summed, as judged by Pi and checked by the app. */
 export interface ColumnAdditivity {
     kind: 'additive' | 'non_additive';
-    nature: 'flow' | 'stock' | 'ratio' | 'unit_value' | 'other';
+    /** `identifier` marks a number that labels an item (an ID, code or address number) rather than measuring a quantity. */
+    nature: 'flow' | 'stock' | 'ratio' | 'unit_value' | 'identifier' | 'other';
     rationale: string;
 }
 
@@ -110,6 +111,8 @@ export interface ResearchPlanQuestion {
     metric: string | null;
     aggregation: AggregationType | null;
     comparison: string | null;
+    /** True when Pi stated that a SUM question is explicitly about total volume or value. */
+    totalIntent?: boolean;
 }
 
 /** The research plan Pi drafted for the initial analysis, consumed once by the evidence stage. */
@@ -308,7 +311,11 @@ export type EvidenceValueGateReasonCode =
     | 'reshape_required'
     | 'low_signal_confidence'
     | 'not_chart_worthy'
-    | 'zero_total_value';
+    | 'zero_total_value'
+    /** A SUM ranking that mirrors the groups' row counts, without a stated total-volume intent. */
+    | 'volume_driven_sum'
+    /** The same volume-driven ranking where the question explicitly asked for a total; informational only. */
+    | 'volume_driven_total';
 
 export interface EvidenceValueGateResult {
     decision: EvidenceValueGateDecision;
@@ -527,7 +534,8 @@ export type AutoAnalysisEvaluationReasonCode =
     | 'unsafe_business_narrative'
     | 'dimension_quality_warning'
     | 'metric_quality_warning'
-    | 'unclassified_share_warning';
+    | 'unclassified_share_warning'
+    | 'volume_driven_aggregate';
 
 export type AnalysisQualitySeverity = 'info' | 'warning' | 'critical';
 export type AnalysisDimensionQualityAction = 'allow' | 'avoid' | 'block';

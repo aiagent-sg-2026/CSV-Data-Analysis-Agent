@@ -81,8 +81,16 @@ const question = (title: string, overrides: Record<string, unknown> = {}) => ({
     title, rationale: 'because', dimension: 'town', metric: 'resale_price', aggregation: 'median', ...overrides,
 });
 
-const run = (store: ReturnType<typeof createStore>, streamFn: StreamFn, signal = new AbortController().signal) =>
-    runPiResearchPlanner({ store: store as never, goal: 'Find drivers', datasetVersionFallback: 'version-1', signal, streamFn });
+const run = (
+    store: ReturnType<typeof createStore>,
+    streamFn: StreamFn,
+    signal = new AbortController().signal,
+    measureGroups?: Parameters<typeof runPiResearchPlanner>[0]['measureGroups'],
+) => runPiResearchPlanner({ store: store as never, goal: 'Find drivers', datasetVersionFallback: 'version-1', signal, streamFn, measureGroups });
+
+// Per-group sums that follow the per-group row counts, as when one row is one sale.
+const volumeDrivenGroups = async () => [[900, 90], [700, 70], [500, 52], [300, 31], [100, 9]].map(([sum, count]) => ({ sum, count }));
+const pricedAdditive = [{ column: 'resale_price', kind: 'additive', nature: 'flow' }];
 
 describe('Pi research planner', () => {
     beforeEach(() => vi.clearAllMocks());
@@ -148,5 +156,48 @@ describe('Pi research planner', () => {
         controller.abort(new Error('cancelled'));
 
         await expect(run(store, scriptedStream([{ text: 'x' }]), controller.signal)).rejects.toThrow('cancelled');
+    });
+
+    it('sends back a grouped sum that mirrors row counts and accepts the per-row metric Pi chooses instead', async () => {
+        const store = createStore();
+        const measureGroups = vi.fn(volumeDrivenGroups);
+        const plan = await run(store, scriptedStream([
+            { name: 'submit_research_plan', arguments: { questions: [question('Sum of price by town', { aggregation: 'sum' }), question('Area by town', { metric: 'floor_area', aggregation: 'avg' })], columns: pricedAdditive } },
+            { name: 'submit_research_plan', arguments: { questions: [question('Typical price by town'), question('Area by town', { metric: 'floor_area', aggregation: 'avg' })], columns: pricedAdditive } },
+        ]), undefined, measureGroups);
+
+        expect(measureGroups).toHaveBeenCalledWith('town', 'resale_price');
+        expect(plan?.questions.map(item => [item.title, item.aggregation])).toEqual([['Typical price by town', 'median'], ['Area by town', 'avg']]);
+    });
+
+    it('keeps a grouped sum that Pi marks as explicitly about the total', async () => {
+        const store = createStore();
+        const measureGroups = vi.fn(volumeDrivenGroups);
+        const plan = await run(store, scriptedStream([{
+            name: 'submit_research_plan',
+            arguments: {
+                questions: [question('Total transaction value by town', { aggregation: 'sum', total_intent: true }), question('Typical price by town')],
+                columns: pricedAdditive,
+            },
+        }]), undefined, measureGroups);
+
+        expect(measureGroups).not.toHaveBeenCalled();
+        expect(plan?.questions[0]).toMatchObject({ aggregation: 'sum', totalIntent: true });
+    });
+
+    it('drops a sum that contradicts its own additivity judgement on the last attempt but keeps the rest', async () => {
+        const store = createStore();
+        const contradictory = {
+            questions: [question('Sum of price', { aggregation: 'sum' }), question('A'), question('B', { metric: 'floor_area', aggregation: 'max' })],
+            columns: [{ column: 'resale_price', kind: 'non_additive', nature: 'unit_value' }],
+        };
+        const plan = await run(store, scriptedStream([
+            { name: 'submit_research_plan', arguments: contradictory },
+            { name: 'submit_research_plan', arguments: contradictory },
+            { name: 'submit_research_plan', arguments: contradictory },
+        ]), undefined, vi.fn(volumeDrivenGroups));
+
+        expect(plan?.questions.map(item => item.title)).toEqual(['A', 'B']);
+        expect(plan?.rejected).toEqual([{ title: 'Sum of price', reason: expect.stringContaining('non_additive') }]);
     });
 });

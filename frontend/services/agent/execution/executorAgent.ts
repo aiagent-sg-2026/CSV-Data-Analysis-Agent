@@ -44,6 +44,12 @@ import { executePresentationUpgrade } from './presentationSkill';
 import { buildClarificationQuestionFingerprint } from '../runtime/runtimeOodae';
 
 const LOG_PREFIX = '[ExecutorAgent]';
+// Workspace inspections whose payload omits the result; read and revision diffs already carry their content.
+const WORKSPACE_OUTPUT_ONLY_TOOLS: ReadonlySet<string> = new Set(['workspace.list', 'workspace.tree', 'workspace.search', 'workspace.grep', 'workspace.head']);
+// Inspection output is bounded JSON; a cut tree/search/grep output carries a truncation marker and stays text.
+const parseWorkspaceOutput = (output: string): unknown => {
+    try { return JSON.parse(output); } catch { return output; }
+};
 
 const requestClarification = (action: AiAction, store: StoreApi): ToolExecutionResult => {
     if (action.type !== 'tool_call' || !action.args) {
@@ -653,12 +659,19 @@ export const handleExecutorAction = async (
         case 'workspace.write':
         case 'workspace.append': {
             const workspaceResult = await executeWorkspaceFileAction(action, store, { abortSignal: options?.abortSignal });
+            // These inspections return their bounded entries/matches only in `output`. Carry it in the payload
+            // (not the observation detail, which would serialize it twice) so the model can see the result.
+            const outputOnly = WORKSPACE_OUTPUT_ONLY_TOOLS.has(action.toolName)
+                || (action.toolName === 'workspace.diff' && !(workspaceResult?.payload?.workspace as { diff?: unknown } | undefined)?.diff);
+            const inspection = outputOnly && workspaceResult?.output && workspaceResult.payload
+                ? { ...workspaceResult.payload, workspace: { ...(workspaceResult.payload.workspace as Record<string, unknown>), result: parseWorkspaceOutput(workspaceResult.output) } }
+                : undefined;
             return {
                 status: 'success',
                 toolName: action.toolName,
                 message: `Executed ${action.toolName}`,
                 shouldStop: false,
-                payload: workspaceResult?.payload,
+                payload: inspection ?? workspaceResult?.payload,
                 observation: {
                     type: 'tool_result',
                     status: 'success',

@@ -4,7 +4,7 @@ import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { Agent, type AgentMessage, type StreamFn } from '@earendil-works/pi-agent-core';
 import {
     createPiContextCompactor, createPiProviderContextCompactor, estimatePiRequestBytes, fitSummaryHistory,
-    piSummarySystemPrompt, truncatePiSummary, type PiRequestByteBudget,
+    piSummarySystemPrompt, SUMMARY_TRUNCATED_MARKER, truncatePiSummary, type PiRequestByteBudget,
 } from '../services/agent/runtime/pi/piContextCompaction';
 import { resolvePiRequestByteBudget } from '../services/agent/runtime/pi/piProvider';
 import { DEFAULT_GATEWAY_PI_REQUEST_BYTE_BUDGET, DEFAULT_GATEWAY_PI_SUMMARY_MAX_BYTES } from '../config/agentDefaults';
@@ -294,7 +294,7 @@ describe('Pi automatic context compaction', () => {
 
                 const compacted = await compact(messages);
                 const text = summaryText(compacted);
-                expect(text.endsWith('\n[summary truncated]')).toBe(true);
+                expect(text.endsWith(SUMMARY_TRUNCATED_MARKER)).toBe(true);
                 expect(new TextEncoder().encode(JSON.stringify(text)).length).toBeLessThanOrEqual(DEFAULT_GATEWAY_PI_SUMMARY_MAX_BYTES);
                 expect(text.length).toBeGreaterThan(5_000);
                 expect(estimatePiRequestBytes(compacted)).toBeLessThanOrEqual(triggerBytes - 45_000);
@@ -321,23 +321,79 @@ describe('Pi automatic context compaction', () => {
                 expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({ reason: 'summary_unusable' }));
             });
 
+            const jsonBytes = (text: string) => new TextEncoder().encode(JSON.stringify(text)).length;
+            const markerBytes = jsonBytes(SUMMARY_TRUNCATED_MARKER);
+
+            it('uses a marker that warns the model to re-check facts', () => {
+                expect(SUMMARY_TRUNCATED_MARKER).toMatch(/^\n\[Summary truncated: later details were omitted\. Re-check facts with tools before citing them\.\]$/);
+            });
+
             it('truncates at UTF-8 safe boundaries with CJK, emoji and escaped characters', () => {
                 const decoder = new TextDecoder('utf-8', { fatal: true });
                 const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
-                const source = '数😀"\n👩‍💻x'.repeat(50);
-                for (let cap = 60; cap <= 140; cap += 1) {
-                    const fitted = truncatePiSummary(source, cap);
-                    const encoded = new TextEncoder().encode(JSON.stringify(fitted));
-                    expect(encoded.length).toBeLessThanOrEqual(cap);
-                    expect(fitted.endsWith('\n[summary truncated]')).toBe(true);
-                    expect(loneSurrogate.test(fitted)).toBe(false);
-                    expect(decoder.decode(new TextEncoder().encode(fitted))).toBe(fitted);
-                    const kept = fitted.slice(0, -'\n[summary truncated]'.length);
-                    expect(source.startsWith(kept)).toBe(true);
-                    // Maximal: the next whole code point would not fit.
-                    const nextCodePoint = String.fromCodePoint(source.codePointAt(kept.length)!);
-                    expect(new TextEncoder().encode(JSON.stringify(kept + nextCodePoint + '\n[summary truncated]')).length).toBeGreaterThan(cap);
+                const sources = [
+                    '数😀"\n👩‍💻x'.repeat(50),
+                    '数😀"👩‍💻x'.repeat(50),
+                    '价格。数😀 "ok". 👩‍💻x'.repeat(40),
+                ];
+                for (const source of sources) {
+                    for (let cap = markerBytes + 2; cap <= markerBytes + 120; cap += 1) {
+                        const fitted = truncatePiSummary(source, cap);
+                        expect(jsonBytes(fitted)).toBeLessThanOrEqual(cap);
+                        expect(fitted.endsWith(SUMMARY_TRUNCATED_MARKER)).toBe(true);
+                        expect(loneSurrogate.test(fitted)).toBe(false);
+                        expect(decoder.decode(new TextEncoder().encode(fitted))).toBe(fitted);
+                        const kept = fitted.slice(0, -SUMMARY_TRUNCATED_MARKER.length);
+                        expect(source.startsWith(kept)).toBe(true);
+                        const nextCodePoint = String.fromCodePoint(source.codePointAt(kept.length)!);
+                        const maximal = jsonBytes(kept + nextCodePoint + SUMMARY_TRUNCATED_MARKER) > cap;
+                        if (!maximal) {
+                            // A shorter cut must end at a line or sentence boundary and keep at
+                            // least half of the bytes available before the marker.
+                            const rest = source.slice(kept.length);
+                            const atBoundary = rest.startsWith('\n') || /[。！？]$/u.test(kept) || (/[.!?]$/.test(kept) && /^\s/u.test(rest));
+                            expect(atBoundary).toBe(true);
+                            expect((jsonBytes(kept) - 2) * 2).toBeGreaterThanOrEqual(cap - markerBytes);
+                        }
+                    }
                 }
+            });
+
+            it('cuts at the last sentence end instead of mid-number', () => {
+                const source = 'Goal: rank regions by revenue. Max price was 610000 in March. Outstanding: verify the April refunds and recompute the margin.';
+                const cap = markerBytes + jsonBytes(source.slice(0, source.indexOf('610000') + 2)) - 2;
+                const fitted = truncatePiSummary(source, cap);
+
+                expect(fitted).toBe(`Goal: rank regions by revenue.${SUMMARY_TRUNCATED_MARKER}`);
+                expect(jsonBytes(fitted)).toBeLessThanOrEqual(cap);
+            });
+
+            it('prefers the last line break and treats CJK terminators as sentence ends', () => {
+                const lines = 'Dataset: sales.csv, 12 columns\nTop region: North 61.5%\nNext: check the refunds';
+                const lineCap = markerBytes + jsonBytes(lines.slice(0, lines.indexOf('refunds'))) - 2;
+                expect(truncatePiSummary(lines, lineCap)).toBe(`Dataset: sales.csv, 12 columns\nTop region: North 61.5%${SUMMARY_TRUNCATED_MARKER}`);
+
+                const cjk = '目标：按地区排名收入。最高价格为610000元，出现在三月';
+                const cjkCap = markerBytes + jsonBytes(cjk.slice(0, cjk.indexOf('610000') + 3)) - 2;
+                expect(truncatePiSummary(cjk, cjkCap)).toBe(`目标：按地区排名收入。${SUMMARY_TRUNCATED_MARKER}`);
+            });
+
+            it('does not treat a decimal point as a sentence end', () => {
+                const source = `Ratio 61.5 ${'x'.repeat(10)} then more words follow without punctuation here`;
+                const cap = markerBytes + jsonBytes(source.slice(0, 40)) - 2;
+                const kept = truncatePiSummary(source, cap).slice(0, -SUMMARY_TRUNCATED_MARKER.length);
+
+                expect(kept).toBe(source.slice(0, 40));
+            });
+
+            it('falls back to the code-point cut when the only boundary is in the first half', () => {
+                const source = `Short.\n${'y'.repeat(200)}`;
+                const cap = markerBytes + 100;
+                const kept = truncatePiSummary(source, cap).slice(0, -SUMMARY_TRUNCATED_MARKER.length);
+
+                // The escaped line break costs two bytes, so 99 code points fill the 100 available bytes.
+                expect(kept).toBe(source.slice(0, 99));
+                expect(jsonBytes(kept + SUMMARY_TRUNCATED_MARKER)).toBe(cap);
             });
 
             it('accepts a CJK summary within the byte cap and does not re-trigger on the next turns', async () => {

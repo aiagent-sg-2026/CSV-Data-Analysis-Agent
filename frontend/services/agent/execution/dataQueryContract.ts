@@ -23,6 +23,7 @@ export {
     normalizeQueryAggregateFunction,
     normalizeDataQueryPlanLike,
     normalizeDataQueryPayload,
+    selectsAllColumns,
 } from './dataQueryNormalization';
 
 export {

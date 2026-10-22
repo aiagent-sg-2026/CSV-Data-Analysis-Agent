@@ -531,7 +531,11 @@ export const compileQueryPlanToDuckDbSql = (
         : requestedSelectedColumns;
 
     if (selectedColumns.length > maxColumns) {
-        throw new Error(`Query select exceeds the maximum allowed column count (${maxColumns}).`);
+        const projectsEveryColumn = !isAggregateQuery && !(Array.isArray(plan.select) && plan.select.length > 0);
+        const hint = projectsEveryColumn
+            ? ` The table has ${selectedColumns.length} columns, so list at most ${maxColumns} explicit column names in plan.select instead of "*" or an omitted select.`
+            : '';
+        throw new Error(`Query select exceeds the maximum allowed column count (${maxColumns}).${hint}`);
     }
 
     const normalizedPlan: QueryPlan = {

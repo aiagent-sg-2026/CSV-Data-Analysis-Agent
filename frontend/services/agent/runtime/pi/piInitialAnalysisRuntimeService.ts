@@ -3,7 +3,7 @@ import { beginRun, assertRunActive, awaitOwned, ownsRun, finishRun, scopeRunStor
 import { presentGatewayError } from '../../../../utils/gatewayErrorMessage';
 import { getTranslation } from '../../../../utils/localization';
 import { Agent, type AgentTool, type StreamFn } from '@earendil-works/pi-agent-core';
-import { Type } from '@earendil-works/pi-ai';
+import { Type, type ToolResultMessage } from '@earendil-works/pi-ai';
 import { resolveAnalysisCompletionGate } from '../../analysisCompletionGate';
 import { getCurrentAnalysisDatasetVersion } from '../../artifactProvenance';
 import { buildCardSemanticFingerprint } from '../../cardSemanticFingerprint';
@@ -51,6 +51,12 @@ const INITIAL_ANALYSIS_BUDGET_MS = 240_000;
 // required, so the host never lets a run reach evidence without a prepared, validated dataset.
 const OPTIONAL_STAGE_NAMES: ReadonlySet<string> = new Set(['dataset.suggestCleaningPlan', 'dataset.applyTransform']);
 const MAX_INVALID_STAGE_REQUESTS = 2;
+// A rejected meaning proposal changes no state, so a model that keeps re-proposing can spend the whole
+// time budget in the cleaning window. These bounds stop that loop with an explicit blocked reason.
+const MAX_CONSECUTIVE_MEANING_REJECTIONS = 4;
+const MAX_MEANING_REJECTIONS = 6;
+// Provider turns the model gets to follow the skip guidance before the run stops as blocked.
+const MEANING_SKIP_GRACE_TURNS = 2;
 
 const activeRuns = new Map<string, { agent: Agent; controller: AbortController; runtimeRunId: string; cancelledByUser: boolean }>();
 
@@ -147,6 +153,75 @@ const run = async (
     let recoveryEnabled = Boolean(checkpointSource) && !store.getState().csvData?.backing?.ephemeral;
     let providerTurns = 0;
     let invalidStageRequests = 0;
+    // Mirrors the host skip rule: once coding work changed task state in the qualified cleaning window, only an
+    // exactly approved candidate commit may advance past cleaning. Rejected proposals change nothing.
+    const cleaningSkipPermitted = () => !(executorPreparation?.task.workStarted && !checkpoint?.coding?.commit);
+    const describePlannedCleaning = () => {
+        const operations = store.getState().dataPreparationPlan?.operations?.length;
+        return {operations, text: typeof operations === 'number'
+            ? `dataset.suggestCleaningPlan planned ${operations} governed cleaning operation(s).`
+            : 'No governed cleaning plan is available.'};
+    };
+    // The bare governance code left the model choosing between a skip and an open-ended repair loop. Keep the
+    // stable code first and state the planned operation count and the next calls the host will accept.
+    const cleaningGateError = (): Error => {
+        const {operations, text: planned} = describePlannedCleaning();
+        const next = cleaningSkipPermitted()
+            ? `Cleaning is optional when nothing needs repair${operations === 0 ? ', and with 0 planned operations skipping is the expected path unless your own inspection found a concrete defect' : ''}. To skip it, call run_next_analysis_stage with {"stage":"dataset.validatePreparedData"}. Rejected candidate_infer_meaning proposals do not close the skip; it closes once a meaning proposal is accepted, code_run is granted execution, a candidate is staged, or a workspace_write, workspace_replace or workspace_append succeeds.`
+            : 'Skipping cleaning is no longer permitted: coding work already executed or was staged in this cleaning window (an accepted meaning, a code_run, a staged candidate or a workspace file), so only an exactly approved candidate can advance this run.';
+        return new Error(`initial_cleaning_requires_exact_candidate_approval: dataset.applyTransform cannot publish cleaning in this governed run. ${planned} ${next} A real repair needs the exact candidate flow: candidate_infer_meaning, workspace_write your JavaScript program, code_run, candidate_stage, candidate_validate, then candidate_request_approval for exact human approval.`);
+    };
+    let meaningRejections = 0, consecutiveMeaningRejections = 0, meaningStopReason = '';
+    // While the skip is still permitted, the threshold first returns skip guidance and gives a bounded grace window.
+    let meaningSkipGuidance = '', meaningGuidanceTurn = 0;
+    // Calls the wrapper already classified; finishTurn counts only the rest (calls that never reached execute()).
+    const observedMeaningCalls = new Set<string>();
+    // Mirrors the app-tool phase check: coding tools run only while stage 2 or 3 is next.
+    const cleaningWindowOpen = () => nextStageIndex === 2 || nextStageIndex === 3;
+    // Lease loss and scope refusals say nothing about the proposal itself, so they are not meaning rejections.
+    const isRunOrScopeFailure = (message: string, error?: unknown) => controller.signal.aborted || lease.signal.aborted || !ownsRun(store, lease)
+        || (error as { name?: unknown } | undefined)?.name === 'AbortError'
+        || /\b(?:scope_revoked|typed_scope_unresolved|initial_checkpoint_unavailable)\b|This run no longer owns the session/.test(message);
+    const classifyMeaningResult = (text: string, isError: boolean): 'accepted' | 'rejected' | 'ignored' => {
+        let parsed: { status?: unknown; message?: unknown } | undefined;
+        try { parsed = JSON.parse(text) as typeof parsed; } catch { parsed = undefined; }
+        if (isRunOrScopeFailure(typeof parsed?.message === 'string' ? parsed.message : text)) return 'ignored';
+        return !isError && parsed?.status === 'success' ? 'accepted' : 'rejected';
+    };
+    /** Counts one proposal outcome and returns new skip guidance when the threshold is reached while skipping is permitted. */
+    const countMeaningOutcome = (outcome: 'accepted' | 'rejected' | 'ignored', turn: number): string => {
+        // Outside the cleaning window the phase check refuses the call, so it is not a proposal rejection.
+        if (outcome === 'ignored' || !cleaningWindowOpen()) return '';
+        // An accepted proposal starts a new attempt; it also starts work, so a later threshold stops blocked.
+        if (outcome === 'accepted') { consecutiveMeaningRejections = 0; meaningRejections = 0; return ''; }
+        meaningRejections += 1;
+        consecutiveMeaningRejections += 1;
+        if (meaningSkipGuidance || meaningStopReason || !cleaningSkipPermitted()
+            || (consecutiveMeaningRejections < MAX_CONSECUTIVE_MEANING_REJECTIONS && meaningRejections < MAX_MEANING_REJECTIONS)) return '';
+        meaningGuidanceTurn = turn;
+        meaningSkipGuidance = `initial_cleaning_meaning_skip_required: ${meaningRejections} candidate_infer_meaning proposal(s) were rejected and no cleaning work executed or was staged. Stop proposing meaning. ${describePlannedCleaning().text} Call run_next_analysis_stage with {"stage":"dataset.validatePreparedData"} now to skip cleaning. If cleaning is not skipped within ${MEANING_SKIP_GRACE_TURNS} turns, the run stops as blocked. Accepted data is unchanged.`;
+        return meaningSkipGuidance;
+    };
+    // Runs after every turn, so it also sees schema failures that never reach execute().
+    const reviewMeaningProgress = (toolResults: ToolResultMessage[]) => {
+        for (const result of toolResults) {
+            if (result.toolName !== 'candidate_infer_meaning') continue;
+            if (observedMeaningCalls.has(result.toolCallId)) continue;
+            observedMeaningCalls.add(result.toolCallId);
+            const guidance = countMeaningOutcome(classifyMeaningResult(result.content.filter(part => part.type === 'text').map(part => part.text).join(''), result.isError), providerTurns);
+            // Calls refused before execute() (schema or phase failures) get guidance here; an executed call carries it in its own result.
+            if (guidance) agent.steer({ role: 'user', content: [{ type: 'text', text: guidance }], timestamp: Date.now() });
+        }
+        if (meaningStopReason || !cleaningWindowOpen()) return;
+        const reached = consecutiveMeaningRejections >= MAX_CONSECUTIVE_MEANING_REJECTIONS || meaningRejections >= MAX_MEANING_REJECTIONS;
+        // The host never skips cleaning on the model's behalf, and once work started only exact approval may
+        // advance, so these cases end with an explicit blocked reason.
+        if (reached && !meaningSkipGuidance) {
+            meaningStopReason = `initial_cleaning_meaning_no_progress: ${meaningRejections} candidate_infer_meaning proposal(s) were rejected (${consecutiveMeaningRejections} in a row) after cleaning work started, so the cleaning window stopped before the time budget ran out. Accepted data is unchanged.`;
+        } else if (meaningSkipGuidance && providerTurns - meaningGuidanceTurn >= MEANING_SKIP_GRACE_TURNS) {
+            meaningStopReason = `initial_cleaning_meaning_no_progress: ${meaningRejections} candidate_infer_meaning proposal(s) were rejected and cleaning was not skipped within ${MEANING_SKIP_GRACE_TURNS} turns of the skip guidance, so the cleaning window stopped before the time budget ran out. Accepted data is unchanged.`;
+        }
+    };
     const timer = setTimeout(() => controller.abort(new Error('The Pi initial-analysis time budget expired.')),
         Math.max(1,INITIAL_ANALYSIS_BUDGET_MS-(checkpoint?.coding?.budget.used.activeMs??0)));
     const persistCheckpoint = async (pendingStageIndex: number | null) => {
@@ -220,7 +295,7 @@ const run = async (
                         && requestedName === choices.required)
                     || (requestedIndex > nextStageIndex && choices.skippable.includes(requestedName));
                 if (allowed) {
-                    if(qualified&&executorPreparation?.task.coding&&requestedIndex>nextStageIndex&&!checkpoint?.coding?.commit)throw new Error('initial_cleaning_requires_exact_candidate_approval');
+                    if(qualified&&requestedIndex>nextStageIndex&&!cleaningSkipPermitted())throw cleaningGateError();
                     invalidStageRequests = 0;
                     if (requestedIndex > nextStageIndex) {
                         emitAgentEvent(store, {
@@ -244,8 +319,8 @@ const run = async (
             }
             const stageIndex = nextStageIndex;
             const stage = STAGES[stageIndex];
-            if(qualified&&stageIndex===3)throw new Error('initial_cleaning_requires_exact_candidate_approval');
-            if(qualified&&executorPreparation?.task.coding&&stageIndex>=4&&!checkpoint?.coding?.commit)throw new Error('initial_cleaning_requires_exact_candidate_approval');
+            if(qualified&&stageIndex===3)throw cleaningGateError();
+            if(qualified&&stageIndex>=4&&!cleaningSkipPermitted())throw cleaningGateError();
             if(qualified)await executorPreparation!.task.beforeTool('run_next_analysis_stage',{},_id);
             await persistCheckpoint(stageIndex);
             const state = store.getState();
@@ -362,8 +437,12 @@ const run = async (
                 return {terminate:Boolean(executorPreparation.task.blockedReason)};
             }
         },
-        finishTurn: () => {
+        finishTurn: turn => {
             providerTurns += 1;
+            if (qualified) {
+                reviewMeaningProgress(turn.toolResults);
+                if (meaningStopReason) return { action: 'end' };
+            }
             if (!qualified && providerTurns > STAGES.length + 3) {
                 controller.abort(new Error('Pi did not complete the governed stage sequence.'));
                 agent.abort();
@@ -398,17 +477,35 @@ const run = async (
                 ? {...message,sections:{...message.sections,skills:formatPinnedSkills(executorPreparation!.task.skills,store)}} : message);
             const appTools=createPiAppTools(store,request.datasetVersion,{maxToolCalls:40,includeSkills:true}).filter(t=>t.name!=='data_mutate'&&t.name!=='conversation_request_clarification');
             agent.state.tools=[tool,...appTools.map(t=>({...t,execute:async(...args:Parameters<typeof t.execute>)=>{
+                // Claim the call so finishTurn does not count it; refusals before execute() below are host refusals.
+                if(t.name==='candidate_infer_meaning')observedMeaningCalls.add(args[0]);
                 assertRunActive(store,lease);
                 if(pendingApproval)throw new Error('initial_approval_pending');
                 if(t.name!=='read_skill'&&nextStageIndex!==2&&nextStageIndex!==3)throw new Error('initial_coding_phase_unavailable');
+                if(t.name==='candidate_infer_meaning'&&meaningSkipGuidance)throw new Error(meaningSkipGuidance);
                 // Loading pinned guidance cannot execute a stage. Preserve an existing uncertain
                 // boundary without manufacturing one when no stage/coding tool has started.
                 const pending=t.name==='read_skill'?readCheckpoint(request.appSessionId)?.pendingStageIndex??null:nextStageIndex;
                 await persistCheckpoint(pending);
                 try{
-                    const result=await t.execute(...args);assertRunActive(store,lease);
+                    let result=await t.execute(...args);assertRunActive(store,lease);
+                    if(t.name==='candidate_infer_meaning'){
+                        const text=result.content.filter(part=>part.type==='text').map(part=>part.text).join('');
+                        const guidance=countMeaningOutcome(classifyMeaningResult(text,false),providerTurns+1);
+                        if(guidance){
+                            let annotated:string;
+                            try{annotated=JSON.stringify({...JSON.parse(text),hostGuidance:guidance});}catch{annotated=`${text}\n\n${guidance}`;}
+                            result={...result,content:[{type:'text',text:annotated}]};
+                        }
+                    }
                     pendingApproval=pendingPiCandidateApproval(store);
                     return {...result,...(pendingApproval?{terminate:true}:{})};
+                }catch(error){
+                    // A thrown proposal error is also a rejection unless the run or scope failed; carry new skip guidance in the same tool result.
+                    const guidance=t.name==='candidate_infer_meaning'&&error instanceof Error
+                        ?countMeaningOutcome(isRunOrScopeFailure(error.message,error)?'ignored':'rejected',providerTurns+1):'';
+                    if(guidance)throw new Error(`${(error as Error).message}\n\n${guidance}`);
+                    throw error;
                 }finally{if(ownsRun(store,lease)&&!lease.signal.aborted)await persistCheckpoint(pending);}
             }}))];
         }
@@ -420,6 +517,7 @@ const run = async (
             providerFailure = !executorPreparation?.task.blockedReason;
             throw new Error(agent.state.errorMessage);
         }
+        if (meaningStopReason && !pendingApproval) throw new Error(meaningStopReason);
         if(pendingApproval&&qualified){
             const suspended=executorPreparation!.task.suspend(pendingApproval);
             const captured=readCheckpoint(request.appSessionId)!;

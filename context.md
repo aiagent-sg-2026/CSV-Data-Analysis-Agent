@@ -41,6 +41,31 @@
     - A3: the summary is capped at 16,000 bytes (CJK-safe), and an overlong one is truncated rather than rejected;
     - A6: truncated workspace listings report totals and a truncated flag.
   - Full suite: 435 files / 3,976 tests. Root published as 1.0.0-7c5fd9faf41f.
+- **Live verified after PR #34 (Pages run 35, build 1.0.0-7c5fd9faf41f)**:
+  - Real-AI HDB sample run on live finished in 260 s with 2 cards: 48 requests, largest 132 KB, no 400s, no DuckDB or workspace tool errors. The session-cap 429s refreshed correctly.
+  - All 9 deterministic live scenarios pass.
+  - Remaining quality issue: the cards still choose "Sum Resale Price", a volume metric.
+- **Round 4 (owner chose B), in progress on branch `claude/funny-lovelace-beqo7n`**:
+  - Integrated so far:
+    - `streamGenerateText` surfaces provider HTTP errors; `transientRetry` classifies by status and gateway kind, so no extra requests are spent against the demo caps;
+    - summary truncation cuts at a sentence or line boundary with an explicit "re-check" marker;
+    - `workspace.list` output fits the 3,000-char cap with totals first;
+    - `data.query select ['*']` expands to all columns;
+    - volume-driven SUM handling: planner checks against Pi's own additivity/identifier judgements, a Spearman SUM-vs-COUNT check (HDB town 0.93 / flat_model 0.97 / flat_type 0.93), `total_intent`, time dimensions exempt.
+  - Full suite 437 files / 4,026 tests; the independent review passed with P0/P1 = 0.
+  - Real-gateway runs of candidate 9f1998536172:
+    - 1 run passed, with median cards;
+    - 3 runs stalled in the stage-3 qualified coding window and hit the 240 s budget.
+  - The live build passed the same data in parallel.
+  - Saved request bodies show the trigger: with 0 planned cleaning ops, `applyTransform` returns the bare `initial_cleaning_requires_exact_candidate_approval` (`piInitialAnalysisRuntimeService.ts:247`). Some runs then loop on rejected `candidate_infer_meaning` proposals instead of skipping to `validatePreparedData`.
+  - Pi `workspace_list` results also carry no entries, so the model cannot see listings.
+  - Worker K is fixing: an actionable skip message, list entries in Pi results, and a stop when meaning proposals make no progress.
+- **Round 4 result**:
+  - Worker K's fixes (actionable skip gate, the `workStarted` flag so rejected proposals keep the skip, the no-progress stop, Pi workspace results with entries) plus the review P1 fix (count only while stages 2-3 are open) are integrated.
+  - Full suite 437 files / 4,045 tests. Root published as 1.0.0-d5b33671571d.
+  - Real-gateway runs on build 07e26a4a488c: stage 3 passed in about 15 s in 3 of 3 runs. In 2 of them the model skipped right after the new gate message.
+  - All 3 then stopped at stage 7 with `DEMO_ALL_ROUTES_EXHAUSTED`. The UI showed "Today's shared AI quota is used up" and no retry storm followed. Today's shared demo quota was exhausted, largely by these test runs, so live users see the same message until it resets.
+  - Full end-to-end verification of this exact build is pending the quota reset. An earlier round-4 build produced median cards (Median Resale Price by Flat Type; Median Floor Area by Flat Type).
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.

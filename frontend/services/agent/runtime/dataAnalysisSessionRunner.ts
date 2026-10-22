@@ -1232,6 +1232,7 @@ const runDataAnalysisSessionInternal = async (
                         preferredFilterIntent: nextHypothesis.filterIntent,
                     },
                     preGeneratedPlan: preGeneratedPlans.get(nextHypothesis.id),
+                    totalIntent: nextHypothesis.totalIntent === true,
                     abortSignal: params.abortSignal,
                     recordAnalysisStep: recordStepSuppressed,
                 },

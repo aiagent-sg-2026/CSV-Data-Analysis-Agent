@@ -30,6 +30,7 @@ import { detectTemporalGrainCollapse, buildTemporalPlanningGuardrail, normalizeT
 import { MAX_EXECUTION_ATTEMPTS, RETRYABLE_EXECUTION_CODES, SOFT_SKIP_CODES, getExecutionRetryLimit, buildExecutionReplanReasonCode, buildTypedExecutionReasonCode, buildPlannerFeedbackForExecutionError, classifyTopicFailure } from './topicRetryStrategy';
 import { buildLearningHintsFromHistory } from './topicLearningHints';
 import { isRuntimeAbortError, throwIfAborted } from '../runtime/runtimeAbort';
+import { describeVolumeDependence, measureEvidenceVolumeDependence } from './volumeDrivenSum';
 
 type StoreApi = {
     getState: () => AppStore;
@@ -90,6 +91,8 @@ interface TopicProcessingOptions {
     recordAnalysisStep?: (record: TopicProcessingStepRecord) => string;
     /** PERF-201 strategy D: pre-generated evidence plan from parallel batch. */
     preGeneratedPlan?: Awaited<ReturnType<typeof generateEvidenceQueryPlanStepped>>;
+    /** The research plan stated that this topic's SUM is explicitly about total volume or value. */
+    totalIntent?: boolean;
     abortSignal?: AbortSignal;
 }
 
@@ -636,6 +639,18 @@ export const processSingleTopic = async (
                 // PERF-201 Step 3: deterministic safety floor + quality gate is sufficient.
                 // Skipping AI evidence evaluation saves 5 calls + ~1000 tokens/run.
                 const aiEvaluation = null;
+                // A grouped SUM is compared with the groups' row counts over the same population.
+                // Time dimensions and time-series plans are exempt: a total per period is a legitimate trend.
+                const volumeMeasurement = await measureEvidenceVolumeDependence(evidencePlan, checkPlan => executeEvidenceQuery(checkPlan, store, binding, {
+                    topic,
+                    dataset: data,
+                    suppressQueryStateUpdates: true,
+                    abortSignal: options?.abortSignal,
+                }), {
+                    profiles: getState().columnProfiles,
+                    timeGrains: semanticUnderstanding.timeGrains,
+                    signal: options?.abortSignal,
+                });
                 const valueGate = evaluateEvidenceValue({
                     semanticUnderstanding,
                     evidencePlan,
@@ -643,6 +658,11 @@ export const processSingleTopic = async (
                     existingAcceptedOutputs,
                     aiEvaluation,
                     harnessContext,
+                    volumeDependence: volumeMeasurement ? {
+                        ...volumeMeasurement.dependence,
+                        totalIntentConfirmed: options?.totalIntent === true,
+                        description: describeVolumeDependence(volumeMeasurement),
+                    } : null,
                 });
                 console.log(_elapsed(`value_gate=${valueGate.decision}`));
                 // PERF-307: Yield after value gate — break the chain between

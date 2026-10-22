@@ -120,6 +120,9 @@ export const REASON_CODE_LABELS: Record<string, string> = {
     low_business_confidence: 'Low business meaning confidence',
     aggregation_quality_warning: 'Aggregation quality concern',
     fallback_plan: 'Generated from fallback plan',
+    volume_driven_aggregate: 'Ranking mostly follows row counts',
+    volume_driven_sum: 'Sum ranking mostly follows row counts',
+    volume_driven_total: 'Stated total; ranking follows row counts',
 };
 
 export const humanizeReasonCode = (code: string): string =>
