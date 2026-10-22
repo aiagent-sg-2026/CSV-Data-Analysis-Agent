@@ -169,7 +169,8 @@ export const DemoDatasetGallery: React.FC<DemoDatasetGalleryProps> = ({ language
     useEffect(() => {
         let active = true;
         void loadDemoDatasetCatalog().then(result => {
-            if (active) setDatasets(result.datasets);
+            // Large downloads go last so a first tap, especially on a phone, starts a quick run.
+            if (active) setDatasets([...result.datasets].sort((a, b) => Number(a.speed === 'slow') - Number(b.speed === 'slow')));
         });
         return () => {
             active = false;
@@ -186,7 +187,7 @@ export const DemoDatasetGallery: React.FC<DemoDatasetGalleryProps> = ({ language
             data-demo-gallery="true"
             className="mt-8 w-full max-w-5xl border-t border-slate-200 pt-6"
         >
-            <div className="text-center sm:text-left">
+            <div className="text-center">
                 <h3 id={headingId} className="text-lg font-semibold text-slate-900">
                     {getTranslation('demo_gallery_heading', language)}
                 </h3>
@@ -194,7 +195,7 @@ export const DemoDatasetGallery: React.FC<DemoDatasetGalleryProps> = ({ language
             </div>
 
             {datasets === null ? (
-                <p role="status" className="mt-4 flex items-center justify-center gap-2 text-sm text-slate-500 sm:justify-start">
+                <p role="status" className="mt-4 flex items-center justify-center gap-2 text-sm text-slate-500">
                     <IconLoadingSpinner className="h-4 w-4" />
                     {getTranslation('demo_gallery_loading', language)}
                 </p>

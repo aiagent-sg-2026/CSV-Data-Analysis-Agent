@@ -91,6 +91,18 @@ describe('FileUpload demo dataset gallery', () => {
         vi.unstubAllGlobals();
     });
 
+    it('lists slow (large) datasets after the fast ones', async () => {
+        stubFetch(catalog(4));
+        render(<FileUpload />);
+
+        const buttons = await screen.findAllByRole('button', { name: /^Analyse this data: / });
+        expect(buttons.map(button => button.getAttribute('aria-label') ?? button.textContent))
+            .toEqual(expect.arrayContaining([expect.stringContaining('Dataset 1')]));
+        const names = buttons.map(button => button.getAttribute('aria-label') ?? '');
+        expect(names[names.length - 1]).toContain('Dataset 1');
+        expect(names[0]).toContain('Dataset 0');
+    });
+
     it('keeps the upload action first and renders one card per catalog dataset', async () => {
         stubFetch(catalog(2));
         render(<FileUpload />);

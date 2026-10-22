@@ -66,6 +66,13 @@
   - Real-gateway runs on build 07e26a4a488c: stage 3 passed in about 15 s in 3 of 3 runs. In 2 of them the model skipped right after the new gate message.
   - All 3 then stopped at stage 7 with `DEMO_ALL_ROUTES_EXHAUSTED`. The UI showed "Today's shared AI quota is used up" and no retry storm followed. Today's shared demo quota was exhausted, largely by these test runs, so live users see the same message until it resets.
   - Full end-to-end verification of this exact build is pending the quota reset. An earlier round-4 build produced median cards (Median Resale Price by Flat Type; Median Floor Area by Flat Type).
+- **Demo dataset gallery (owner request, 2026-10-22)**:
+  - Worker L added 7 Singapore open datasets from data.gov.sg (Singapore Open Data Licence, raw values, manifests, a deterministic generator `npm run demo:sg:open-data`, and `demo-data/catalog.json` as SSOT): graduate employment, COE bidding, business formation (wide), resident unemployment, visitor arrivals (hierarchical wide), HDB median rent, public transport ridership.
+  - Worker M added the catalog-driven gallery (`DemoDatasetGallery.tsx`, `services/data/demoDatasetCatalog.ts`, 4 languages, HDB fallback).
+  - Manager review fixes: slow datasets sort last; the heading is centred at every width; the qualification preflight now derives its pinned deployment count from SHA256SUMS.txt.
+  - No-AI end-user audit, 6 viewports (320/390/430/768/1024/1440): no overflow, no unnamed controls, no small touch targets, no errors. All 8 fast datasets load with local processing only and matching row counts (median rent 9,505 of 9,507, because the source repeats 2020-Q1 rows).
+  - Full suite 439 files / 4,101 tests. Root published as 1.0.0-4e10f9176de9.
+  - Real-AI runs per dataset are scheduled for 2026-10-23 02:00 UTC, after the demo quota resets.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
