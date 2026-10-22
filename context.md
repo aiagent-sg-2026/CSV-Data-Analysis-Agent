@@ -73,6 +73,7 @@
   - No-AI end-user audit, 6 viewports (320/390/430/768/1024/1440): no overflow, no unnamed controls, no small touch targets, no errors. All 8 fast datasets load with local processing only and matching row counts (median rent 9,505 of 9,507, because the source repeats 2020-Q1 rows).
   - Full suite 439 files / 4,101 tests. Root published as 1.0.0-4e10f9176de9.
   - Real-AI runs per dataset are scheduled for 2026-10-23 02:00 UTC, after the demo quota resets.
+  - Deployed as PR #36 (Pages, live 1.0.0-4e10f9176de9). On live: the 6-viewport audit is clean, all 8 fast datasets load with local processing only, and the large dataset sorts last.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
