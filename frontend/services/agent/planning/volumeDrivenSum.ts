@@ -1,4 +1,5 @@
-import type { CsvRow, QueryPlan, SqlEvidenceQueryPlan } from '../../../types';
+import type { ColumnProfile, CsvRow, QueryPlan, SqlEvidenceQueryPlan } from '../../../types';
+import { isRuntimeAbortError } from '../runtime/runtimeAbort';
 
 /**
  * Detects a SUM comparison whose group ranking is essentially the ranking of
@@ -102,14 +103,42 @@ export const buildVolumeCheckQuery = (params: {
     limit: MAX_VOLUME_CHECK_GROUPS,
 });
 
+/** Where the app already knows which columns are time dimensions. */
+export interface TimeDimensionContext {
+    profiles?: readonly ColumnProfile[];
+    /** Time grains from the runtime semantic understanding (date/time types and time-dimension annotations). */
+    timeGrains?: readonly string[];
+}
+
+/**
+ * A SUM over periods is a legitimate total trend even when each period's sum
+ * follows its row count, so time dimensions are exempt. This relies on the
+ * existing column typing and semantic annotations only, never on names.
+ */
+export const isTimeDimension = (dimension: string, context: TimeDimensionContext = {}): boolean => {
+    const key = dimension.trim().toLowerCase();
+    const profile = context.profiles?.find(candidate => candidate.name.trim().toLowerCase() === key);
+    if (profile?.type === 'date' || profile?.type === 'time') return true;
+    return (context.timeGrains ?? []).some(grain => grain.trim().toLowerCase() === key);
+};
+
+/** Cancellation and lost-lease errors must stop the run instead of being treated as "no finding". */
+export const isVolumeCheckCancellation = (error: unknown, signal?: AbortSignal): boolean =>
+    isRuntimeAbortError(error, signal) || signal?.aborted === true;
+
 /**
  * The volume check applies to an aggregate evidence query that compares groups
- * of one dimension by one unconditional SUM. Anything else (no grouping,
- * several dimensions, conditional sums, raw SQL) is left alone.
+ * of one non-time dimension by one unconditional SUM. Anything else (no
+ * grouping, several dimensions, conditional sums, raw SQL, time series) is
+ * left alone.
  */
-export const buildVolumeCheckPlan = (plan: SqlEvidenceQueryPlan): SqlEvidenceQueryPlan | null => {
+export const buildVolumeCheckPlan = (
+    plan: SqlEvidenceQueryPlan,
+    timeContext: TimeDimensionContext = {},
+): SqlEvidenceQueryPlan | null => {
     const query = plan.query;
     if (plan.queryMode !== 'aggregate' || query.rawSql || query.groupBy?.length !== 1) return null;
+    if (plan.preferredResultShape === 'time_series' || isTimeDimension(query.groupBy[0], timeContext)) return null;
     const sums = (query.aggregates ?? []).filter(aggregate => aggregate.function === 'sum');
     if (sums.length !== 1 || !sums[0].column || sums[0].where) return null;
     return {
@@ -134,8 +163,9 @@ export const readVolumeCheckRows = (rows: readonly CsvRow[]): GroupSumAndCount[]
 export const measureEvidenceVolumeDependence = async (
     plan: SqlEvidenceQueryPlan,
     runQuery: (checkPlan: SqlEvidenceQueryPlan) => Promise<{ result: { rows: CsvRow[] } }>,
+    options: TimeDimensionContext & { signal?: AbortSignal } = {},
 ): Promise<{ dependence: VolumeDependence; metric: string; dimension: string } | null> => {
-    const checkPlan = buildVolumeCheckPlan(plan);
+    const checkPlan = buildVolumeCheckPlan(plan, options);
     if (!checkPlan) return null;
     try {
         const execution = await runQuery(checkPlan);
@@ -147,7 +177,7 @@ export const measureEvidenceVolumeDependence = async (
             dimension: checkPlan.query.groupBy?.[0] ?? '',
         };
     } catch (error) {
-        if ((error as { name?: unknown } | null)?.name === 'AbortError') throw error;
+        if (isVolumeCheckCancellation(error, options.signal)) throw error;
         return null;
     }
 };

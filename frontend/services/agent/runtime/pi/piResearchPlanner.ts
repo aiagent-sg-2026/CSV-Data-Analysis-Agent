@@ -67,6 +67,7 @@ const buildSubmitTool = (params: {
     columns: ColumnProfile[];
     datasetVersion: string;
     measureGroups: MeasureGroupSumAndCount;
+    signal: AbortSignal;
     onAccepted: (plan: ResearchPlan, additivity: Record<string, ColumnAdditivity>) => void;
 }): AgentTool => {
     let submissions = 0;
@@ -103,7 +104,7 @@ const buildSubmitTool = (params: {
             const additivity = validateColumnAdditivity((args as { columns?: unknown })?.columns, params.columns);
             // Hold each question to the model's own additivity judgement, then check grouped sums against the data.
             const methods = checkQuestionMethods(validation.questions, { ...readProfileAdditivity(params.columns), ...additivity.accepted });
-            const volume = await checkSumVolumeDependence(methods.questions, params.measureGroups);
+            const volume = await checkSumVolumeDependence(methods.questions, params.measureGroups, { profiles: params.columns, signal: params.signal });
             const methodRejections = [...methods.rejected, ...volume.rejected];
             const checked = { questions: volume.questions, rejected: [...validation.rejected, ...methodRejections] };
             // A method problem is worth a corrected resubmission rather than silently dropping the question.
@@ -193,6 +194,7 @@ export const runPiResearchPlanner = async (params: {
             columns,
             datasetVersion,
             measureGroups: params.measureGroups ?? createEvidenceQueryMeasure(store, planningController.signal),
+            signal: planningController.signal,
             onAccepted: (plan, additivity) => { accepted = plan; acceptedAdditivity = additivity; },
         }),
     ];

@@ -1378,7 +1378,7 @@ describe('topicProcessor', { timeout: 15000 }, () => {
         const volumeRows = (pairs: Array<[number, number]>) => pairs.map(([sum, rows], index) => ({
             Region: `R${index}`, volume_check_sum: sum, volume_check_rows: rows,
         }));
-        const runWithVolumeRows = async (rows: Array<Record<string, unknown>>, options: Record<string, unknown> = {}) => {
+        const runWithVolumeRows = async (rows: Array<Record<string, unknown>>, options: Record<string, unknown> = {}, regionType = 'categorical') => {
             // Reuse the default evidence result from beforeEach without recording a call.
             const defaultEvidence = await executeEvidenceQueryMock.getMockImplementation()!({} as never);
             executeEvidenceQueryMock.mockImplementation(async (plan: { title: string }) => (
@@ -1390,7 +1390,7 @@ describe('topicProcessor', { timeout: 15000 }, () => {
             const state = {
                 isChangingGoal: false,
                 columnProfiles: [
-                    { name: 'Region', type: 'categorical', uniqueValues: 4 },
+                    { name: 'Region', type: regionType, uniqueValues: 4 },
                     { name: 'Revenue', type: 'numerical' },
                 ],
                 settings: { provider: 'google', geminiApiKey: 'test-key', openAIApiKey: '', language: 'English', autoConfirmGoal: true },
@@ -1435,6 +1435,27 @@ describe('topicProcessor', { timeout: 15000 }, () => {
 
             expect(valueGate.reasonCodes).not.toContain('volume_driven_sum');
             expect(valueGate.reasonCodes).not.toContain('volume_driven_total');
+        });
+
+        it('does not check a SUM over a date-typed dimension, which is a legitimate total trend', async () => {
+            const { volumeCall, valueGate } = await runWithVolumeRows(volumeRows([[900, 90], [700, 70], [500, 52], [300, 31], [100, 9]]), {}, 'date');
+
+            expect(volumeCall).toBeUndefined();
+            expect(valueGate.reasonCodes).not.toContain('volume_driven_sum');
+        });
+
+        it('does not check a time-series plan', async () => {
+            generateEvidenceQueryPlanWithRetryMock.mockResolvedValue({
+                title: 'Revenue over time',
+                queryMode: 'aggregate',
+                query: { select: ['Region', 'Revenue'], groupBy: ['Region'], aggregates: [{ function: 'sum', column: 'Revenue', as: 'Revenue' }] },
+                intentSummary: 'Revenue trend.',
+                preferredResultShape: 'time_series',
+            });
+            const { volumeCall, valueGate } = await runWithVolumeRows(volumeRows([[900, 90], [700, 70], [500, 52], [300, 31], [100, 9]]));
+
+            expect(volumeCall).toBeUndefined();
+            expect(valueGate.reasonCodes).not.toContain('volume_driven_sum');
         });
 
         it('leaves aggregated rows with equal group sizes unflagged', async () => {

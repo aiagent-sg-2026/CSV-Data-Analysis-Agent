@@ -640,12 +640,17 @@ export const processSingleTopic = async (
                 // Skipping AI evidence evaluation saves 5 calls + ~1000 tokens/run.
                 const aiEvaluation = null;
                 // A grouped SUM is compared with the groups' row counts over the same population.
+                // Time dimensions and time-series plans are exempt: a total per period is a legitimate trend.
                 const volumeMeasurement = await measureEvidenceVolumeDependence(evidencePlan, checkPlan => executeEvidenceQuery(checkPlan, store, binding, {
                     topic,
                     dataset: data,
                     suppressQueryStateUpdates: true,
                     abortSignal: options?.abortSignal,
-                }));
+                }), {
+                    profiles: getState().columnProfiles,
+                    timeGrains: semanticUnderstanding.timeGrains,
+                    signal: options?.abortSignal,
+                });
                 const valueGate = evaluateEvidenceValue({
                     semanticUnderstanding,
                     evidencePlan,

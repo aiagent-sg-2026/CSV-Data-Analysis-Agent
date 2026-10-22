@@ -11,9 +11,11 @@ import type {
 import {
     assessVolumeDependence,
     buildVolumeCheckPlan,
+    isTimeDimension,
     measureEvidenceVolumeDependence,
     spearmanRankCorrelation,
 } from '../services/agent/planning/volumeDrivenSum';
+import { REASON_CODE_LABELS, humanizeReasonCode } from '../services/reporting/reportLocalization';
 import {
     checkQuestionMethods,
     checkSumVolumeDependence,
@@ -106,6 +108,28 @@ describe('buildVolumeCheckPlan', () => {
         await expect(measureEvidenceVolumeDependence(sumPlan, async () => { throw new Error('duckdb down'); })).resolves.toBeNull();
         const abort = Object.assign(new Error('cancelled'), { name: 'AbortError' });
         await expect(measureEvidenceVolumeDependence(sumPlan, async () => { throw abort; })).rejects.toBe(abort);
+        // Any failure after the run was cancelled stops the run too, not only errors named AbortError.
+        const controller = new AbortController();
+        controller.abort(new Error('lease lost'));
+        const late = new Error('query failed after cancellation');
+        await expect(measureEvidenceVolumeDependence(sumPlan, async () => { throw late; }, { signal: controller.signal })).rejects.toBe(late);
+    });
+
+    it('exempts time dimensions by their date/time type or semantic time grain, and time-series plans', () => {
+        const profiles = [{ name: 'Region', type: 'date' }] as unknown as ColumnProfile[];
+        expect(isTimeDimension('region', { profiles })).toBe(true);
+        expect(isTimeDimension('Region', { timeGrains: ['Region'] })).toBe(true);
+        expect(isTimeDimension('Region', { profiles: [{ name: 'Region', type: 'categorical' }] as unknown as ColumnProfile[] })).toBe(false);
+        expect(buildVolumeCheckPlan(sumPlan, { profiles })).toBeNull();
+        expect(buildVolumeCheckPlan(sumPlan, { timeGrains: ['Region'] })).toBeNull();
+        expect(buildVolumeCheckPlan({ ...sumPlan, preferredResultShape: 'time_series' })).toBeNull();
+    });
+
+    it('has report labels for the volume reason codes', () => {
+        for (const code of ['volume_driven_sum', 'volume_driven_total', 'volume_driven_aggregate']) {
+            expect(REASON_CODE_LABELS[code]).toBeTruthy();
+            expect(humanizeReasonCode(code)).toBe(REASON_CODE_LABELS[code]);
+        }
     });
 });
 
@@ -181,6 +205,17 @@ describe('research plan method checks', () => {
         expect(questions.map(item => item.title)).toEqual(['Revenue by town', 'Median price by town', 'Total transaction value by town']);
         // Only grouped SUMs without a stated total intent are measured.
         expect(measure.mock.calls).toEqual([['town', 'resale_price'], ['town', 'revenue']]);
+    });
+
+    it('does not check a grouped SUM over a date-typed dimension', async () => {
+        const withDate = [...columns, { name: 'sold_on', type: 'date' }] as unknown as ColumnProfile[];
+        const measure = vi.fn(async () => groups(MIRRORS_COUNT));
+        const questions = validateResearchQuestions({ questions: [question({ title: 'Total by date', dimension: 'sold_on' })] }, withDate).questions;
+        const result = await checkSumVolumeDependence(questions, measure, { profiles: withDate });
+
+        expect(measure).not.toHaveBeenCalled();
+        expect(result.rejected).toEqual([]);
+        expect(result.questions).toHaveLength(1);
     });
 
     it('keeps the question when the data cannot be measured', async () => {

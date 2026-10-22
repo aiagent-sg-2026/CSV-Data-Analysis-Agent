@@ -1,6 +1,6 @@
 import { AGGREGATION_TYPES, isAggregationType } from '../../../../types/analysis';
 import type { AggregationType, ColumnAdditivity, ColumnProfile, DataAnalysisHypothesis, ResearchPlan, ResearchPlanQuestion } from '../../../../types';
-import { assessVolumeDependence, describeVolumeDependence, type GroupSumAndCount } from '../../planning/volumeDrivenSum';
+import { assessVolumeDependence, describeVolumeDependence, isTimeDimension, isVolumeCheckCancellation, type GroupSumAndCount } from '../../planning/volumeDrivenSum';
 
 export const MIN_PLAN_QUESTIONS = 2;
 export const MAX_PLAN_QUESTIONS = 6;
@@ -240,17 +240,20 @@ export type MeasureGroupSumAndCount = (dimension: string, metric: string) => Pro
  * Checks each grouped SUM question against the data: when the SUM ranking of
  * the groups is essentially their row-count ranking, the question mostly
  * measures how many rows each group has. Such a question is sent back unless
- * Pi marked it as explicitly about total volume. A failed measurement never
- * rejects anything.
+ * Pi marked it as explicitly about total volume. A total over a time dimension
+ * (by the column's date/time type) is a trend and is not checked. A failed
+ * measurement never rejects anything.
  */
 export const checkSumVolumeDependence = async (
     questions: readonly ResearchPlanQuestion[],
     measure: MeasureGroupSumAndCount,
+    options: { profiles?: readonly ColumnProfile[]; signal?: AbortSignal } = {},
 ): Promise<ResearchPlanValidation> => {
     const kept: ResearchPlanQuestion[] = [];
     const rejected: ResearchPlanValidation['rejected'] = [];
     for (const question of questions) {
-        if (question.aggregation !== 'sum' || !question.metric || !question.dimension || question.totalIntent) {
+        if (question.aggregation !== 'sum' || !question.metric || !question.dimension || question.totalIntent
+            || isTimeDimension(question.dimension, { profiles: options.profiles })) {
             kept.push(question);
             continue;
         }
@@ -258,7 +261,7 @@ export const checkSumVolumeDependence = async (
         try {
             groups = await measure(question.dimension, question.metric);
         } catch (error) {
-            if ((error as { name?: unknown } | null)?.name === 'AbortError') throw error;
+            if (isVolumeCheckCancellation(error, options.signal)) throw error;
             groups = null;
         }
         const dependence = groups ? assessVolumeDependence(groups) : null;
