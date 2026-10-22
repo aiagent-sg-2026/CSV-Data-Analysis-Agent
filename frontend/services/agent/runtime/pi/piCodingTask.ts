@@ -21,7 +21,7 @@ import { admitComputationEvidence, type ComputationEvidenceReceipt } from '../..
 export interface PiTaskContinuation { taskId: string; revision: number; scopeDigest: string }
 type Adapter = ReturnType<typeof createCodeExecutionAdapter>;
 type Guest = Parameters<typeof createCodeExecutionAdapter>[3];
-type RecordState = { task: AgentTaskContract; workspace: TaskWorkspace; skills:SkillSnapshot; mcp:import('../../connectors/httpMcpContract').McpTaskPort; skillPrograms:Map<string,{pin:PinnedSkill;reference:import('../../execution/codeExecutionContract').CodeArtifactRef}>; coding: boolean; scopeRepairAttempts:number; failureKey: string; repetitions: number; repairCommit?: TaskRepairCommit; retire?: () => void; inspection?: TaskInspectionProjection };
+type RecordState = { task: AgentTaskContract; workspace: TaskWorkspace; skills:SkillSnapshot; mcp:import('../../connectors/httpMcpContract').McpTaskPort; skillPrograms:Map<string,{pin:PinnedSkill;reference:import('../../execution/codeExecutionContract').CodeArtifactRef}>; coding: boolean; workStarted: boolean; scopeRepairAttempts:number; failureKey: string; repetitions: number; repairCommit?: TaskRepairCommit; retire?: () => void; inspection?: TaskInspectionProjection };
 const tasks = new WeakMap<StoreApi['getState'], RecordState>();
 const digest = (value: unknown) => sha256Bytes(new TextEncoder().encode(JSON.stringify(value)));
 const codingTool = (name: string) => name.startsWith('code.') || name.startsWith('candidate.') || ['workspace.write', 'workspace.append', 'workspace.replace'].includes(name);
@@ -65,7 +65,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
         const mcp = await awaitOwned(captureMcpTask(store, task.taskId, () => tasks.get(key) === record), store, lease);
         const workspace = createTaskWorkspace(root, task.taskId, { allowedPrefixes: ['/workspace/'], allowedPaths: ['/dataset/cleaned.csv'] });
         task = { ...task, protectedInvariants: [...task.protectedInvariants, { id: 'mcp-snapshot', digest: mcp.digest }] };
-        record = { task, workspace, skills,mcp,skillPrograms:new Map(), coding: false, scopeRepairAttempts:0, failureKey: '', repetitions: 0 };
+        record = { task, workspace, skills,mcp,skillPrograms:new Map(), coding: false, workStarted: false, scopeRepairAttempts:0, failureKey: '', repetitions: 0 };
         tasks.set(key, record);
         const captured = record;
         registerSessionResource(lease.scope, () => { captured.retire?.(); captured.workspace.dispose(); if (tasks.get(key) === captured) tasks.delete(key); });
@@ -104,6 +104,18 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
                 && (lease.kind === 'initial_analysis' || output.kind === 'card')), { id: 'staged-output', kind: 'artifact', required: true }] };
         if (['inspecting', 'validating', 'verifying'].includes(record.task.status)) move('programming');
     };
+    // `coding` selects the coding budget mode as soon as a coding tool is attempted. `workStarted` is narrower:
+    // it records that a coding step changed task state (code execution was granted, a meaning proposal was
+    // accepted, a candidate was staged, or a model-authored workspace file exists). A rejected proposal or a
+    // refused write changes nothing, so it must not close the initial-analysis cleaning skip.
+    const noteWork = () => {
+        if (record.workStarted) return;
+        try {
+            record.workStarted = receipts.length > 0 || Boolean(candidatePort?.validationRequirements().configured)
+                || (candidatePort?.list().length ?? 0) > 0
+                || record.workspace.list().some(artifact => !artifact.path.startsWith('/workspace/skill-support/'));
+        } catch { record.workStarted = true; /* Unknown state is treated as started work. */ }
+    };
     const ensureAdapter = () => {
         current();
         adapter ??= createCodeExecutionAdapter(store, record.workspace, () => record.task, guest);
@@ -132,7 +144,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
             if(reference.sha256!==file.sha256)throw new Error('skill_support_hash_mismatch');
             record.skillPrograms.set(path,{pin,reference});return reference;
         },
-        get snapshot() { return record.task; }, get coding() { return record.coding; }, get blockedReason() { return blockedReason; },
+        get snapshot() { return record.task; }, get coding() { return record.coding; }, get workStarted() { return record.workStarted; }, get blockedReason() { return blockedReason; },
         get plan() {
             current();
             const bundle = store.getState().datasetBundle;
@@ -268,6 +280,8 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
                 {charge({toolCalls:1});throw new Error('typed_scope_unresolved: Repair the classifier scope with task_scope_repair when available, otherwise request clarification. Read-only inspection remains available; do not execute a repair or computation yet.');}
             if (name === 'code.run') executionAccepted = false;
             if (name === 'candidate.stage' || name === 'candidate.infer_meaning') { candidateRequested = true; candidateAccepted = false; }
+            // These act on staged work (or request its approval), so they count as started work before they run.
+            if (['candidate.stage', 'candidate.validate', 'candidate.request_approval'].includes(name)) record.workStarted = true;
             if (name === 'candidate.validate') {validationRequested=true;validatedCandidateId='';lastValidationCandidateId='';activeValidationCall=toolCallId??crypto.randomUUID();}
             activateCoding(name);
             charge({ toolCalls: 1, ...(name === 'code.run' ? { transformationAttempts: 1 } : {}) });
@@ -290,13 +304,15 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
                     const support=record.skillPrograms.get(reference.path);
                     if(support)assertSupportAvailable(support.pin,reference.path);
                 }
-                record.task = { ...record.task, capabilityGrants: [grant] }; move('executing');
+                // Guest execution may write outputs as soon as a grant exists.
+                record.task = { ...record.task, capabilityGrants: [grant] }; record.workStarted = true; move('executing');
             }
         },
         afterTool(name, result, context) {
             current();
             inspection.observe(record.task, name, result, context.toolCallId!, candidatePort);
             record.inspection = inspection.snapshot;
+            if (codingTool(name)) noteWork();
             if(name==='computation.validate'&&result.status==='success')computationNeedsRevision=false;
             else if(name==='computation.validate'&&result.message.startsWith('independent_reference_mismatch'))computationNeedsRevision=true;
             if (name === 'computation.validate' && result.status === 'success') {
@@ -349,6 +365,8 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
             inspection.observe(record.task, name, {status:'error',toolName:'assistant_message',message:error,shouldStop:false}, toolCallId ?? crypto.randomUUID());
             record.inspection = inspection.snapshot;
             activateCoding(name.replace('_', '.'));
+            // A failed write can still have written first (for example input_version_changed), so check state.
+            if (codingTool(name.replace('_', '.'))) noteWork();
             if (name === 'code_run') executionAccepted = false;
             if (name === 'candidate_stage') { candidateRequested = true; candidateAccepted = false; }
             if(name==='candidate_validate'){validationRequested=true;validatedCandidateId='';lastValidationCandidateId='';activeValidationCall=toolCallId??crypto.randomUUID();}
@@ -448,6 +466,8 @@ export interface PiCodingTask {
     loadSkillProgram(pin:PinnedSkill,file:import('../../skills/skillManifest').SkillSupportFile):Promise<import('../../execution/codeExecutionContract').CodeArtifactRef>;
     readonly snapshot: AgentTaskContract;
     readonly coding: boolean;
+    /** True once a coding step changed task state; a rejected meaning proposal or refused write does not count. */
+    readonly workStarted: boolean;
     readonly blockedReason: string;
     recoverySnapshot(): { task:AgentTaskContract;failureKey:string;repetitions:number };
     attach(store: StoreApi): void;

@@ -189,42 +189,132 @@ describe('initial shared coding phase',()=>{
             expect(f.result.status,f.result.error?.message).toBe('completed');expect(io.commits).toBe(0);expect(io.queryCalls).toBe(1);
         }finally{beginSessionTransition(root);}
     });
-    const rejectedProposal=(root:StoreApi)=>({input:{kind:'table',name:'original',tableId:root.getState().datasetBundle!.primaryTableId},
+    const rejectedProposal=(root:StoreApi,note='Synthetic rejected proposal.')=>({input:{kind:'table',name:'original',tableId:root.getState().datasetBundle!.primaryTableId},
         table:{name:'facts',grain:['Name'],groupBy:[],columns:[{name:'Name',sourceColumn:'Name',dataType:'string',nullable:false,conversion:'identity'},
             {name:'Amount',sourceColumn:'Amount',dataType:'number',nullable:false,conversion:'identity',scale:2}],detailRanges:[{start:0,end:1}]},
         // Row 2 does not exist in the two-row no-cleaning fixture, so the host rejects the proposal.
-        exclusions:[{row:2,role:'subtotal'}],assumptions:['Synthetic rejected proposal.']});
-    it('says skipping is no longer permitted after a coding tool ran in the cleaning window',async()=>{
-        const root=bareStore();let step=0,gate='',skip='';
+        exclusions:[{row:2,role:'subtotal'}],assumptions:[note]});
+    // A real 0-operation plan, so dataset.suggestCleaningPlan passes without a pending-plan warning.
+    const zeroPlanStore=()=>{const root=bareStore();root.setState({dataPreparationPlan:{explanation:'',operations:[],outputColumns:[],planStatus:'operations',consistencyIssues:[]}});return root;};
+    const lastText=(context:Parameters<StreamFn>[1])=>{
+        const last=context.messages.filter(m=>m.role==='toolResult').at(-1);
+        return {last,text:last?.content.filter(p=>p.type==='text').map(p=>p.text).join('')??''};
+    };
+    it('keeps the skip open after a rejected meaning proposal, and the skip completes with no commit',async()=>{
+        const root=zeroPlanStore();let step=0,gate='',skipped='';
         try{
             const f=await preparePiInitialCodingUiSmoke(root,{mode:'no-cleaning',wrapStream:()=>scripted(context=>{
-                const last=context.messages.filter(m=>m.role==='toolResult').at(-1),text=last?.content.filter(p=>p.type==='text').map(p=>p.text).join('')??'';
-                const index=step++;
+                const {text}=lastText(context),index=step++;
                 if(index<3)return tool('run_next_analysis_stage',{});
                 if(index===3)return tool('candidate_infer_meaning',rejectedProposal(root));
                 if(index===4){expect(JSON.parse(text).status).toBe('blocked');return tool('run_next_analysis_stage',{stage:'dataset.applyTransform'});}
                 if(index===5){gate=text;return tool('run_next_analysis_stage',{stage:'dataset.validatePreparedData'});}
+                if(index===6)skipped=text;
+                return tool('run_next_analysis_stage',{});
+            })});
+            expect(gate).toMatch(/^initial_cleaning_requires_exact_candidate_approval: /);
+            expect(gate).toContain('call run_next_analysis_stage with {"stage":"dataset.validatePreparedData"}');
+            expect(gate).toContain('Rejected candidate_infer_meaning proposals do not close the skip');
+            expect(JSON.parse(skipped)).toMatchObject({stage:'dataset.validatePreparedData',decision:'pass'});
+            expect(f.result.status,f.result.error?.message).toBe('completed');expect(io.commits).toBe(0);expect(io.queryCalls).toBe(1);
+            expect(root.getState().pendingClarification).toBeNull();
+        }finally{beginSessionTransition(root);}
+    });
+    it('closes the skip after an accepted meaning proposal, as before',async()=>{
+        const root=bareStore();let step=0,accepted='',gate='',skip='';
+        try{
+            // The default repair fixture has a third (subtotal) row, so this proposal is accepted.
+            const f=await preparePiInitialCodingUiSmoke(root,{wrapStream:()=>scripted(context=>{
+                const {text}=lastText(context),index=step++;
+                if(index<3)return tool('run_next_analysis_stage',{});
+                if(index===3)return tool('candidate_infer_meaning',rejectedProposal(root,'Name identifies one detail fact; the final subtotal covers every detail.'));
+                if(index===4){accepted=text;return tool('run_next_analysis_stage',{stage:'dataset.applyTransform'});}
+                if(index===5){gate=text;return tool('run_next_analysis_stage',{stage:'dataset.validatePreparedData'});}
                 if(index===6)skip=text;
                 return tool('run_next_analysis_stage',{stage:'dataset.validatePreparedData'});
             })});
-            expect(gate).toMatch(/^initial_cleaning_requires_exact_candidate_approval: /);
+            expect(JSON.parse(accepted).status).toBe('success');
             expect(gate).toContain('Skipping cleaning is no longer permitted');expect(gate).not.toContain('{"stage":"dataset.validatePreparedData"}');
             expect(skip).toMatch(/^initial_cleaning_requires_exact_candidate_approval: .*no longer permitted/);
             expect(f.result.status).toBe('blocked');expect(root.getState().analysisCards).toHaveLength(0);expect(io.commits).toBe(0);
         }finally{beginSessionTransition(root);}
     });
-    it('stops the cleaning window after repeated rejected meaning proposals instead of spending the time budget',async()=>{
+    it('closes the skip after a successful workspace write but not after a refused one',async()=>{
+        const root=bareStore();let step=0;const gates:string[]=[];
+        try{
+            const f=await preparePiInitialCodingUiSmoke(root,{mode:'no-cleaning',wrapStream:()=>scripted(context=>{
+                const {text}=lastText(context),index=step++;
+                if(index<3)return tool('run_next_analysis_stage',{});
+                if(index===3)return tool('workspace_write',{path:'/workspace/probe.js',expectedRevision:4,content:'return 1;'});
+                if(index===4)return tool('run_next_analysis_stage',{stage:'dataset.applyTransform'});
+                if(index===5){gates.push(text);return tool('workspace_write',{path:'/workspace/probe.js',expectedRevision:0,content:'return 1;'});}
+                if(index===6)return tool('run_next_analysis_stage',{stage:'dataset.applyTransform'});
+                if(index===7)gates.push(text);
+                return tool('run_next_analysis_stage',{stage:'dataset.validatePreparedData'});
+            })});
+            expect(gates[0]).toContain('call run_next_analysis_stage with {"stage":"dataset.validatePreparedData"}');
+            expect(gates[1]).toContain('Skipping cleaning is no longer permitted');
+            expect(f.result.status).toBe('blocked');expect(io.commits).toBe(0);
+        }finally{beginSessionTransition(root);}
+    });
+    it('returns skip guidance at the rejection threshold while skipping is permitted, and the skip completes',async()=>{
+        const root=zeroPlanStore();let calls=0,guidance='';
+        try{
+            const f=await preparePiInitialCodingUiSmoke(root,{mode:'no-cleaning',wrapStream:()=>scripted(context=>{
+                const {text}=lastText(context),index=calls++;
+                if(index<3)return tool('run_next_analysis_stage',{});
+                // Vary the proposal so identical-failure detection cannot be what changes the flow.
+                if(index<7)return tool('candidate_infer_meaning',rejectedProposal(root,`Synthetic rejected proposal ${index}.`));
+                if(index===7){guidance=JSON.parse(text).hostGuidance;return tool('run_next_analysis_stage',{stage:'dataset.validatePreparedData'});}
+                return tool('run_next_analysis_stage',{});
+            })});
+            expect(guidance).toMatch(/^initial_cleaning_meaning_skip_required: 4 candidate_infer_meaning proposal\(s\) were rejected/);
+            expect(guidance).toContain('Call run_next_analysis_stage with {"stage":"dataset.validatePreparedData"}');
+            expect(f.result.status,f.result.error?.message).toBe('completed');expect(io.commits).toBe(0);expect(io.queryCalls).toBe(1);
+        }finally{beginSessionTransition(root);}
+    });
+    it('returns skip guidance after schema-invalid proposals that never reach the tool',async()=>{
+        const root=zeroPlanStore();let calls=0,steered='';
+        try{
+            const f=await preparePiInitialCodingUiSmoke(root,{mode:'no-cleaning',wrapStream:()=>scripted(context=>{
+                const index=calls++;
+                if(index<3)return tool('run_next_analysis_stage',{});
+                if(index<7)return tool('candidate_infer_meaning',{note:`not a proposal ${index}`});
+                if(index===7){const last=context.messages.at(-1);steered=last?.role==='user'?JSON.stringify(last.content):'';
+                    return tool('run_next_analysis_stage',{stage:'dataset.validatePreparedData'});}
+                return tool('run_next_analysis_stage',{});
+            })});
+            expect(steered).toContain('initial_cleaning_meaning_skip_required: 4 candidate_infer_meaning');
+            expect(f.result.status,f.result.error?.message).toBe('completed');expect(io.commits).toBe(0);
+        }finally{beginSessionTransition(root);}
+    });
+    it('stops blocked when the model ignores the skip guidance for two turns',async()=>{
+        const root=bareStore();let calls=0;const refused:string[]=[];
+        try{
+            const f=await preparePiInitialCodingUiSmoke(root,{mode:'no-cleaning',wrapStream:()=>scripted(context=>{
+                const {last,text}=lastText(context),index=calls++;
+                if(index>7&&last?.isError)refused.push(text);
+                if(index<3)return tool('run_next_analysis_stage',{});
+                return tool('candidate_infer_meaning',rejectedProposal(root,`Synthetic rejected proposal ${index}.`));
+            })});
+            expect(f.result.status).toBe('blocked');
+            expect(f.result.error?.message).toMatch(/^initial_cleaning_meaning_no_progress: .*not skipped within 2 turns of the skip guidance/);
+            expect(calls).toBe(9);expect(refused[0]).toMatch(/^initial_cleaning_meaning_skip_required: /);
+            expect(root.getState().analysisCards).toHaveLength(0);expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);
+        }finally{beginSessionTransition(root);}
+    });
+    it('stops blocked at the rejection threshold once cleaning work has started',async()=>{
         const root=bareStore();let calls=0;
         try{
             const f=await preparePiInitialCodingUiSmoke(root,{mode:'no-cleaning',wrapStream:()=>scripted(()=>{
                 const index=calls++;
                 if(index<3)return tool('run_next_analysis_stage',{});
-                // Vary the proposal so identical-failure detection cannot be what stops the loop.
-                return tool('candidate_infer_meaning',{...rejectedProposal(root),assumptions:[`Synthetic rejected proposal ${index}.`]});
+                if(index===3)return tool('workspace_write',{path:'/workspace/probe.js',expectedRevision:0,content:'return 1;'});
+                return tool('candidate_infer_meaning',rejectedProposal(root,`Synthetic rejected proposal ${index}.`));
             })});
             expect(f.result.status).toBe('blocked');
-            expect(f.result.error?.message).toMatch(/^initial_cleaning_meaning_no_progress: 4 candidate_infer_meaning proposal\(s\) were rejected \(4 in a row\)/);
-            expect(calls).toBe(7);expect(root.getState().activeAgentTask?.status).toBe('blocked');
+            expect(f.result.error?.message).toMatch(/^initial_cleaning_meaning_no_progress: 4 candidate_infer_meaning proposal\(s\) were rejected \(4 in a row\) after cleaning work started/);
+            expect(calls).toBe(8);expect(root.getState().activeAgentTask?.status).toBe('blocked');
             expect(root.getState().analysisCards).toHaveLength(0);expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);
         }finally{beginSessionTransition(root);}
     });
