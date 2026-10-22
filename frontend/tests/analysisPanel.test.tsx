@@ -1358,6 +1358,22 @@ describe('analysis panel rendering', () => {
         expect(store.setIsSettingsModalOpen).toHaveBeenCalledWith(true);
     });
 
+    it('hides the dead-end cleaning banner when a retry is declined again', () => {
+        const store = {
+            ...createRecoveryStore(),
+            initialAnalysisFailureKind: 'cloud_consent_declined',
+            cleaningRun: { status: 'failed' as const },
+            currentDatasetId: 'dataset-local',
+            settings: { language: 'English', provider: 'openai' },
+        };
+        (useAppStoreModule.useAppStore as unknown as ReturnType<typeof vi.fn>).mockImplementation((selector: (value: typeof store) => unknown) => selector(store));
+
+        render(<AnalysisPanel />);
+
+        expect(screen.getByRole('button', { name: 'Allow cloud AI analysis' })).toBeInTheDocument();
+        expect(screen.queryByText(/Dataset cleaning stopped after an error/)).not.toBeInTheDocument();
+    });
+
     it('opens structure repair only for a verified structure block', () => {
         const store = createRecoveryStore();
         store.pipelineOutcome = { status: 'needs_structure_review', canAutoAnalyze: false };

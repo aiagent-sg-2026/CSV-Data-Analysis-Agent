@@ -201,7 +201,9 @@ const AnalysisPanelComponent: React.FC = () => {
             && (cleaningRun.status !== 'completed' || dataPreparationPlan?.sqlPrecheck?.status === 'blocked' || dataPreparationPlan?.sqlPrecheck?.status === 'warning')
             && !isSpreadsheetVisible
             && !analysisAlreadyStarted
+            // Cleaning cannot continue without the provider or the cloud AI consent; the next step covers both.
             && initialAnalysisFailureKind !== 'provider'
+            && initialAnalysisFailureKind !== 'cloud_consent_declined'
             // The step tracker already shows preparation progress while the analysis runs.
             && initialAnalysisStatus !== 'running';
         const showReportHeader = Boolean(reportContext && csvData);
