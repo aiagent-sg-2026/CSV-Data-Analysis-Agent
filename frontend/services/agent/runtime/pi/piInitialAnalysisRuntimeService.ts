@@ -147,6 +147,21 @@ const run = async (
     let recoveryEnabled = Boolean(checkpointSource) && !store.getState().csvData?.backing?.ephemeral;
     let providerTurns = 0;
     let invalidStageRequests = 0;
+    // Mirrors the host skip rule: once a coding tool ran in the qualified cleaning window, only an exactly
+    // approved candidate commit may advance past cleaning.
+    const cleaningSkipPermitted = () => !(executorPreparation?.task.coding && !checkpoint?.coding?.commit);
+    // The bare governance code left the model choosing between a skip and an open-ended repair loop. Keep the
+    // stable code first and state the planned operation count and the next calls the host will accept.
+    const cleaningGateError = (): Error => {
+        const operations = store.getState().dataPreparationPlan?.operations?.length;
+        const planned = typeof operations === 'number'
+            ? `dataset.suggestCleaningPlan planned ${operations} governed cleaning operation(s).`
+            : 'No governed cleaning plan is available.';
+        const next = cleaningSkipPermitted()
+            ? `Cleaning is optional when nothing needs repair${operations === 0 ? ', and with 0 planned operations skipping is the expected path unless your own inspection found a concrete defect' : ''}. To skip it, call run_next_analysis_stage with {"stage":"dataset.validatePreparedData"}. Skipping is permitted only before any candidate_*, code_*, workspace_write, workspace_replace or workspace_append call.`
+            : 'Skipping cleaning is no longer permitted: a coding tool already ran in this cleaning window, so only an exactly approved candidate can advance this run.';
+        return new Error(`initial_cleaning_requires_exact_candidate_approval: dataset.applyTransform cannot publish cleaning in this governed run. ${planned} ${next} A real repair needs the exact candidate flow: candidate_infer_meaning, workspace_write your JavaScript program, code_run, candidate_stage, candidate_validate, then candidate_request_approval for exact human approval.`);
+    };
     const timer = setTimeout(() => controller.abort(new Error('The Pi initial-analysis time budget expired.')),
         Math.max(1,INITIAL_ANALYSIS_BUDGET_MS-(checkpoint?.coding?.budget.used.activeMs??0)));
     const persistCheckpoint = async (pendingStageIndex: number | null) => {
@@ -220,7 +235,7 @@ const run = async (
                         && requestedName === choices.required)
                     || (requestedIndex > nextStageIndex && choices.skippable.includes(requestedName));
                 if (allowed) {
-                    if(qualified&&executorPreparation?.task.coding&&requestedIndex>nextStageIndex&&!checkpoint?.coding?.commit)throw new Error('initial_cleaning_requires_exact_candidate_approval');
+                    if(qualified&&requestedIndex>nextStageIndex&&!cleaningSkipPermitted())throw cleaningGateError();
                     invalidStageRequests = 0;
                     if (requestedIndex > nextStageIndex) {
                         emitAgentEvent(store, {
@@ -244,8 +259,8 @@ const run = async (
             }
             const stageIndex = nextStageIndex;
             const stage = STAGES[stageIndex];
-            if(qualified&&stageIndex===3)throw new Error('initial_cleaning_requires_exact_candidate_approval');
-            if(qualified&&executorPreparation?.task.coding&&stageIndex>=4&&!checkpoint?.coding?.commit)throw new Error('initial_cleaning_requires_exact_candidate_approval');
+            if(qualified&&stageIndex===3)throw cleaningGateError();
+            if(qualified&&stageIndex>=4&&!cleaningSkipPermitted())throw cleaningGateError();
             if(qualified)await executorPreparation!.task.beforeTool('run_next_analysis_stage',{},_id);
             await persistCheckpoint(stageIndex);
             const state = store.getState();

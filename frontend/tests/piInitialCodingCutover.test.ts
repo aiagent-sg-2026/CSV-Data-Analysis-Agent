@@ -161,6 +161,58 @@ describe('initial shared coding phase',()=>{
             expect(root.getState().pendingClarification).toBeNull();expect(root.getState().csvData?.data).toHaveLength(2);
         }finally{beginSessionTransition(root);}
     });
+    it('names the skip call when qualified cleaning planned 0 operations, and the skip then succeeds',async()=>{
+        const root=bareStore();root.setState({dataPreparationPlan:{explanation:'',operations:[],outputColumns:[],planStatus:'operations',consistencyIssues:[]}});
+        let step=0,gate='',skipped='',listing:{files?:{path:string}[];totalFiles?:number;truncated?:boolean}|undefined,taskPlan:unknown;const stages:string[]=[];
+        try{
+            const f=await preparePiInitialCodingUiSmoke(root,{mode:'no-cleaning',wrapStream:()=>scripted(context=>{
+                const last=context.messages.filter(m=>m.role==='toolResult').at(-1),text=last?.content.filter(p=>p.type==='text').map(p=>p.text).join('')??'';
+                if(last?.toolName==='run_next_analysis_stage'&&!last.isError)stages.push((JSON.parse(text) as {stage:string}).stage);
+                const index=step++;
+                if(index<3)return tool('run_next_analysis_stage',{});
+                if(index===3)return tool('run_next_analysis_stage',{stage:'dataset.applyTransform',reason:'a data quality note is present'});
+                // A read-only listing inside the cleaning window must show entries and must not forfeit the skip.
+                if(index===4){gate=text;return tool('workspace_list',{path:'/dataset'});}
+                if(index===5){const parsed=JSON.parse(text);listing=parsed.payload?.workspace?.result;taskPlan=parsed.taskPlan;
+                    return tool('run_next_analysis_stage',{stage:'dataset.validatePreparedData',reason:'The cleaning plan produced no operations'});}
+                if(index===6)skipped=text;
+                return tool('run_next_analysis_stage',{});
+            })});
+            expect(gate).toMatch(/^initial_cleaning_requires_exact_candidate_approval: /);
+            expect(gate).toContain('planned 0 governed cleaning operation(s)');
+            expect(gate).toContain('call run_next_analysis_stage with {"stage":"dataset.validatePreparedData"}');
+            expect(gate).toContain('candidate_request_approval');
+            expect(listing?.files?.map(file=>file.path)).toEqual(expect.arrayContaining(['/dataset/cleaned.csv']));
+            expect(listing).toMatchObject({truncated:false});expect(listing?.totalFiles).toBeGreaterThan(0);expect(taskPlan).toBeDefined();
+            expect(JSON.parse(skipped)).toMatchObject({stage:'dataset.validatePreparedData',decision:'pass'});
+            expect(stages.slice(0,4)).toEqual(['dataset.profileStructure','dataset.detectNoiseRows','dataset.suggestCleaningPlan','dataset.validatePreparedData']);
+            expect(f.result.status,f.result.error?.message).toBe('completed');expect(io.commits).toBe(0);expect(io.queryCalls).toBe(1);
+        }finally{beginSessionTransition(root);}
+    });
+    const rejectedProposal=(root:StoreApi)=>({input:{kind:'table',name:'original',tableId:root.getState().datasetBundle!.primaryTableId},
+        table:{name:'facts',grain:['Name'],groupBy:[],columns:[{name:'Name',sourceColumn:'Name',dataType:'string',nullable:false,conversion:'identity'},
+            {name:'Amount',sourceColumn:'Amount',dataType:'number',nullable:false,conversion:'identity',scale:2}],detailRanges:[{start:0,end:1}]},
+        // Row 2 does not exist in the two-row no-cleaning fixture, so the host rejects the proposal.
+        exclusions:[{row:2,role:'subtotal'}],assumptions:['Synthetic rejected proposal.']});
+    it('says skipping is no longer permitted after a coding tool ran in the cleaning window',async()=>{
+        const root=bareStore();let step=0,gate='',skip='';
+        try{
+            const f=await preparePiInitialCodingUiSmoke(root,{mode:'no-cleaning',wrapStream:()=>scripted(context=>{
+                const last=context.messages.filter(m=>m.role==='toolResult').at(-1),text=last?.content.filter(p=>p.type==='text').map(p=>p.text).join('')??'';
+                const index=step++;
+                if(index<3)return tool('run_next_analysis_stage',{});
+                if(index===3)return tool('candidate_infer_meaning',rejectedProposal(root));
+                if(index===4){expect(JSON.parse(text).status).toBe('blocked');return tool('run_next_analysis_stage',{stage:'dataset.applyTransform'});}
+                if(index===5){gate=text;return tool('run_next_analysis_stage',{stage:'dataset.validatePreparedData'});}
+                if(index===6)skip=text;
+                return tool('run_next_analysis_stage',{stage:'dataset.validatePreparedData'});
+            })});
+            expect(gate).toMatch(/^initial_cleaning_requires_exact_candidate_approval: /);
+            expect(gate).toContain('Skipping cleaning is no longer permitted');expect(gate).not.toContain('{"stage":"dataset.validatePreparedData"}');
+            expect(skip).toMatch(/^initial_cleaning_requires_exact_candidate_approval: .*no longer permitted/);
+            expect(f.result.status).toBe('blocked');expect(root.getState().analysisCards).toHaveLength(0);expect(io.commits).toBe(0);
+        }finally{beginSessionTransition(root);}
+    });
     it.each(['switch','stop'] as const)('fences a deferred post-approval query after %s',async mode=>{
         const root=bareStore(),gate=deferred(),started=deferred();try{
             await preparePiInitialCodingUiSmoke(root);io.beforeQuery=()=>{started.resolve();return gate.promise;};
