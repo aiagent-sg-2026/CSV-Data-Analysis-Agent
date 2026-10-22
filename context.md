@@ -21,6 +21,11 @@
   - **Second blocker:** `DEMO_INPUT_TOO_LARGE` at about 216 KB (62 input items, 24 tools), around 140 s into the run.
     - Needs an owner decision: a Default-only Pi context budget (this changes the documented 200k/80% policy) or a gateway limit change.
   - **Also seen (not yet confirmed outside the route harness):** `DuckDB binding unavailable` and `workspace_path_denied` tool errors.
+- **Hotfix deployed (PR #33, Pages run 34, live build ff9cb0d49e61)**:
+  - Live real-AI run: no more `additional_tools` rejection. Analysis now reaches stage 4/9 "Prepare" (15 successful agent turns).
+  - It then stops at about 124 s with `DEMO_INPUT_TOO_LARGE` ("token safety bound", 209 KB, 51 items, 24 tools).
+  - The same live run logged `DuckDB binding unavailable` for Pi `data.missing`/`data.describe`, and `workspace_path_denied` for `workspace.list`. Both are real live tool errors, not harness artifacts. They waste agent turns and grow the transcript.
+  - Owner decision still pending on the input budget.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
