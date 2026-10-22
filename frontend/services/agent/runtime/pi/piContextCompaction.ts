@@ -32,6 +32,8 @@ export interface PiRequestByteBudget {
     overheadBytes: number;
     /** Recent history kept verbatim after compaction. */
     keepRecentBytes: number;
+    /** Largest accepted summary, JSON-escaped as it is sent. */
+    summaryMaxBytes: number;
 }
 
 export interface PiContextCompactorOptions {
@@ -45,6 +47,20 @@ const SUMMARY_SYSTEM_PROMPT = 'Summarize earlier Pi agent history for continuati
 
 const utf8 = new TextEncoder();
 const utf8Bytes = (text: string): number => utf8.encode(text).length;
+// Text travels as a JSON string inside the request body, so measure it escaped.
+const jsonStringBytes = (text: string): number => utf8Bytes(JSON.stringify(text));
+
+/**
+ * The summarizer instruction. Under a byte budget it also asks for a summary that fits the
+ * byte cap; one character per three bytes is safe for CJK text, which is 3 bytes per character.
+ */
+export const piSummarySystemPrompt = (byteBudget?: PiRequestByteBudget): string => byteBudget
+    ? `${SUMMARY_SYSTEM_PROMPT} Keep the summary under ${Math.floor(byteBudget.summaryMaxBytes / 3).toLocaleString('en-US')} characters.`
+    : SUMMARY_SYSTEM_PROMPT;
+
+const summaryTooLarge = (summary: string, byteBudget?: PiRequestByteBudget): boolean =>
+    summary.length > SUMMARY_MAX_CHARS
+    || (byteBudget !== undefined && jsonStringBytes(summary) > byteBudget.summaryMaxBytes);
 
 /**
  * Bytes of the transcript as JSON. The tool declarations travel on system messages
@@ -121,6 +137,7 @@ export const createPiContextCompactor = (
         // Later system messages carry tool-set and prompt deltas (pi-agent-core declares tools
         // added after construction this way). The provider derives the request `tools` from
         // them, so they must survive compaction instead of being summarized away.
+        // This fix applies to every provider, not only to the Default gateway byte budget.
         const headThrough = (through: number): AgentMessage[] => [
             messages[0],
             ...messages.slice(1, through).filter(message => message.role === 'system'),
@@ -166,7 +183,7 @@ export const createPiContextCompactor = (
             const toSummarize = projected.slice(head.length, cut).filter(message => message.role !== 'system');
             const nextSummary = (await summarize(toSummarize, signal)).trim();
             if (signal?.aborted) return projected;
-            if (!nextSummary || nextSummary.length > SUMMARY_MAX_CHARS) {
+            if (!nextSummary || summaryTooLarge(nextSummary, byteBudget)) {
                 degrade('summary_unusable', new Error(nextSummary ? 'Pi summary exceeded the size limit.' : 'Pi summary was empty.'), size);
                 return projected;
             }
@@ -214,8 +231,7 @@ const OMITTED_HISTORY_MARKER = '\n\n[... earlier history omitted to fit the summ
  * user goal and any earlier summary; the end holds the latest work. The middle is dropped.
  */
 export const fitSummaryHistory = (history: string, maxBytes: number): string => {
-    // The history travels as a JSON string inside the request body, so measure it escaped.
-    const bytes = (text: string) => utf8Bytes(JSON.stringify(text));
+    const bytes = jsonStringBytes;
     if (bytes(history) <= maxBytes) return history;
     let keepChars = Math.min(history.length, maxBytes);
     let fitted = '';
@@ -237,14 +253,15 @@ export const createPiProviderContextCompactor = (
 ) => {
     const byteBudget = options.requestByteBudget;
     // The summary request goes to the same gateway, so it must fit the same bound.
+    const systemPrompt = piSummarySystemPrompt(byteBudget);
     const maxHistoryBytes = byteBudget
-        ? byteBudget.maxRequestBytes - byteBudget.overheadBytes - utf8Bytes(JSON.stringify(SUMMARY_SYSTEM_PROMPT))
+        ? byteBudget.maxRequestBytes - byteBudget.overheadBytes - jsonStringBytes(systemPrompt)
         : Infinity;
     return createPiContextCompactor(model.contextWindow, async (messages, signal) => {
         const serialized = serializeConversation(convertToLlm(messages));
         const history = byteBudget ? fitSummaryHistory(serialized, maxHistoryBytes) : serialized;
         const response = await models.completeSimple(model, {
-            systemPrompt: SUMMARY_SYSTEM_PROMPT,
+            systemPrompt,
             messages: [{
                 role: 'user',
                 content: [{ type: 'text', text: history }],

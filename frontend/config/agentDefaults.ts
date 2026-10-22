@@ -74,12 +74,26 @@ export const DEFAULT_GATEWAY_PI_REQUEST_BYTE_BUDGET = 150_000;
  * include, stream flags, per-tool `type`/`strict` wrappers). Measured ~0.9 KB with 24 tools.
  */
 export const DEFAULT_GATEWAY_PI_REQUEST_OVERHEAD_BYTES = 4_000;
-/**
- * Recent history kept verbatim after a Default-gateway compaction. Together with the tool
- * declarations (~34 KB) and the summary (at most 20,000 characters) this keeps a compacted
- * request near 100 KB, so several turns fit before the next summary call.
- */
+/** Recent history kept verbatim after a Default-gateway compaction. */
 export const DEFAULT_GATEWAY_PI_KEEP_RECENT_BYTES = 40_000;
+/** Measured wire size of the 24-tool qualified initial-analysis declarations (see above). */
+export const DEFAULT_GATEWAY_PI_TOOL_DECLARATION_BYTES = 34_000;
+/**
+ * Room left below the compaction trigger right after a compaction, so the next summary call
+ * waits for several more turns (a tool turn adds ~6.5 KB) instead of firing every turn.
+ */
+export const DEFAULT_GATEWAY_PI_POST_COMPACTION_HEADROOM_BYTES = 56_000;
+/**
+ * Default gateway only: largest accepted summary in UTF-8 bytes (JSON-escaped, as sent).
+ * A character cap is not enough: 20,000 CJK characters are ~60 KB of UTF-8, which would put a
+ * compacted request right at the trigger. Derived as trigger − tools − recent − headroom
+ * = 150,000 − 4,000 − 34,000 − 40,000 − 56,000 = 16,000 bytes.
+ */
+export const DEFAULT_GATEWAY_PI_SUMMARY_MAX_BYTES = DEFAULT_GATEWAY_PI_REQUEST_BYTE_BUDGET
+    - DEFAULT_GATEWAY_PI_REQUEST_OVERHEAD_BYTES
+    - DEFAULT_GATEWAY_PI_TOOL_DECLARATION_BYTES
+    - DEFAULT_GATEWAY_PI_KEEP_RECENT_BYTES
+    - DEFAULT_GATEWAY_PI_POST_COMPACTION_HEADROOM_BYTES;
 export const PROVIDER_GEMINI_CONTEXT_WINDOW = 250_000;
 export const PROVIDER_GEMMA_CONTEXT_WINDOW = 128_000;
 export const PROVIDER_GPT_CONTEXT_WINDOW = PROVIDER_CONTEXT_WINDOW_CAP;

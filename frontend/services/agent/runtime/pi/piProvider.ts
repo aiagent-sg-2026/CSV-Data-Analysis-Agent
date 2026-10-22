@@ -9,6 +9,7 @@ import {
     DEFAULT_GATEWAY_PI_KEEP_RECENT_BYTES,
     DEFAULT_GATEWAY_PI_REQUEST_BYTE_BUDGET,
     DEFAULT_GATEWAY_PI_REQUEST_OVERHEAD_BYTES,
+    DEFAULT_GATEWAY_PI_SUMMARY_MAX_BYTES,
     PROVIDER_CONTEXT_WINDOW_CAP,
 } from '../../../../config/agentDefaults';
 import { DEFAULT_GATEWAY_BASE_URL } from '../../../../config/defaultGatewayConfig';
@@ -94,6 +95,7 @@ export const resolvePiRequestByteBudget = (settings: Settings): PiRequestByteBud
         maxRequestBytes: DEFAULT_GATEWAY_PI_REQUEST_BYTE_BUDGET,
         overheadBytes: DEFAULT_GATEWAY_PI_REQUEST_OVERHEAD_BYTES,
         keepRecentBytes: DEFAULT_GATEWAY_PI_KEEP_RECENT_BYTES,
+        summaryMaxBytes: DEFAULT_GATEWAY_PI_SUMMARY_MAX_BYTES,
     } : undefined;
 
 export const createPiProviderContextTransform = (
