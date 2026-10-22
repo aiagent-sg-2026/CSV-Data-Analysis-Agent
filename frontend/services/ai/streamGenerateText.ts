@@ -29,6 +29,7 @@ import type { LanguageModel } from 'ai';
 import {
     isProviderTimeoutError,
     raceWithActivityTimeout,
+    runProviderRequestPreflight,
 } from './providerActivityGuards';
 import { CloudAiConsentDeclinedError } from '../privacy/cloudAiConsent';
 
@@ -47,6 +48,16 @@ export const streamGenerateText = async (
 ): Promise<{ text: string; finishReason: string; output: unknown }> => {
     const { activityTimeoutMs = DEFAULT_ACTIVITY_TIMEOUT_MS, ...streamOptions } = options;
     const callerOnError = streamOptions.onError;
+    // Resolve consent and offline waits before the idle timer is armed. These
+    // waits depend on the user or the browser, not on provider activity, and
+    // no request is sent until they resolve.
+    try {
+        await runProviderRequestPreflight(streamOptions.model, streamOptions.abortSignal);
+    } catch (error) {
+        // Mirror the streamText onError contract for callers that observe it.
+        await callerOnError?.({ error });
+        throw error;
+    }
     let streamedError: unknown;
     const stream = streamText({
         ...streamOptions,

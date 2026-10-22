@@ -19,6 +19,7 @@ import { ensureCloudAiConsent } from '../privacy/cloudAiConsent';
 import { waitForCloudAiConnectivity } from '../pwa/networkAvailability';
 import { fetchDefaultGateway, fetchWithoutForbiddenUserAgent } from './browserProviderFetch';
 import { createLlmDiagnosticMiddleware } from '../observability/llmDiagnosticMiddleware';
+import { registerProviderRequestPreflight } from './providerActivityGuards';
 
 export type ModelContextStrategy = 'model_aware' | 'fallback_static';
 
@@ -160,13 +161,20 @@ const createReasoningMiddleware = (
     };
 };
 
+const runCloudAiRequestGate = async (
+    settings: Settings,
+    abortSignal?: AbortSignal,
+): Promise<void> => {
+    await waitForCloudAiConnectivity(abortSignal);
+    await ensureCloudAiConsent(settings.provider);
+};
+
 const createCloudAiConsentMiddleware = (
     settings: Settings,
 ): LanguageModelMiddleware => ({
     specificationVersion: 'v3',
     transformParams: async ({ params }) => {
-        await waitForCloudAiConnectivity(params.abortSignal);
-        await ensureCloudAiConsent(settings.provider);
+        await runCloudAiRequestGate(settings, params.abortSignal);
         return params;
     },
 });
@@ -175,6 +183,26 @@ export const createProviderModel = (
     settings: Settings,
     modelOverride?: string,
     options: ProviderModelOptions = {},
+) => {
+    const created = buildWrappedProviderModel(settings, modelOverride, options);
+    if (options.requireDataConsent !== false) {
+        // The middleware above stays the enforcing gate before every request.
+        // Registering the same gate as a preflight lets activity-timed callers
+        // resolve consent and offline waits before arming their idle timer, so
+        // time spent reading the consent modal is not counted as provider
+        // silence. Once resolved, the middleware's repeat check is a cache hit.
+        registerProviderRequestPreflight(
+            created.model,
+            abortSignal => runCloudAiRequestGate(settings, abortSignal),
+        );
+    }
+    return created;
+};
+
+const buildWrappedProviderModel = (
+    settings: Settings,
+    modelOverride: string | undefined,
+    options: ProviderModelOptions,
 ) => {
     const modelId = resolveProviderModelId(settings, modelOverride);
     const apiKey = resolveProviderApiKey(settings);

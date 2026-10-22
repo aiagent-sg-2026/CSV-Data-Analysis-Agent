@@ -31,7 +31,11 @@ import type {
     QueryComparisonScope,
 } from './intentClassificationTypes';
 import { LOG_PREFIX, INTENT_AI_TIMEOUT_MS, projectToIntentFindings } from './intentClassificationTypes';
-import { isProviderTimeoutError, raceWithActivityTimeout } from '../../ai/providerActivityGuards';
+import {
+    isProviderTimeoutError,
+    raceWithActivityTimeout,
+    runProviderRequestPreflight,
+} from '../../ai/providerActivityGuards';
 import { buildIntentClassificationPrompt, buildQueryUnderstandingPrompt } from '../../prompts/intentClassificationPrompts';
 import { isValidTaskSignal, isValidExpectedOutput } from './queryUnderstandingResolver';
 
@@ -281,6 +285,14 @@ const classifyWithAiRich = async (
             const onExternalAbort = () => controller.abort();
             abortSignal?.addEventListener('abort', onExternalAbort, { once: true });
             if (abortSignal?.aborted) controller.abort();
+            try {
+                // Resolve consent and offline waits before arming the idle
+                // timer; user decision time is not provider silence.
+                await runProviderRequestPreflight(m, controller.signal);
+            } catch (error) {
+                abortSignal?.removeEventListener('abort', onExternalAbort);
+                throw error;
+            }
             const stream = streamText({
                 model: m as LanguageModel,
                 messages: [

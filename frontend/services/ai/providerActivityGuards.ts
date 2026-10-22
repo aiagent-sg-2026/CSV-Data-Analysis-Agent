@@ -68,3 +68,57 @@ export const raceWithActivityTimeout = <T>(
 
     return { promise, signalActivity };
 };
+
+/**
+ * Pre-request gate that may wait on the user or the browser (for example the
+ * cloud AI consent modal or an offline pause) before any network traffic.
+ */
+export type ProviderRequestPreflight = (abortSignal?: AbortSignal) => Promise<void>;
+
+const providerRequestPreflights = new WeakMap<object, ProviderRequestPreflight>();
+
+/**
+ * Associates a pre-request gate with a provider model so activity-timed
+ * callers can resolve it before arming their idle timer. The model's own
+ * middleware must still enforce the same gate; this registration only moves
+ * the user-facing wait outside the timeout window.
+ */
+export const registerProviderRequestPreflight = <T extends object>(
+    model: T,
+    preflight: ProviderRequestPreflight,
+): T => {
+    providerRequestPreflights.set(model, preflight);
+    return model;
+};
+
+const toAbortError = (abortSignal: AbortSignal): unknown =>
+    abortSignal.reason ?? new DOMException('The AI request was cancelled.', 'AbortError');
+
+/**
+ * Runs the model's registered pre-request gate, if any. A pending user
+ * decision has no time limit, but a caller abort still ends the wait.
+ */
+export const runProviderRequestPreflight = async (
+    model: unknown,
+    abortSignal?: AbortSignal,
+): Promise<void> => {
+    if (typeof model !== 'object' || model === null) return;
+    const preflight = providerRequestPreflights.get(model);
+    if (!preflight) return;
+    if (!abortSignal) {
+        await preflight();
+        return;
+    }
+    if (abortSignal.aborted) throw toAbortError(abortSignal);
+
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<never>((_, reject) => {
+        onAbort = () => reject(toAbortError(abortSignal));
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+        await Promise.race([preflight(abortSignal), aborted]);
+    } finally {
+        if (onAbort) abortSignal.removeEventListener('abort', onAbort);
+    }
+};
