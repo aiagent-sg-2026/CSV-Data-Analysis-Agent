@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAssistantMessageEventStream, createModels, type AssistantMessage } from '@earendil-works/pi-ai';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { Agent, type AgentMessage, type StreamFn } from '@earendil-works/pi-agent-core';
-import { createPiContextCompactor } from '../services/agent/runtime/pi/piContextCompaction';
+import {
+    createPiContextCompactor, estimatePiRequestBytes, fitSummaryHistory,
+} from '../services/agent/runtime/pi/piContextCompaction';
 
 const system = { role: 'system', content: 'Keep the dataset evidence accurate.' } as AgentMessage;
 const user = (text: string) => ({
@@ -165,6 +167,112 @@ describe('Pi automatic context compaction', () => {
 
         expect(summarize).toHaveBeenCalledOnce();
         expect(result[1]).toMatchObject({ role: 'user', content: [{ type: 'text', text: expect.stringContaining('Earlier Chinese-language discussion.') }] });
+    });
+
+    it('keeps later system messages that declare tools when their region is summarized', async () => {
+        const summarize = vi.fn(async (_messages: AgentMessage[]) => 'Earlier stages passed.');
+        const compact = createPiContextCompactor(200_000, summarize);
+        const toolDelta = {
+            role: 'system', content: '', timestamp: 1,
+            toolsAdded: [{ name: 'data_query', description: 'Query', parameters: { type: 'object' } }],
+        } as AgentMessage;
+        const latest = user('Current question.');
+
+        const result = await compact([system, toolDelta, user('A'.repeat(500_000)), latest]);
+
+        expect(summarize).toHaveBeenCalledOnce();
+        expect(summarize.mock.calls[0][0]).not.toContain(toolDelta);
+        expect(result.slice(0, 2)).toEqual([system, toolDelta]);
+        expect(result[2]).toMatchObject({ role: 'user', content: [{ type: 'text', text: expect.stringContaining('Earlier stages passed.') }] });
+        expect(result.at(-1)).toBe(latest);
+    });
+
+    describe('with a request byte budget (Default gateway)', () => {
+        const budget = { requestByteBudget: { maxRequestBytes: 150_000, overheadBytes: 4_000, keepRecentBytes: 40_000 } };
+        const pair = (id: string, resultChars: number) => [
+            {
+                role: 'assistant', content: [{ type: 'toolCall', id, name: 'query', arguments: {} }],
+                stopReason: 'toolUse', timestamp: 2,
+            } as AgentMessage,
+            {
+                role: 'toolResult', toolCallId: id, toolName: 'query',
+                content: [{ type: 'text', text: 'R'.repeat(resultChars) }], timestamp: 3,
+            } as AgentMessage,
+        ];
+
+        it('compacts on serialized bytes far below the 160k token trigger', async () => {
+            const summarize = vi.fn(async () => 'Earlier stages passed.');
+            const history = Array.from({ length: 30 }, (_, index) => pair(`call-${index}`, 6_000)).flat();
+            const messages = [system, user('Start.'), ...history];
+            expect(estimatePiRequestBytes(messages)).toBeGreaterThan(146_000);
+
+            expect(await createPiContextCompactor(200_000, summarize)(messages)).toEqual(messages);
+            const result = await createPiContextCompactor(200_000, summarize, undefined, budget)(messages);
+
+            expect(summarize).toHaveBeenCalledOnce();
+            expect(estimatePiRequestBytes(result)).toBeLessThanOrEqual(150_000 - 4_000);
+            expect(result[1]).toMatchObject({ role: 'user', content: [{ type: 'text', text: expect.stringContaining('Earlier stages passed.') }] });
+            // The kept history starts with a tool call and ends with the latest complete pair.
+            expect(result[2]).toMatchObject({ role: 'assistant' });
+            expect(result.slice(-2)).toEqual(history.slice(-2));
+        });
+
+        it('reports a failed summary with the byte estimate once and retries only after growth', async () => {
+            const summarize = vi.fn(async () => { throw new Error('gateway rejected the summary'); });
+            const onDegraded = vi.fn();
+            const compact = createPiContextCompactor(200_000, summarize, onDegraded, budget);
+            const messages = [system, user('A'.repeat(150_000)), ...pair('call-1', 1_000)];
+
+            expect(await compact(messages)).toEqual(messages);
+            expect(await compact([...messages, user('small follow-up')])).toHaveLength(5);
+            expect(summarize).toHaveBeenCalledOnce();
+            expect(onDegraded).toHaveBeenCalledOnce();
+            expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({
+                reason: 'summary_failed', estimatedBytes: expect.any(Number),
+            }));
+
+            await compact([...messages, user('B'.repeat(10_000))]);
+            expect(summarize).toHaveBeenCalledTimes(2);
+        });
+
+        it('keeps a smaller compacted request and reports when one recent pair is still too large', async () => {
+            const summarize = vi.fn(async () => 'Short summary.');
+            const onDegraded = vi.fn();
+            const compact = createPiContextCompactor(200_000, summarize, onDegraded, budget);
+            const messages = [system, user('A'.repeat(100_000)), ...pair('call-1', 160_000)];
+
+            const result = await compact(messages);
+            expect(result).toEqual([system, expect.objectContaining({ role: 'user' }), ...messages.slice(2)]);
+            expect(estimatePiRequestBytes(result)).toBeLessThan(estimatePiRequestBytes(messages));
+            expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({ reason: 'compaction_ineffective' }));
+
+            // No summary loop: the same oversized request is not re-summarized on the next turn.
+            expect(await compact(messages)).toEqual(result);
+            expect(summarize).toHaveBeenCalledOnce();
+        });
+
+        it('reports an oversized current turn that has no completed history to summarize', async () => {
+            const summarize = vi.fn(async () => 'summary');
+            const onDegraded = vi.fn();
+            const messages = [system, user('U'.repeat(200_000))];
+
+            expect(await createPiContextCompactor(200_000, summarize, onDegraded, budget)(messages)).toEqual(messages);
+            expect(summarize).not.toHaveBeenCalled();
+            expect(onDegraded).toHaveBeenCalledOnce();
+            expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({ reason: 'compaction_ineffective' }));
+        });
+
+        it('trims summarizer history to the byte bound, keeping its start and end', () => {
+            const history = `GOAL ${'x'.repeat(300_000)} LATEST`;
+            const fitted = fitSummaryHistory(history, 100_000);
+            expect(new TextEncoder().encode(JSON.stringify(fitted)).length).toBeLessThanOrEqual(100_000);
+            expect(fitted.startsWith('GOAL ')).toBe(true);
+            expect(fitted.endsWith(' LATEST')).toBe(true);
+            expect(fitted).toContain('earlier history omitted');
+            expect(fitSummaryHistory('short', 100_000)).toBe('short');
+            const multilingual = fitSummaryHistory('数"'.repeat(60_000), 50_000);
+            expect(new TextEncoder().encode(JSON.stringify(multilingual)).length).toBeLessThanOrEqual(50_000);
+        });
     });
 
     it('passes the summary into Pi Agent model context while retaining full history', async () => {

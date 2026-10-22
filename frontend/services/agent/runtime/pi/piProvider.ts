@@ -5,11 +5,18 @@ import type { AgentMessage, StreamFn } from '@earendil-works/pi-agent-core';
 import type { Settings } from '../../../../types';
 import { emitSilentFailure } from '../../monitoring/silentFailureTracker';
 import type { StoreApi } from '../../types';
-import { PROVIDER_CONTEXT_WINDOW_CAP } from '../../../../config/agentDefaults';
+import {
+    DEFAULT_GATEWAY_PI_KEEP_RECENT_BYTES,
+    DEFAULT_GATEWAY_PI_REQUEST_BYTE_BUDGET,
+    DEFAULT_GATEWAY_PI_REQUEST_OVERHEAD_BYTES,
+    PROVIDER_CONTEXT_WINDOW_CAP,
+} from '../../../../config/agentDefaults';
 import { DEFAULT_GATEWAY_BASE_URL } from '../../../../config/defaultGatewayConfig';
 import { fetchDefaultGateway, fetchWithoutForbiddenUserAgent } from '../../../ai/browserProviderFetch';
 import { resolveProviderApiKey, resolveProviderModelId } from '../../../ai/providerConfig';
-import { createPiProviderContextCompactor, type PiCompactionDegradation } from './piContextCompaction';
+import {
+    createPiProviderContextCompactor, type PiCompactionDegradation, type PiRequestByteBudget,
+} from './piContextCompaction';
 
 const models = createModels();
 models.setProvider(openaiProvider());
@@ -77,6 +84,18 @@ export const ensureGoogleHistoryEndsWithUserTurn = (messages: AgentMessage[]): A
         ? [...messages, { role: 'user', content: [{ type: 'text', text: 'Continue.' }], timestamp: Date.now() }]
         : messages;
 
+/**
+ * The Default demo gateway rejects request bodies far below the 200k-token planning window
+ * (DEMO_INPUT_TOO_LARGE), so only that provider also compacts on serialized bytes. Every other
+ * provider keeps the token-based trigger alone.
+ */
+export const resolvePiRequestByteBudget = (settings: Settings): PiRequestByteBudget | undefined =>
+    settings.provider === 'default' ? {
+        maxRequestBytes: DEFAULT_GATEWAY_PI_REQUEST_BYTE_BUDGET,
+        overheadBytes: DEFAULT_GATEWAY_PI_REQUEST_OVERHEAD_BYTES,
+        keepRecentBytes: DEFAULT_GATEWAY_PI_KEEP_RECENT_BYTES,
+    } : undefined;
+
 export const createPiProviderContextTransform = (
     settings: Settings,
     onDegraded?: (degradation: PiCompactionDegradation) => void,
@@ -89,6 +108,7 @@ export const createPiProviderContextTransform = (
         apiKey,
         resolvePiProviderFetch(settings),
         onDegraded,
+        { requestByteBudget: resolvePiRequestByteBudget(settings) },
     );
     if (settings.provider !== 'google') return compact;
     return async (messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> =>
@@ -97,10 +117,10 @@ export const createPiProviderContextTransform = (
 
 /** Surface degraded context compaction as a silent-failure runtime event. */
 export const createPiCompactionTelemetry = (store: StoreApi) =>
-    ({ reason, error, estimatedTokens }: PiCompactionDegradation): void =>
+    ({ reason, error, estimatedTokens, estimatedBytes }: PiCompactionDegradation): void =>
         emitSilentFailure(store, error, {
             component: 'PiContextCompaction',
             recoveryAction: `uncompacted_history_used:${reason}`,
             userNotified: false,
-            detail: { reason, estimatedTokens },
+            detail: { reason, estimatedTokens, ...(estimatedBytes === undefined ? {} : { estimatedBytes }) },
         });

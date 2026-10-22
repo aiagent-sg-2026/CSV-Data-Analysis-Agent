@@ -15,9 +15,43 @@ export interface PiCompactionDegradation {
     reason: 'summary_failed' | 'summary_unusable' | 'compaction_ineffective';
     error: unknown;
     estimatedTokens: number;
+    /** Estimated serialized request bytes; present only when a request byte budget applies. */
+    estimatedBytes?: number;
 }
 
 type OnCompactionDegraded = (degradation: PiCompactionDegradation) => void;
+
+/**
+ * Serialized-size limit for providers whose gateway rejects large request bodies regardless of
+ * the model context window (the Default demo gateway). All values are UTF-8 bytes.
+ */
+export interface PiRequestByteBudget {
+    /** Largest request body to send, including the tool declarations. */
+    maxRequestBytes: number;
+    /** Request fields outside the transcript that the estimate cannot see. */
+    overheadBytes: number;
+    /** Recent history kept verbatim after compaction. */
+    keepRecentBytes: number;
+}
+
+export interface PiContextCompactorOptions {
+    requestByteBudget?: PiRequestByteBudget;
+}
+
+const SUMMARY_MAX_CHARS = 20_000;
+// After a failed or ineffective attempt, wait for this fraction of the budget in growth.
+const RETRY_GROWTH_RATIO = 0.05;
+const SUMMARY_SYSTEM_PROMPT = 'Summarize earlier Pi agent history for continuation. Preserve the user goal, dataset identity, completed tool results, decisions, and outstanding work. Never invent evidence or include credentials. Keep the summary concise.';
+
+const utf8 = new TextEncoder();
+const utf8Bytes = (text: string): number => utf8.encode(text).length;
+
+/**
+ * Bytes of the transcript as JSON. The tool declarations travel on system messages
+ * (`toolsAdded`), so this counts the tools that the provider adapter sends on every request.
+ * Message metadata (usage, timestamps) is not sent, so this slightly overestimates the wire body.
+ */
+export const estimatePiRequestBytes = (messages: AgentMessage[]): number => utf8Bytes(JSON.stringify(messages));
 
 const estimateVisibleTokens = (value: unknown): number => {
     const serialized = JSON.stringify(value);
@@ -38,26 +72,41 @@ export const createPiContextCompactor = (
     contextWindow: number,
     summarize: SummarizeHistory,
     onDegraded?: OnCompactionDegraded,
+    options: PiContextCompactorOptions = {},
 ) => {
     if (!Number.isFinite(contextWindow) || contextWindow <= 0) {
         throw new Error('Pi requires a known context window for automatic compaction.');
     }
+    const byteBudget = options.requestByteBudget;
     const triggerTokens = Math.floor(contextWindow * PI_CONTEXT_COMPACTION_TRIGGER_RATIO);
+    const triggerBytes = byteBudget ? byteBudget.maxRequestBytes - byteBudget.overheadBytes : Infinity;
     let summary = '';
     let summarizedThrough = 1;
     let summaryTimestamp = 0;
     // After a failed or ineffective attempt, retrying on every provider turn only
     // repeats a slow summary call. Wait until the history has grown noticeably.
     let retryAboveTokens = 0;
-    const retryGrowthTokens = Math.floor(contextWindow * 0.05);
+    let retryAboveBytes = 0;
+    const retryGrowthTokens = Math.floor(contextWindow * RETRY_GROWTH_RATIO);
+    const retryGrowthBytes = byteBudget ? Math.floor(byteBudget.maxRequestBytes * RETRY_GROWTH_RATIO) : 0;
+    const sizeOf = (messages: AgentMessage[], hasSummary: boolean) => ({
+        tokens: projectedTokens(messages, hasSummary),
+        bytes: byteBudget ? estimatePiRequestBytes(messages) : 0,
+    });
+    const overTrigger = (size: { tokens: number; bytes: number }) =>
+        size.tokens >= triggerTokens || size.bytes > triggerBytes;
     const degrade = (
         reason: PiCompactionDegradation['reason'],
         error: unknown,
-        estimatedTokens: number,
+        size: { tokens: number; bytes: number },
     ) => {
-        retryAboveTokens = estimatedTokens + retryGrowthTokens;
+        retryAboveTokens = size.tokens + retryGrowthTokens;
+        retryAboveBytes = size.bytes + retryGrowthBytes;
         try {
-            onDegraded?.({ reason, error, estimatedTokens });
+            onDegraded?.({
+                reason, error, estimatedTokens: size.tokens,
+                ...(byteBudget ? { estimatedBytes: size.bytes } : {}),
+            });
         } catch {
             // Telemetry must never break the Pi turn.
         }
@@ -66,61 +115,116 @@ export const createPiContextCompactor = (
     return async (messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> => {
         if (messages[0]?.role !== 'system') return messages;
         // Agent's default convertToLlm retains user messages but drops custom summary roles.
-        const summaryMessage = (): AgentMessage => ({
-            role: 'user', content: [{ type: 'text', text: `Earlier conversation summary:\n${summary}` }],
-            timestamp: summaryTimestamp,
+        const summaryMessage = (text: string, timestamp: number): AgentMessage => ({
+            role: 'user', content: [{ type: 'text', text: `Earlier conversation summary:\n${text}` }], timestamp,
         });
-        const projected = [
+        // Later system messages carry tool-set and prompt deltas (pi-agent-core declares tools
+        // added after construction this way). The provider derives the request `tools` from
+        // them, so they must survive compaction instead of being summarized away.
+        const headThrough = (through: number): AgentMessage[] => [
             messages[0],
-            ...(summary ? [summaryMessage()] : []),
+            ...messages.slice(1, through).filter(message => message.role === 'system'),
+        ];
+        const head = headThrough(summarizedThrough);
+        const summaryCount = summary ? 1 : 0;
+        const projected = [
+            ...head,
+            ...(summary ? [summaryMessage(summary, summaryTimestamp)] : []),
             ...messages.slice(summarizedThrough),
         ];
-        const estimated = projectedTokens(projected, Boolean(summary));
-        if (estimated < triggerTokens || estimated <= retryAboveTokens) return projected;
+        const size = sizeOf(projected, Boolean(summary));
+        if (!overTrigger(size)) return projected;
+        const grownSinceFailure = size.tokens > retryAboveTokens || (byteBudget !== undefined && size.bytes > retryAboveBytes);
+        if (!grownSinceFailure) return projected;
 
         let cut = projected.length;
         let recentTokens = 0;
-        while (cut > 1 && recentTokens < PI_CONTEXT_COMPACTION_KEEP_RECENT_TOKENS) {
+        let recentBytes = 0;
+        while (cut > head.length && recentTokens < PI_CONTEXT_COMPACTION_KEEP_RECENT_TOKENS) {
             const nextTokens = Math.max(
                 estimateTokens(projected[cut - 1]),
                 estimateVisibleTokens(projected[cut - 1]),
             );
-            if (recentTokens > 0 && recentTokens + nextTokens > PI_CONTEXT_COMPACTION_KEEP_RECENT_TOKENS) break;
+            const nextBytes = byteBudget ? estimatePiRequestBytes([projected[cut - 1]]) : 0;
+            const exceedsRecent = recentTokens + nextTokens > PI_CONTEXT_COMPACTION_KEEP_RECENT_TOKENS
+                || (byteBudget !== undefined && recentBytes + nextBytes > byteBudget.keepRecentBytes);
+            if (recentTokens > 0 && exceedsRecent) break;
             cut -= 1;
             recentTokens += nextTokens;
+            recentBytes += nextBytes;
         }
-        while (cut > 1 && projected[cut].role === 'toolResult') cut -= 1;
-        if (cut <= (summary ? 2 : 1)) return projected;
+        // Never start the kept history with a tool result: its function_call must stay with it.
+        while (cut > head.length && projected[cut].role === 'toolResult') cut -= 1;
+        if (cut <= head.length + summaryCount) {
+            // Nothing older than the protected recent turn remains. Under a gateway byte bound,
+            // report it once so an oversized request is visible before the gateway rejects it.
+            if (byteBudget) degrade('compaction_ineffective', new Error('No completed history is left to summarize.'), size);
+            return projected;
+        }
 
         try {
-            const nextSummary = (await summarize(projected.slice(1, cut), signal)).trim();
+            const toSummarize = projected.slice(head.length, cut).filter(message => message.role !== 'system');
+            const nextSummary = (await summarize(toSummarize, signal)).trim();
             if (signal?.aborted) return projected;
-            if (!nextSummary || nextSummary.length > 20_000) {
-                degrade('summary_unusable', new Error(nextSummary ? 'Pi summary exceeded the size limit.' : 'Pi summary was empty.'), estimated);
+            if (!nextSummary || nextSummary.length > SUMMARY_MAX_CHARS) {
+                degrade('summary_unusable', new Error(nextSummary ? 'Pi summary exceeded the size limit.' : 'Pi summary was empty.'), size);
                 return projected;
             }
-            const nextSummarizedThrough = summarizedThrough + cut - 1 - (summary ? 1 : 0);
+            const nextSummarizedThrough = summarizedThrough + cut - head.length - summaryCount;
             const nextTimestamp = Date.now();
             const compacted: AgentMessage[] = [
-                messages[0],
-                { role: 'user', content: [{ type: 'text', text: `Earlier conversation summary:\n${nextSummary}` }], timestamp: nextTimestamp },
+                ...headThrough(nextSummarizedThrough),
+                summaryMessage(nextSummary, nextTimestamp),
                 ...messages.slice(nextSummarizedThrough),
             ];
-            if (projectedTokens(compacted, true) >= triggerTokens) {
-                degrade('compaction_ineffective', new Error('Compaction did not bring the history under the trigger.'), estimated);
+            const compactedSize = sizeOf(compacted, true);
+            const commit = () => {
+                summary = nextSummary;
+                summarizedThrough = nextSummarizedThrough;
+                summaryTimestamp = nextTimestamp;
+            };
+            if (overTrigger(compactedSize)) {
+                const error = new Error('Compaction did not bring the history under the trigger.');
+                // Under a gateway byte bound a smaller request is still safer than the full one;
+                // keep it and report, rather than resending history the gateway may reject.
+                if (byteBudget && compactedSize.bytes < size.bytes) {
+                    commit();
+                    degrade('compaction_ineffective', error, compactedSize);
+                    return compacted;
+                }
+                degrade('compaction_ineffective', error, size);
                 return projected;
             }
             retryAboveTokens = 0;
-            summary = nextSummary;
-            summarizedThrough = nextSummarizedThrough;
-            summaryTimestamp = nextTimestamp;
+            retryAboveBytes = 0;
+            commit();
             return compacted;
         } catch (error) {
             // Pi's transformContext contract requires a safe fallback on summary failure.
-            if (!signal?.aborted) degrade('summary_failed', error, estimated);
+            if (!signal?.aborted) degrade('summary_failed', error, size);
             return projected;
         }
     };
+};
+
+const OMITTED_HISTORY_MARKER = '\n\n[... earlier history omitted to fit the summary request size limit ...]\n\n';
+
+/**
+ * Trim the serialized history so the summary request fits the byte bound. The start holds the
+ * user goal and any earlier summary; the end holds the latest work. The middle is dropped.
+ */
+export const fitSummaryHistory = (history: string, maxBytes: number): string => {
+    // The history travels as a JSON string inside the request body, so measure it escaped.
+    const bytes = (text: string) => utf8Bytes(JSON.stringify(text));
+    if (bytes(history) <= maxBytes) return history;
+    let keepChars = Math.min(history.length, maxBytes);
+    let fitted = '';
+    do {
+        keepChars = Math.floor(keepChars * 0.9);
+        const headChars = Math.floor(keepChars * 0.3);
+        fitted = history.slice(0, headChars) + OMITTED_HISTORY_MARKER + history.slice(history.length - (keepChars - headChars));
+    } while (keepChars > 0 && bytes(fitted) > maxBytes);
+    return fitted;
 };
 
 export const createPiProviderContextCompactor = (
@@ -129,24 +233,33 @@ export const createPiProviderContextCompactor = (
     apiKey: string,
     providerFetch: typeof fetch | undefined,
     onDegraded?: OnCompactionDegraded,
-) => createPiContextCompactor(model.contextWindow, async (messages, signal) => {
-    const history = serializeConversation(convertToLlm(messages));
-    const response = await models.completeSimple(model, {
-        systemPrompt: 'Summarize earlier Pi agent history for continuation. Preserve the user goal, dataset identity, completed tool results, decisions, and outstanding work. Never invent evidence or include credentials. Keep the summary concise.',
-        messages: [{
-            role: 'user',
-            content: [{ type: 'text', text: history }],
-            timestamp: Date.now(),
-        }],
-    }, {
-        apiKey,
-        fetch: providerFetch,
-        signal,
-        timeoutMs: 45_000,
-        maxRetries: 0,
-    });
-    if (response.stopReason === 'error' || response.stopReason === 'aborted') {
-        throw new Error('Pi context summarization failed.');
-    }
-    return contentText(response.content);
-}, onDegraded);
+    options: PiContextCompactorOptions = {},
+) => {
+    const byteBudget = options.requestByteBudget;
+    // The summary request goes to the same gateway, so it must fit the same bound.
+    const maxHistoryBytes = byteBudget
+        ? byteBudget.maxRequestBytes - byteBudget.overheadBytes - utf8Bytes(JSON.stringify(SUMMARY_SYSTEM_PROMPT))
+        : Infinity;
+    return createPiContextCompactor(model.contextWindow, async (messages, signal) => {
+        const serialized = serializeConversation(convertToLlm(messages));
+        const history = byteBudget ? fitSummaryHistory(serialized, maxHistoryBytes) : serialized;
+        const response = await models.completeSimple(model, {
+            systemPrompt: SUMMARY_SYSTEM_PROMPT,
+            messages: [{
+                role: 'user',
+                content: [{ type: 'text', text: history }],
+                timestamp: Date.now(),
+            }],
+        }, {
+            apiKey,
+            fetch: providerFetch,
+            signal,
+            timeoutMs: 45_000,
+            maxRetries: 0,
+        });
+        if (response.stopReason === 'error' || response.stopReason === 'aborted') {
+            throw new Error('Pi context summarization failed.');
+        }
+        return contentText(response.content);
+    }, onDegraded, options);
+};
