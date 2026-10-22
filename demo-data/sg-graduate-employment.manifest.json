@@ -1,0 +1,50 @@
+{
+  "id": "sg-graduate-employment",
+  "source": "Ministry of Education dataset published on data.gov.sg",
+  "licence": {
+    "name": "Singapore Open Data Licence",
+    "version": "1.0",
+    "url": "https://data.gov.sg/open-data-licence",
+    "attribution": "Contains information from \"Graduate Employment Survey - NTU, NUS, SIT, SMU, SUSS & SUTD\" accessed from data.gov.sg, which is made available under the terms of the Singapore Open Data Licence version 1.0 (https://data.gov.sg/open-data-licence)."
+  },
+  "transformationPolicy": "No source values are cleaned, normalized, renamed, reshaped, deduplicated, or sorted. Rows are the exact lines served by the data.gov.sg download API, copied byte for byte in source order; the only permitted change is the documented sampling rule below.",
+  "sampling": "None. The full source file is within the browser demo limits (1.5 MB and 10,000 data rows), so the CSV is byte-identical to the download.",
+  "shape": "Long table, one row per university degree and survey year. Salary columns publish both mean and median; suppressed results appear as \"na\" or \"N.A.\", some degree names carry footnote markers (*, **, #, ^), and a few school names contain mojibake from the source.",
+  "output": {
+    "file": "sg-graduate-employment.csv",
+    "fields": [
+      "year",
+      "university",
+      "school",
+      "degree",
+      "employment_rate_overall",
+      "employment_rate_ft_perm",
+      "basic_monthly_mean",
+      "basic_monthly_median",
+      "gross_monthly_mean",
+      "gross_monthly_median",
+      "gross_mthly_25_percentile",
+      "gross_mthly_75_percentile"
+    ],
+    "rowCount": 1550,
+    "columnCount": 12,
+    "sizeBytes": 230024,
+    "sha256": "c602089f5f651698d4036d71f15b4f246eccd201d824076ca991b9af6685c03b"
+  },
+  "sources": [
+    {
+      "datasetId": "d_3c55210de27fcccda2ed0c63fdd2b352",
+      "title": "Graduate Employment Survey - NTU, NUS, SIT, SMU, SUSS & SUTD",
+      "publisher": "Ministry of Education",
+      "canonicalUrl": "https://data.gov.sg/datasets/d_3c55210de27fcccda2ed0c63fdd2b352/view",
+      "metadataUrl": "https://api-production.data.gov.sg/v2/public/api/datasets/d_3c55210de27fcccda2ed0c63fdd2b352/metadata",
+      "downloadApi": "https://api-open.data.gov.sg/v1/public/api/datasets/d_3c55210de27fcccda2ed0c63fdd2b352/poll-download",
+      "lastUpdatedAt": "2026-03-05T18:07:12+08:00",
+      "coverageStart": "2013-11-01T00:00:00+08:00",
+      "coverageEnd": "2025-03-31T23:59:59+08:00",
+      "rowCount": 1550,
+      "sizeBytes": 230024,
+      "downloadedCsvSha256": "c602089f5f651698d4036d71f15b4f246eccd201d824076ca991b9af6685c03b"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "id": "sg-hdb-median-rent",
+  "source": "Housing & Development Board dataset published on data.gov.sg",
+  "licence": {
+    "name": "Singapore Open Data Licence",
+    "version": "1.0",
+    "url": "https://data.gov.sg/open-data-licence",
+    "attribution": "Contains information from \"Median Rent By Town And Flat Type\" accessed from data.gov.sg, which is made available under the terms of the Singapore Open Data Licence version 1.0 (https://data.gov.sg/open-data-licence)."
+  },
+  "transformationPolicy": "No source values are cleaned, normalized, renamed, reshaped, deduplicated, or sorted. Rows are the exact lines served by the data.gov.sg download API, copied byte for byte in source order; the only permitted change is the documented sampling rule below.",
+  "sampling": "Rows whose quarter value is one of the latest 60 distinct quarters in the source (15 years), kept in source order with each line copied byte for byte; older quarters are dropped. Nothing else is filtered.",
+  "shape": "Long quarterly panel, one row per quarter, town and flat type, with a single median monthly rent column. Quarters are strings such as \"2021-Q3\", flat types are codes such as \"3-RM\" and \"EXEC\", and the rent column mixes numbers with two different non-numeric markers, \"na\" and \"-\".",
+  "output": {
+    "file": "sg-hdb-median-rent.csv",
+    "fields": [
+      "quarter",
+      "town",
+      "flat_type",
+      "median_rent"
+    ],
+    "rowCount": 9507,
+    "columnCount": 4,
+    "sizeBytes": 258469,
+    "sha256": "a0356c73788e8a2f72f8cc415047055f641dcb56f8239494832d68faf1dd4f18"
+  },
+  "sources": [
+    {
+      "datasetId": "d_23000a00c52996c55106084ed0339566",
+      "title": "Median Rent By Town And Flat Type",
+      "publisher": "Housing & Development Board",
+      "canonicalUrl": "https://data.gov.sg/datasets/d_23000a00c52996c55106084ed0339566/view",
+      "metadataUrl": "https://api-production.data.gov.sg/v2/public/api/datasets/d_23000a00c52996c55106084ed0339566/metadata",
+      "downloadApi": "https://api-open.data.gov.sg/v1/public/api/datasets/d_23000a00c52996c55106084ed0339566/poll-download",
+      "lastUpdatedAt": "2026-07-24T11:43:21+08:00",
+      "coverageStart": "2005-04-01T08:00:00+08:00",
+      "coverageEnd": "2026-06-30T08:00:00+08:00",
+      "rowCount": 13305,
+      "sizeBytes": 360212,
+      "downloadedCsvSha256": "ae13566804f2c3ac088827f62c386c610055de6ef09f593a096031799a14275a"
+    }
+  ]
+}
