@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { executeWorkspaceFileAction } from '../services/agent/execution/executorWorkspaceActions';
 import { currentTaskWorkspace } from '../services/agent/taskWorkspace';
 import { createWorkspaceToolManifests } from '../services/agent/tools/manifests/workspaceToolManifests';
-import { WORKSPACE_PATH_RULES, WORKSPACE_READABLE_ROOTS } from '../services/agent/workspaceFileUtils';
+import { WORKSPACE_ACTION_OUTPUT_LIMIT, WORKSPACE_PATH_RULES, WORKSPACE_READABLE_ROOTS } from '../services/agent/workspaceFileUtils';
 import { createSingleTableDatasetBundle } from '../services/data/datasetBundle';
 import type { AppStore } from '../store/useAppStore';
 import type { StoreApi } from '../services/agent/types';
@@ -62,6 +62,29 @@ describe('workspace path discoverability', () => {
         const single = await run(app, 'workspace.list', { path: '/workspace', limit: 1 });
         expect(JSON.parse(single!.output!)).toMatchObject({ files: [{ path: '/workspace/sub', pathType: 'directory' }], truncated: true });
         expect(single!.successMessage).toContain(`Listed 0 of ${fileCount} workspace file(s)`);
+    });
+
+    it('keeps totals and truthful counts when the output cap cuts a long listing', async () => {
+        const files = Object.fromEntries(Array.from({ length: 200 }, (_, index) =>
+            [`/workspace/reports/report-${String(index).padStart(3, '0')}.json`, '{}']));
+        const app = makeStore(files);
+        const result = await run(app, 'workspace.list', { path: '/workspace/reports' });
+        const output = result!.output!;
+        // The listing is fitted to the cap, so the output stays parseable JSON with no cut marker.
+        expect(output.length).toBeLessThanOrEqual(WORKSPACE_ACTION_OUTPUT_LIMIT);
+        expect(output).not.toContain('[truncated at');
+        const listing = JSON.parse(output) as { files: { path: string }[]; totalFiles: number; returnedFiles: number; truncated: boolean; outputCapped?: boolean };
+        expect(Object.keys(listing).indexOf('totalFiles')).toBeLessThan(Object.keys(listing).indexOf('files'));
+        expect(listing).toMatchObject({ totalFiles: 200, totalDirectories: 0, truncated: true, outputCapped: true });
+        expect(listing.files.length).toBeGreaterThan(10);
+        expect(listing.files.length).toBeLessThan(200);
+        expect(listing.returnedFiles).toBe(listing.files.length);
+        expect(listing.files[0].path).toBe('/workspace/reports/report-000.json');
+        expect(result!.successMessage).toBe(`Listed ${listing.files.length} of 200 workspace file(s) and 0 of 0 directories (truncated by the output size cap: list a subdirectory).`);
+
+        // One more entry would not have fit.
+        const withNext = { ...listing, files: [...listing.files, { path: '/workspace/reports/report-199.json', pathType: 'file' }] };
+        expect(JSON.stringify(withNext).length).toBeGreaterThan(WORKSPACE_ACTION_OUTPUT_LIMIT);
     });
 
     it('searches every readable root when path is omitted', async () => {
