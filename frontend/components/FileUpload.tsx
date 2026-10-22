@@ -9,6 +9,8 @@ import { shouldAllowLogsSurface, shouldAllowSettingsSurface, shouldShowNewSessio
 import { getCloudAiProviderLabel } from '../utils/cloudAiProviderLabel';
 import { getTranslation } from '../utils/localization';
 import { DatasetRecoveryPanel } from './DatasetRecoveryPanel';
+import { DemoDatasetGallery, type DemoDatasetLoadState } from './DemoDatasetGallery';
+import type { DemoDataset } from '../services/data/demoDatasetCatalog';
 
 interface FileUploadProps {
     isWorkspaceRestoring?: boolean;
@@ -47,31 +49,26 @@ export const FileUpload: React.FC<FileUploadProps> = ({ isWorkspaceRestoring = f
     const openDebugLogs = useCallback(() => setIsDebugLogsModalOpen(true), [setIsDebugLogsModalOpen]);
 
     const [dragActive, setDragActive] = useState(false);
-    const [demoLoadState, setDemoLoadState] = useState<'idle' | 'loading' | 'error'>('idle');
-    const [demoKind, setDemoKind] = useState<'full' | 'sample'>('full');
+    const [demoLoadState, setDemoLoadState] = useState<DemoDatasetLoadState>({ datasetId: null, status: 'idle' });
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // Relative (no leading slash) so it resolves against <base href> in
-    // index.html — this app supports deployment from arbitrary subpaths.
-    const DEMO_DATASETS = {
-        full: { url: 'demo-data/singapore-hdb-resale-prices.csv', fileName: 'singapore-hdb-resale-prices.csv' },
-        sample: { url: 'demo-data/singapore-hdb-resale-prices-sample.csv', fileName: 'singapore-hdb-resale-prices-sample.csv' },
-    } as const;
-
-    const handleLoadDemoData = useCallback(async (kind: 'full' | 'sample') => {
+    // Demo datasets go through the same upload pipeline as a user-selected
+    // file. `dataset.url` is relative so it resolves against <base href>.
+    // The pipeline takes only a File, so the catalog's suggested question is
+    // not passed on; the upload resets the analysis goal by design.
+    const handleLoadDemoData = useCallback(async (dataset: DemoDataset) => {
         if (!isApiKeySet || isBusy || isWorkspaceRestoring) return;
-        setDemoKind(kind);
-        setDemoLoadState('loading');
+        setDemoLoadState({ datasetId: dataset.id, status: 'loading' });
         try {
-            const response = await fetch(DEMO_DATASETS[kind].url);
+            const response = await fetch(dataset.url);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const blob = await response.blob();
-            const file = new File([blob], DEMO_DATASETS[kind].fileName, { type: 'text/csv' });
-            setDemoLoadState('idle');
+            const file = new File([blob], dataset.file, { type: 'text/csv' });
+            setDemoLoadState({ datasetId: null, status: 'idle' });
             handleFileUpload(file);
         } catch (error) {
             console.error('Failed to load demo dataset:', error);
-            setDemoLoadState('error');
+            setDemoLoadState({ datasetId: dataset.id, status: 'error' });
         }
     }, [handleFileUpload, isApiKeySet, isBusy, isWorkspaceRestoring]);
 
@@ -196,14 +193,16 @@ export const FileUpload: React.FC<FileUploadProps> = ({ isWorkspaceRestoring = f
         );
     }
 
+    // min-h-full (not h-full) lets the drop zone grow with the demo gallery, so
+    // tall content scrolls instead of clipping the vertically centered top.
     return (
-        <div 
+        <div
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
             onDragOver={handleDrag}
             onDrop={handleDrop}
             aria-busy={isWorkspaceRestoring}
-            className={`flex h-full flex-col items-center justify-center rounded-card border-2 border-dashed p-8 transition-colors duration-300 ${
+            className={`flex min-h-full flex-col items-center justify-center rounded-card border-2 border-dashed p-4 transition-colors duration-300 sm:p-8 ${
                 isWorkspaceRestoring
                     ? 'border-slate-300 bg-slate-50'
                     : dragActive
@@ -279,32 +278,16 @@ export const FileUpload: React.FC<FileUploadProps> = ({ isWorkspaceRestoring = f
             </button>
             <input ref={fileInputRef} id="file-upload" type="file" accept=".csv" onChange={handleChange} className="hidden" disabled={isUploadUnavailable} tabIndex={-1} />
 
-            {!datasetBundle && <div className="mt-6 flex w-full max-w-sm flex-col gap-3">
-                {(['sample', 'full'] as const).map(kind => {
-                    const loading = demoLoadState === 'loading' && demoKind === kind;
-                    return (
-                        <div key={kind} className="rounded-card border border-blue-100 bg-blue-50 p-4 text-center">
-                            <p className="text-sm text-slate-600">{getTranslation(kind === 'sample' ? 'file_upload_load_sample_hint' : 'file_upload_load_demo_hint', language)}</p>
-                            <button
-                                type="button"
-                                onClick={() => handleLoadDemoData(kind)}
-                                disabled={isUploadUnavailable || demoLoadState === 'loading'}
-                                className="mt-3 inline-flex min-h-[44px] items-center justify-center gap-2 rounded-card border-2 border-blue-600 bg-white px-4 py-2 text-sm font-bold text-blue-600 transition-colors hover:bg-blue-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                                {loading && <IconLoadingSpinner className="h-4 w-4" />}
-                                {loading
-                                    ? getTranslation(kind === 'sample' ? 'file_upload_load_sample_loading' : 'file_upload_load_demo_loading', language)
-                                    : getTranslation(kind === 'sample' ? 'file_upload_load_sample' : 'file_upload_load_demo', language)}
-                            </button>
-                            {demoLoadState === 'error' && demoKind === kind && (
-                                <p className="mt-2 text-xs text-red-600">{getTranslation(kind === 'sample' ? 'file_upload_load_sample_error' : 'file_upload_load_demo_error', language)}</p>
-                            )}
-                        </div>
-                    );
-                })}
-            </div>}
-
             <p className="mt-4 max-w-sm text-center text-sm leading-5 text-slate-500">{getTranslation('data_privacy_note', language)}</p>
+
+            {!datasetBundle && (
+                <DemoDatasetGallery
+                    language={language}
+                    disabled={!isApiKeySet || isUploadUnavailable || demoLoadState.status === 'loading'}
+                    loadState={demoLoadState}
+                    onAnalyse={handleLoadDemoData}
+                />
+            )}
         </div>
     );
 };
