@@ -122,7 +122,7 @@ export const createPiCompactionTelemetry = (store: StoreApi) =>
     ({ reason, error, estimatedTokens, estimatedBytes }: PiCompactionDegradation): void =>
         emitSilentFailure(store, error, {
             component: 'PiContextCompaction',
-            recoveryAction: `uncompacted_history_used:${reason}`,
+            recoveryAction: reason === 'summary_truncated' ? 'truncated_summary_used' : `uncompacted_history_used:${reason}`,
             userNotified: false,
             detail: { reason, estimatedTokens, ...(estimatedBytes === undefined ? {} : { estimatedBytes }) },
         });

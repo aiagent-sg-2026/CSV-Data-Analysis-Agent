@@ -4,7 +4,7 @@ import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { Agent, type AgentMessage, type StreamFn } from '@earendil-works/pi-agent-core';
 import {
     createPiContextCompactor, createPiProviderContextCompactor, estimatePiRequestBytes, fitSummaryHistory,
-    piSummarySystemPrompt, type PiRequestByteBudget,
+    piSummarySystemPrompt, truncatePiSummary, type PiRequestByteBudget,
 } from '../services/agent/runtime/pi/piContextCompaction';
 import { resolvePiRequestByteBudget } from '../services/agent/runtime/pi/piProvider';
 import { DEFAULT_GATEWAY_PI_REQUEST_BYTE_BUDGET, DEFAULT_GATEWAY_PI_SUMMARY_MAX_BYTES } from '../config/agentDefaults';
@@ -284,18 +284,60 @@ describe('Pi automatic context compaction', () => {
                 expect(new TextEncoder().encode('数'.repeat(20_000)).length).toBe(60_000);
             });
 
-            it('rejects a 20,000-character CJK summary over the byte cap and does not retry on the next turn', async () => {
+            it('truncates a 20,000-character CJK summary to the byte cap and keeps the compaction', async () => {
                 const summarize = vi.fn(async () => '数'.repeat(20_000));
                 const onDegraded = vi.fn();
                 const compact = createPiContextCompactor(200_000, summarize, onDegraded, budget);
                 const messages = [toolSystem, user('Start.'), ...turns(0, 30)];
+                const summaryText = (result: AgentMessage[]) =>
+                    ((result[1] as { content: Array<{ text: string }> }).content[0].text).replace('Earlier conversation summary:\n', '');
 
-                expect(await compact(messages)).toEqual(messages);
+                const compacted = await compact(messages);
+                const text = summaryText(compacted);
+                expect(text.endsWith('\n[summary truncated]')).toBe(true);
+                expect(new TextEncoder().encode(JSON.stringify(text)).length).toBeLessThanOrEqual(DEFAULT_GATEWAY_PI_SUMMARY_MAX_BYTES);
+                expect(text.length).toBeGreaterThan(5_000);
+                expect(estimatePiRequestBytes(compacted)).toBeLessThanOrEqual(triggerBytes - 45_000);
+                expect(compacted.slice(-2)).toEqual(messages.slice(-2));
                 expect(onDegraded).toHaveBeenCalledOnce();
-                expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({ reason: 'summary_unusable' }));
+                expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({ reason: 'summary_truncated', estimatedBytes: expect.any(Number) }));
 
-                expect(await compact([...messages, ...turns(30, 1)])).toHaveLength(messages.length + 2);
+                // The next turn reuses the truncated summary; no summarizer re-call.
+                const grown = [...messages, ...turns(30, 1)];
+                const next = await compact(grown);
                 expect(summarize).toHaveBeenCalledOnce();
+                expect(summaryText(next)).toBe(text);
+                expect(next.slice(-2)).toEqual(grown.slice(-2));
+                expect(next[2]).toMatchObject({ role: 'assistant' });
+                expect(estimatePiRequestBytes(next)).toBeLessThanOrEqual(triggerBytes);
+            });
+
+            it('still rejects an empty summary under a byte budget', async () => {
+                const summarize = vi.fn(async () => '   ');
+                const onDegraded = vi.fn();
+                const messages = [toolSystem, user('Start.'), ...turns(0, 30)];
+
+                expect(await createPiContextCompactor(200_000, summarize, onDegraded, budget)(messages)).toEqual(messages);
+                expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({ reason: 'summary_unusable' }));
+            });
+
+            it('truncates at UTF-8 safe boundaries with CJK, emoji and escaped characters', () => {
+                const decoder = new TextDecoder('utf-8', { fatal: true });
+                const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+                const source = '数😀"\n👩‍💻x'.repeat(50);
+                for (let cap = 60; cap <= 140; cap += 1) {
+                    const fitted = truncatePiSummary(source, cap);
+                    const encoded = new TextEncoder().encode(JSON.stringify(fitted));
+                    expect(encoded.length).toBeLessThanOrEqual(cap);
+                    expect(fitted.endsWith('\n[summary truncated]')).toBe(true);
+                    expect(loneSurrogate.test(fitted)).toBe(false);
+                    expect(decoder.decode(new TextEncoder().encode(fitted))).toBe(fitted);
+                    const kept = fitted.slice(0, -'\n[summary truncated]'.length);
+                    expect(source.startsWith(kept)).toBe(true);
+                    // Maximal: the next whole code point would not fit.
+                    const nextCodePoint = String.fromCodePoint(source.codePointAt(kept.length)!);
+                    expect(new TextEncoder().encode(JSON.stringify(kept + nextCodePoint + '\n[summary truncated]')).length).toBeGreaterThan(cap);
+                }
             });
 
             it('accepts a CJK summary within the byte cap and does not re-trigger on the next turns', async () => {
@@ -318,6 +360,16 @@ describe('Pi automatic context compaction', () => {
                 }
                 expect(summarize).toHaveBeenCalledOnce();
                 expect(onDegraded).not.toHaveBeenCalled();
+            });
+
+            it('keeps the non-budget path unchanged: a summary over 20,000 characters is rejected', async () => {
+                const summarize = vi.fn(async () => 'x'.repeat(20_001));
+                const onDegraded = vi.fn();
+                const messages = [system, user('A'.repeat(500_000)), user('Current question.')];
+
+                expect(await createPiContextCompactor(200_000, summarize, onDegraded)(messages)).toEqual(messages);
+                expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({ reason: 'summary_unusable' }));
+                expect(onDegraded.mock.calls[0][0]).not.toHaveProperty('estimatedBytes');
             });
 
             it('keeps the non-budget path unchanged: the same CJK summary is accepted by the character cap', async () => {

@@ -12,7 +12,8 @@ type SummarizeHistory = (messages: AgentMessage[], signal?: AbortSignal) => Prom
 
 /** Reported when compaction was needed but could not shrink the history. */
 export interface PiCompactionDegradation {
-    reason: 'summary_failed' | 'summary_unusable' | 'compaction_ineffective';
+    /** `summary_truncated`: the summary was cut to the byte cap and the compaction was kept. */
+    reason: 'summary_failed' | 'summary_unusable' | 'summary_truncated' | 'compaction_ineffective';
     error: unknown;
     estimatedTokens: number;
     /** Estimated serialized request bytes; present only when a request byte budget applies. */
@@ -61,6 +62,25 @@ export const piSummarySystemPrompt = (byteBudget?: PiRequestByteBudget): string 
 const summaryTooLarge = (summary: string, byteBudget?: PiRequestByteBudget): boolean =>
     summary.length > SUMMARY_MAX_CHARS
     || (byteBudget !== undefined && jsonStringBytes(summary) > byteBudget.summaryMaxBytes);
+
+const SUMMARY_TRUNCATED_MARKER = '\n[summary truncated]';
+
+/**
+ * Cut a summary so it plus the truncation marker fits `maxBytes` (JSON-escaped UTF-8, as sent).
+ * Iterating the string yields whole code points, so a surrogate pair is never split.
+ */
+export const truncatePiSummary = (summary: string, maxBytes: number): string => {
+    // jsonStringBytes counts the two quotes once for the whole string.
+    let remaining = maxBytes - jsonStringBytes(SUMMARY_TRUNCATED_MARKER);
+    let kept = '';
+    for (const codePoint of summary) {
+        const cost = jsonStringBytes(codePoint) - 2;
+        if (cost > remaining) break;
+        kept += codePoint;
+        remaining -= cost;
+    }
+    return kept + SUMMARY_TRUNCATED_MARKER;
+};
 
 /**
  * Bytes of the transcript as JSON. The tool declarations travel on system messages
@@ -111,13 +131,11 @@ export const createPiContextCompactor = (
     });
     const overTrigger = (size: { tokens: number; bytes: number }) =>
         size.tokens >= triggerTokens || size.bytes > triggerBytes;
-    const degrade = (
+    const report = (
         reason: PiCompactionDegradation['reason'],
         error: unknown,
         size: { tokens: number; bytes: number },
     ) => {
-        retryAboveTokens = size.tokens + retryGrowthTokens;
-        retryAboveBytes = size.bytes + retryGrowthBytes;
         try {
             onDegraded?.({
                 reason, error, estimatedTokens: size.tokens,
@@ -126,6 +144,15 @@ export const createPiContextCompactor = (
         } catch {
             // Telemetry must never break the Pi turn.
         }
+    };
+    const degrade = (
+        reason: PiCompactionDegradation['reason'],
+        error: unknown,
+        size: { tokens: number; bytes: number },
+    ) => {
+        retryAboveTokens = size.tokens + retryGrowthTokens;
+        retryAboveBytes = size.bytes + retryGrowthBytes;
+        report(reason, error, size);
     };
 
     return async (messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> => {
@@ -181,12 +208,23 @@ export const createPiContextCompactor = (
 
         try {
             const toSummarize = projected.slice(head.length, cut).filter(message => message.role !== 'system');
-            const nextSummary = (await summarize(toSummarize, signal)).trim();
+            const rawSummary = (await summarize(toSummarize, signal)).trim();
             if (signal?.aborted) return projected;
-            if (!nextSummary || summaryTooLarge(nextSummary, byteBudget)) {
-                degrade('summary_unusable', new Error(nextSummary ? 'Pi summary exceeded the size limit.' : 'Pi summary was empty.'), size);
+            if (!rawSummary) {
+                degrade('summary_unusable', new Error('Pi summary was empty.'), size);
                 return projected;
             }
+            const truncated = summaryTooLarge(rawSummary, byteBudget);
+            if (truncated && !byteBudget) {
+                degrade('summary_unusable', new Error('Pi summary exceeded the size limit.'), size);
+                return projected;
+            }
+            // Under a gateway byte bound, rejecting the summary would leave the history growing
+            // until the gateway rejects it, so a shortened summary is kept instead.
+            const nextSummary = truncated && byteBudget ? truncatePiSummary(rawSummary, byteBudget.summaryMaxBytes) : rawSummary;
+            const reportTruncation = (size: { tokens: number; bytes: number }) => {
+                if (truncated) report('summary_truncated', new Error('Pi summary exceeded the byte cap and was truncated.'), size);
+            };
             const nextSummarizedThrough = summarizedThrough + cut - head.length - summaryCount;
             const nextTimestamp = Date.now();
             const compacted: AgentMessage[] = [
@@ -207,6 +245,7 @@ export const createPiContextCompactor = (
                 if (byteBudget && compactedSize.bytes < size.bytes) {
                     commit();
                     degrade('compaction_ineffective', error, compactedSize);
+                    reportTruncation(compactedSize);
                     return compacted;
                 }
                 degrade('compaction_ineffective', error, size);
@@ -215,6 +254,7 @@ export const createPiContextCompactor = (
             retryAboveTokens = 0;
             retryAboveBytes = 0;
             commit();
+            reportTruncation(compactedSize);
             return compacted;
         } catch (error) {
             // Pi's transformContext contract requires a safe fallback on summary failure.
