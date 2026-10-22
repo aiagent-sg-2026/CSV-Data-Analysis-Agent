@@ -41,6 +41,10 @@
     - A3: the summary is capped at 16,000 bytes (CJK-safe), and an overlong one is truncated rather than rejected;
     - A6: truncated workspace listings report totals and a truncated flag.
   - Full suite: 435 files / 3,976 tests. Root published as 1.0.0-7c5fd9faf41f.
+- **Live verified after PR #34 (Pages run 35, build 1.0.0-7c5fd9faf41f)**:
+  - Real-AI HDB sample run on live finished in 260 s with 2 cards: 48 requests, largest 132 KB, no 400s, no DuckDB or workspace tool errors. The session-cap 429s refreshed correctly.
+  - All 9 deterministic live scenarios pass.
+  - Remaining quality issue: the cards still choose "Sum Resale Price", a volume metric.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
