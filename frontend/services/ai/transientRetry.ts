@@ -1,9 +1,10 @@
 /**
  * Transient retry layer for AI model calls.
  *
- * Vercel AI SDK handles network-level retries (DNS/TCP) via its built-in
- * maxRetries (default 2). This module handles HTTP-level transient errors
- * (429/503/500/502) which the SDK does NOT retry.
+ * The Vercel AI SDK already retries retryable API call errors (408/409/429/
+ * 5xx) on the same model via its built-in maxRetries (default 2) and then
+ * throws an AI_RetryError. This module adds a same-model retry only when the
+ * SDK did not already spend its own retries, and then a fallback model.
  *
  * Composes inside runWithOverflowCompaction: overflow wrapper changes the
  * input (compacted context), transient wrapper changes the model (fallback).
@@ -13,6 +14,7 @@ import type { LanguageModel } from 'ai';
 import type { Settings } from '../../types';
 import { createFallbackProviderModel } from './providerConfig';
 import { isRuntimeAbortError } from '../agent/runtime/runtimeAbort';
+import { classifyGatewayError } from '../../utils/gatewayErrorMessage';
 
 const LOG_PREFIX = '[TransientRetry]';
 
@@ -49,7 +51,60 @@ const getErrorMessage = (error: unknown): string => {
     return String(error);
 };
 
+// AI SDK errors are matched structurally by name because many tests replace
+// the 'ai' module with a factory that omits the error classes.
+const AI_RETRY_ERROR_NAME = 'AI_RetryError';
+
+interface ProviderErrorFields {
+    name?: unknown;
+    reason?: unknown;
+    lastError?: unknown;
+    statusCode?: unknown;
+    responseBody?: unknown;
+}
+
+const asErrorFields = (error: unknown): ProviderErrorFields | undefined =>
+    typeof error === 'object' && error !== null ? error as ProviderErrorFields : undefined;
+
+const isSdkRetryError = (error: unknown): boolean =>
+    asErrorFields(error)?.name === AI_RETRY_ERROR_NAME;
+
+/** The last provider error inside an AI SDK RetryError, otherwise the error itself. */
+const unwrapSdkRetryError = (error: unknown): unknown =>
+    isSdkRetryError(error) ? asErrorFields(error)?.lastError : error;
+
+/** HTTP status of an AI SDK APICallError, looking through a RetryError wrapper. */
+export const getProviderHttpStatus = (error: unknown): number | undefined => {
+    const statusCode = asErrorFields(unwrapSdkRetryError(error))?.statusCode;
+    return typeof statusCode === 'number' ? statusCode : undefined;
+};
+
+/** True when the AI SDK already made its own same-model retries for this call. */
+export const hasExhaustedSdkRetries = (error: unknown): boolean =>
+    isSdkRetryError(error) && asErrorFields(error)?.reason === 'maxRetriesExceeded';
+
+/**
+ * Default demo gateway failures that a retry within seconds cannot fix. The
+ * fetch boundary already refreshes the session (DEMO_SESSION_REQUEST_LIMIT)
+ * and waits for a slot (DEMO_SESSION_CONCURRENCY_LIMIT); quota, IP rate limit
+ * and configuration failures need minutes or user action. Repeating them only
+ * spends the session and per-IP request caps. Upstream failures stay eligible.
+ */
+const isNonRetryableGatewayFailure = (error: unknown): boolean => {
+    const responseBody = asErrorFields(unwrapSdkRetryError(error))?.responseBody;
+    const raw = `${getErrorMessage(error)} ${typeof responseBody === 'string' ? responseBody : ''}`;
+    const kind = classifyGatewayError(raw)?.kind;
+    return kind !== undefined && kind !== 'upstream';
+};
+
 export const isTransientProviderError = (error: unknown): boolean => {
+    if (isNonRetryableGatewayFailure(error)) return false;
+    // A real HTTP status is more reliable than message text: a 400/413 body
+    // can mention numbers such as "500" or "205000 bytes".
+    const status = getProviderHttpStatus(error);
+    if (status !== undefined && status >= 400) {
+        return status === 408 || status === 429 || status >= 500;
+    }
     const lower = getErrorMessage(error).toLowerCase();
     return TRANSIENT_ERROR_PATTERNS.some(p => lower.includes(p.toLowerCase()));
 };
@@ -187,6 +242,9 @@ export async function withTransientRetry<T>(
 
             // Last same-model attempt — break to fallback phase
             if (attempt >= maxSameModelRetries) break;
+            // The SDK already retried this model with backoff; another round
+            // would multiply requests (and demo gateway quota) without a new model.
+            if (hasExhaustedSdkRetries(error)) break;
 
             // Prefer Retry-After header over exponential backoff
             const retryAfterMs = parseRetryAfterMs(error);

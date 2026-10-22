@@ -404,7 +404,7 @@ describe('generateAnalysisTopics — timeout guard (P0)', () => {
     });
 
     it('falls back to deterministic topics when the provider fails with a non-timeout error', async () => {
-        // Mirrors a gateway HTTP 413 that streamGenerateText surfaces as AI_NoOutputGeneratedError.
+        // Mirrors a cause-less AI_NoOutputGeneratedError; streamGenerateText now surfaces a captured HTTP error instead.
         const providerError = new Error('No output generated. Check the stream for errors.');
         providerError.name = 'AI_NoOutputGeneratedError';
         runWithOverflowCompactionMock.mockRejectedValue(providerError);

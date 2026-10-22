@@ -58,6 +58,29 @@ describe('isTransientProviderError', () => {
         expect(isTransientProviderError(new Error('Invalid JSON response'))).toBe(false);
         expect(isTransientProviderError(new Error('context_length_exceeded'))).toBe(false);
     });
+
+    it('classifies AI SDK API call errors by HTTP status before message text', () => {
+        const apiError = (statusCode: number, message: string, responseBody = '') =>
+            Object.assign(new Error(message), { name: 'AI_APICallError', statusCode, responseBody });
+        expect(isTransientProviderError(apiError(400, 'max_output_tokens must be at most 500'))).toBe(false);
+        expect(isTransientProviderError(apiError(413, 'Request body exceeds 205000 bytes'))).toBe(false);
+        expect(isTransientProviderError(apiError(503, 'Upstream failed'))).toBe(true);
+        expect(isTransientProviderError(apiError(429, 'Slow down'))).toBe(true);
+        expect(isTransientProviderError(apiError(408, 'Request timeout'))).toBe(true);
+        // A demo gateway upstream failure may clear; its session/quota limits cannot.
+        expect(isTransientProviderError(apiError(502, 'Bad gateway', '{"error":{"code":"DEMO_UPSTREAM_ERROR"}}'))).toBe(true);
+        expect(isTransientProviderError(apiError(429, 'Limit', '{"error":{"code":"DEMO_SESSION_CONCURRENCY_LIMIT"}}'))).toBe(false);
+        expect(isTransientProviderError(apiError(429, 'Demo IP rate limit exceeded'))).toBe(false);
+    });
+
+    it('looks through an AI SDK RetryError to its last API call error', () => {
+        const retryError = Object.assign(new Error('Failed after 3 attempts. Last error: Bad request 500'), {
+            name: 'AI_RetryError',
+            reason: 'errorNotRetryable',
+            lastError: Object.assign(new Error('Bad request 500'), { statusCode: 400 }),
+        });
+        expect(isTransientProviderError(retryError)).toBe(false);
+    });
 });
 
 describe('isPermanentProviderError', () => {

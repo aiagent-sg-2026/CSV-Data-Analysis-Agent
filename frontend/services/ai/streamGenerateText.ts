@@ -36,6 +36,34 @@ import { CloudAiConsentDeclinedError } from '../privacy/cloudAiConsent';
 /** Default idle timeout: 30 seconds between SSE chunks. */
 export const DEFAULT_ACTIVITY_TIMEOUT_MS = 30_000;
 
+// Matched by name rather than `NoOutputGeneratedError.isInstance` because many
+// tests replace the 'ai' module with a factory that only provides streamText.
+const NO_OUTPUT_GENERATED_ERROR_NAME = 'AI_NoOutputGeneratedError';
+
+const errorName = (error: unknown): unknown =>
+    typeof error === 'object' && error !== null ? (error as { name?: unknown }).name : undefined;
+
+/**
+ * When the provider request itself fails (for example HTTP 400/413/429/5xx),
+ * AI SDK 6 records no step and rejects `text`/`finishReason` with a new
+ * NoOutputGeneratedError that carries no cause; the real error only reaches
+ * `onError`. Return that captured error instead so status- and message-based
+ * classifiers (transient retry, overflow compaction, gateway messages) see it.
+ * Caller aborts and abort-shaped errors keep the SDK's own rejection.
+ */
+const resolveStreamFailure = (
+    reason: unknown,
+    streamedError: unknown,
+    abortSignal: AbortSignal | undefined,
+): unknown => {
+    if (abortSignal?.aborted) return reason;
+    if (!(streamedError instanceof Error)) return reason;
+    if (errorName(reason) !== NO_OUTPUT_GENERATED_ERROR_NAME) return reason;
+    const streamedName = errorName(streamedError);
+    if (streamedName === 'AbortError' || streamedName === 'ResponseAborted') return reason;
+    return streamedError;
+};
+
 /**
  * Activity-aware wrapper around `streamText`.
  *
@@ -104,10 +132,10 @@ export const streamGenerateText = async (
                 throw streamedError;
             }
             if (textResult.status === 'rejected') {
-                throw textResult.reason;
+                throw resolveStreamFailure(textResult.reason, streamedError, streamOptions.abortSignal);
             }
             if (finishReasonResult.status === 'rejected') {
-                throw finishReasonResult.reason;
+                throw resolveStreamFailure(finishReasonResult.reason, streamedError, streamOptions.abortSignal);
             }
 
             // stream.output only resolves when Output.object({ schema }) was
