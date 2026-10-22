@@ -63,23 +63,60 @@ const summaryTooLarge = (summary: string, byteBudget?: PiRequestByteBudget): boo
     summary.length > SUMMARY_MAX_CHARS
     || (byteBudget !== undefined && jsonStringBytes(summary) > byteBudget.summaryMaxBytes);
 
-const SUMMARY_TRUNCATED_MARKER = '\n[summary truncated]';
+// Tells the model that the tail (where decisions and outstanding work usually sit) is missing.
+export const SUMMARY_TRUNCATED_MARKER = '\n[Summary truncated: later details were omitted. Re-check facts with tools before citing them.]';
+// Full-width terminators end a sentence on their own; ASCII ones only before whitespace,
+// so a decimal point ("61.5") or a dotted name is not mistaken for a sentence end.
+const CJK_SENTENCE_ENDS = new Set(['。', '！', '？']);
+const ASCII_SENTENCE_ENDS = new Set(['.', '!', '?']);
+const WHITESPACE = /\s/u;
 
 /**
  * Cut a summary so it plus the truncation marker fits `maxBytes` (JSON-escaped UTF-8, as sent).
  * Iterating the string yields whole code points, so a surrogate pair is never split.
+ * The cut prefers the last line break or sentence end, so a number or word is not left half
+ * written; it falls back to the code-point cut when that boundary would discard more than half
+ * of the allowed bytes.
  */
 export const truncatePiSummary = (summary: string, maxBytes: number): string => {
     // jsonStringBytes counts the two quotes once for the whole string.
-    let remaining = maxBytes - jsonStringBytes(SUMMARY_TRUNCATED_MARKER);
+    const available = maxBytes - jsonStringBytes(SUMMARY_TRUNCATED_MARKER);
+    let used = 0;
     let kept = '';
+    let previous = '';
+    let cutShort = false;
+    let boundaryLength = 0;
+    let boundaryBytes = 0;
     for (const codePoint of summary) {
         const cost = jsonStringBytes(codePoint) - 2;
-        if (cost > remaining) break;
+        if (cost > available - used) {
+            cutShort = true;
+            break;
+        }
+        if (codePoint === '\n' || (ASCII_SENTENCE_ENDS.has(previous) && WHITESPACE.test(codePoint))) {
+            // End before the separator; the marker supplies its own line break.
+            boundaryLength = kept.length;
+            boundaryBytes = used;
+        }
         kept += codePoint;
-        remaining -= cost;
+        used += cost;
+        if (CJK_SENTENCE_ENDS.has(codePoint)) {
+            boundaryLength = kept.length;
+            boundaryBytes = used;
+        }
+        previous = codePoint;
     }
-    return kept + SUMMARY_TRUNCATED_MARKER;
+    // An ASCII terminator that is the last kept code point counts when the source ends there
+    // or continues with whitespace.
+    if (cutShort && ASCII_SENTENCE_ENDS.has(previous)) {
+        const next = summary.slice(kept.length, kept.length + 1);
+        if (WHITESPACE.test(next)) {
+            boundaryLength = kept.length;
+            boundaryBytes = used;
+        }
+    }
+    const atBoundary = cutShort && boundaryLength > 0 && boundaryBytes * 2 >= available;
+    return (atBoundary ? kept.slice(0, boundaryLength) : kept) + SUMMARY_TRUNCATED_MARKER;
 };
 
 /**
