@@ -174,17 +174,26 @@ const run = async (
     let meaningRejections = 0, consecutiveMeaningRejections = 0, meaningStopReason = '';
     // While the skip is still permitted, the threshold first returns skip guidance and gives a bounded grace window.
     let meaningSkipGuidance = '', meaningGuidanceTurn = 0;
+    // Calls the wrapper already classified; finishTurn counts only the rest (calls that never reached execute()).
     const observedMeaningCalls = new Set<string>();
-    const isAcceptedMeaning = (text: string, isError: boolean) => {
-        if (isError) return false;
-        try { return (JSON.parse(text) as { status?: unknown }).status === 'success'; } catch { return false; }
+    // Mirrors the app-tool phase check: coding tools run only while stage 2 or 3 is next.
+    const cleaningWindowOpen = () => nextStageIndex === 2 || nextStageIndex === 3;
+    // Lease loss and scope refusals say nothing about the proposal itself, so they are not meaning rejections.
+    const isRunOrScopeFailure = (message: string, error?: unknown) => controller.signal.aborted || lease.signal.aborted || !ownsRun(store, lease)
+        || (error as { name?: unknown } | undefined)?.name === 'AbortError'
+        || /\b(?:scope_revoked|typed_scope_unresolved|initial_checkpoint_unavailable)\b|This run no longer owns the session/.test(message);
+    const classifyMeaningResult = (text: string, isError: boolean): 'accepted' | 'rejected' | 'ignored' => {
+        let parsed: { status?: unknown; message?: unknown } | undefined;
+        try { parsed = JSON.parse(text) as typeof parsed; } catch { parsed = undefined; }
+        if (isRunOrScopeFailure(typeof parsed?.message === 'string' ? parsed.message : text)) return 'ignored';
+        return !isError && parsed?.status === 'success' ? 'accepted' : 'rejected';
     };
     /** Counts one proposal outcome and returns new skip guidance when the threshold is reached while skipping is permitted. */
-    const recordMeaningOutcome = (toolCallId: string, accepted: boolean, turn: number): string => {
-        // After the skip, the coding window is closed and further calls are refused by phase, not counted here.
-        if (observedMeaningCalls.has(toolCallId) || nextStageIndex > 3) return '';
-        observedMeaningCalls.add(toolCallId);
-        if (accepted) { consecutiveMeaningRejections = 0; return ''; }
+    const countMeaningOutcome = (outcome: 'accepted' | 'rejected' | 'ignored', turn: number): string => {
+        // Outside the cleaning window the phase check refuses the call, so it is not a proposal rejection.
+        if (outcome === 'ignored' || !cleaningWindowOpen()) return '';
+        // An accepted proposal starts a new attempt; it also starts work, so a later threshold stops blocked.
+        if (outcome === 'accepted') { consecutiveMeaningRejections = 0; meaningRejections = 0; return ''; }
         meaningRejections += 1;
         consecutiveMeaningRejections += 1;
         if (meaningSkipGuidance || meaningStopReason || !cleaningSkipPermitted()
@@ -197,11 +206,13 @@ const run = async (
     const reviewMeaningProgress = (toolResults: ToolResultMessage[]) => {
         for (const result of toolResults) {
             if (result.toolName !== 'candidate_infer_meaning') continue;
-            const guidance = recordMeaningOutcome(result.toolCallId, isAcceptedMeaning(result.content.filter(part => part.type === 'text').map(part => part.text).join(''), result.isError), providerTurns);
+            if (observedMeaningCalls.has(result.toolCallId)) continue;
+            observedMeaningCalls.add(result.toolCallId);
+            const guidance = countMeaningOutcome(classifyMeaningResult(result.content.filter(part => part.type === 'text').map(part => part.text).join(''), result.isError), providerTurns);
             // Calls refused before execute() (schema or phase failures) get guidance here; an executed call carries it in its own result.
             if (guidance) agent.steer({ role: 'user', content: [{ type: 'text', text: guidance }], timestamp: Date.now() });
         }
-        if (meaningStopReason || nextStageIndex > 3) return;
+        if (meaningStopReason || !cleaningWindowOpen()) return;
         const reached = consecutiveMeaningRejections >= MAX_CONSECUTIVE_MEANING_REJECTIONS || meaningRejections >= MAX_MEANING_REJECTIONS;
         // The host never skips cleaning on the model's behalf, and once work started only exact approval may
         // advance, so these cases end with an explicit blocked reason.
@@ -466,6 +477,8 @@ const run = async (
                 ? {...message,sections:{...message.sections,skills:formatPinnedSkills(executorPreparation!.task.skills,store)}} : message);
             const appTools=createPiAppTools(store,request.datasetVersion,{maxToolCalls:40,includeSkills:true}).filter(t=>t.name!=='data_mutate'&&t.name!=='conversation_request_clarification');
             agent.state.tools=[tool,...appTools.map(t=>({...t,execute:async(...args:Parameters<typeof t.execute>)=>{
+                // Claim the call so finishTurn does not count it; refusals before execute() below are host refusals.
+                if(t.name==='candidate_infer_meaning')observedMeaningCalls.add(args[0]);
                 assertRunActive(store,lease);
                 if(pendingApproval)throw new Error('initial_approval_pending');
                 if(t.name!=='read_skill'&&nextStageIndex!==2&&nextStageIndex!==3)throw new Error('initial_coding_phase_unavailable');
@@ -478,7 +491,7 @@ const run = async (
                     let result=await t.execute(...args);assertRunActive(store,lease);
                     if(t.name==='candidate_infer_meaning'){
                         const text=result.content.filter(part=>part.type==='text').map(part=>part.text).join('');
-                        const guidance=recordMeaningOutcome(args[0],isAcceptedMeaning(text,false),providerTurns+1);
+                        const guidance=countMeaningOutcome(classifyMeaningResult(text,false),providerTurns+1);
                         if(guidance){
                             let annotated:string;
                             try{annotated=JSON.stringify({...JSON.parse(text),hostGuidance:guidance});}catch{annotated=`${text}\n\n${guidance}`;}
@@ -488,9 +501,9 @@ const run = async (
                     pendingApproval=pendingPiCandidateApproval(store);
                     return {...result,...(pendingApproval?{terminate:true}:{})};
                 }catch(error){
-                    // A thrown proposal error is also a rejection; carry new skip guidance in the same tool result.
-                    const guidance=t.name==='candidate_infer_meaning'&&!controller.signal.aborted&&error instanceof Error
-                        ?recordMeaningOutcome(args[0],false,providerTurns+1):'';
+                    // A thrown proposal error is also a rejection unless the run or scope failed; carry new skip guidance in the same tool result.
+                    const guidance=t.name==='candidate_infer_meaning'&&error instanceof Error
+                        ?countMeaningOutcome(isRunOrScopeFailure(error.message,error)?'ignored':'rejected',providerTurns+1):'';
                     if(guidance)throw new Error(`${(error as Error).message}\n\n${guidance}`);
                     throw error;
                 }finally{if(ownsRun(store,lease)&&!lease.signal.aborted)await persistCheckpoint(pending);}

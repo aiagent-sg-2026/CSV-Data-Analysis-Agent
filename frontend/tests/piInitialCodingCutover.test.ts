@@ -23,6 +23,7 @@ import {inspectPiCandidateReview} from '../services/agent/runtime/pi/piCandidate
 import {recoverCandidateReview,commitRecoveredCandidate} from '../services/data/candidateRecovery';
 import {scopeRunStore,finishRun} from '../services/session/sessionOwnership';
 import {createCleaningRun} from '../services/agent/cleaningRunState';
+import * as meaningInference from '../services/data/inferCandidateMeaning';
 const io=vi.hoisted(()=>({records:new Map<string,unknown>(),commits:0,queryCalls:0,beforeQuery:undefined as undefined|(()=>Promise<void>)}));
 vi.mock('../services/storageService',async original=>({...await original<typeof import('../services/storageService')>(),
     getStorageDatabase:async()=>({get:async(_name:string,key:string)=>io.records.get(key),getAllFromIndex:async()=>[...io.records.values()].filter(r=>(r as DatasetCommitMarker).kind==='commit')}) as unknown as StorageDatabase}));
@@ -302,6 +303,57 @@ describe('initial shared coding phase',()=>{
             expect(calls).toBe(9);expect(refused[0]).toMatch(/^initial_cleaning_meaning_skip_required: /);
             expect(root.getState().analysisCards).toHaveLength(0);expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);
         }finally{beginSessionTransition(root);}
+    });
+    it('neither counts nor blocks on meaning calls refused before the cleaning window opens',async()=>{
+        const root=zeroPlanStore();let calls=0;const refusals:string[]=[];
+        try{
+            const f=await preparePiInitialCodingUiSmoke(root,{mode:'no-cleaning',wrapStream:()=>scripted(context=>{
+                const {last,text}=lastText(context),index=calls++;
+                if(last?.toolName==='candidate_infer_meaning')refusals.push(text);
+                if(index<5)return tool('candidate_infer_meaning',rejectedProposal(root,`Early proposal ${index}.`));
+                if(index<8)return tool('run_next_analysis_stage',{});
+                if(index===8)return tool('run_next_analysis_stage',{stage:'dataset.validatePreparedData'});
+                return tool('run_next_analysis_stage',{});
+            })});
+            expect(refusals).toHaveLength(5);expect(refusals.every(text=>text==='initial_coding_phase_unavailable')).toBe(true);
+            expect(f.result.status,f.result.error?.message).toBe('completed');expect(io.commits).toBe(0);
+        }finally{beginSessionTransition(root);}
+    });
+    it('resets the rejection total when a proposal is accepted and still stops once work started',async()=>{
+        const root=bareStore();let calls=0;
+        // Row 5 does not exist in the three-row repair fixture; the default proposal (row 2) is accepted.
+        const outOfRange=(index:number)=>({...rejectedProposal(root,`Out-of-range proposal ${index}.`),exclusions:[{row:5,role:'subtotal'}]});
+        try{
+            const f=await preparePiInitialCodingUiSmoke(root,{wrapStream:()=>scripted(()=>{
+                const index=calls++;
+                if(index<3)return tool('run_next_analysis_stage',{});
+                if(index<6)return tool('candidate_infer_meaning',outOfRange(index));
+                if(index===6)return tool('candidate_infer_meaning',rejectedProposal(root,'Name identifies one detail fact; the final subtotal covers every detail.'));
+                // After acceptance the meaning contract is locked, so later proposals are rejected.
+                return tool('candidate_infer_meaning',outOfRange(index));
+            })});
+            expect(f.result.status).toBe('blocked');
+            // Without the reset, the third post-acceptance rejection would reach the total limit of 6.
+            expect(f.result.error?.message).toMatch(/^initial_cleaning_meaning_no_progress: 4 candidate_infer_meaning proposal\(s\) were rejected \(4 in a row\) after cleaning work started/);
+            expect(calls).toBe(11);expect(io.commits).toBe(0);
+        }finally{beginSessionTransition(root);}
+    });
+    it('does not count scope or lease failures as meaning rejections',async()=>{
+        const root=zeroPlanStore();let calls=0;const results:string[]=[];
+        const inference=vi.spyOn(meaningInference,'inferCandidateMeaning').mockRejectedValue(new Error('scope_revoked'));
+        try{
+            const f=await preparePiInitialCodingUiSmoke(root,{mode:'no-cleaning',wrapStream:()=>scripted(context=>{
+                const {last,text}=lastText(context),index=calls++;
+                if(last?.toolName==='candidate_infer_meaning')results.push(text);
+                if(index<3)return tool('run_next_analysis_stage',{});
+                if(index<9)return tool('candidate_infer_meaning',rejectedProposal(root,`Scope failure ${index}.`));
+                if(index===9)return tool('run_next_analysis_stage',{stage:'dataset.validatePreparedData'});
+                return tool('run_next_analysis_stage',{});
+            })});
+            expect(results).toHaveLength(6);expect(results.every(text=>JSON.parse(text).message==='scope_revoked')).toBe(true);
+            expect(results.some(text=>text.includes('initial_cleaning_meaning_skip_required'))).toBe(false);
+            expect(f.result.status,f.result.error?.message).toBe('completed');expect(io.commits).toBe(0);
+        }finally{inference.mockRestore();beginSessionTransition(root);}
     });
     it('stops blocked at the rejection threshold once cleaning work has started',async()=>{
         const root=bareStore();let calls=0;
