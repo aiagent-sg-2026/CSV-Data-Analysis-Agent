@@ -386,6 +386,7 @@ const run = async (
     let status: InitialAnalysisRunOutcome['status'] = 'failed';
     let errorMessage = '';
     let providerFailure = false;
+    let cloudConsentDeclined = false;
     try {
         if (options.codingPreparation?.enabled === true) executorPreparation = await preparePiExecutor(store, {entryPoint:'initial_analysis',
             goal:request.researchGoal,guest:options.codingPreparation.guest,qualified,continuation:options.codingPreparation.continuation,
@@ -460,7 +461,9 @@ const run = async (
         }
     } catch (error) {
         errorMessage = sanitizeError(error);
-        providerFailure ||= isInitialAnalysisProviderFailure(error);
+        // A declined consent prompt mentions the provider, so classify it before the provider heuristic.
+        cloudConsentDeclined = (error as { code?: unknown } | null)?.code === 'cloud_ai_consent_declined';
+        providerFailure ||= !cloudConsentDeclined && isInitialAnalysisProviderFailure(error);
         status = !ownsRun(store, lease) || (controller.signal.aborted && (request.signal?.aborted || activeEntry.cancelledByUser || (controller.signal.reason as Error)?.name === 'AbortError')) ? 'cancelled'
             : qualified && !providerFailure && (executorPreparation?.task.blockedReason || /^(tool_no_progress|task_budget_exhausted|initial_[a-z_]+)/.test(errorMessage)) ? 'blocked'
                 : !executorPreparation && results.length > 0 ? 'degraded' : 'failed';
@@ -519,7 +522,8 @@ const run = async (
         initialAnalysisStatus: status === 'cancelled'||status==='blocked' ? 'paused'
             : noUsableResults || status === 'failed' ? 'error'
                 : status === 'completed' ? 'ready' : 'degraded',
-        initialAnalysisFailureKind: providerFailure ? 'provider'
+        initialAnalysisFailureKind: cloudConsentDeclined ? 'cloud_consent_declined'
+            : providerFailure ? 'provider'
             : noUsableResults || status === 'failed' ? 'analysis' : null,
     });
     if (noUsableResults && store.getState().pipelineOutcome?.canAutoAnalyze === false

@@ -611,6 +611,7 @@ export async function* orchestrateFileUpload(
         const message = getTranslation('cloud_ai_local_only_message', settings.language);
         setState(prev => ({
             initialAnalysisStatus: 'degraded',
+            initialAnalysisFailureKind: 'cloud_consent_declined',
             cleaningRun: {
                 ...createCleaningRun(),
                 status: 'paused',

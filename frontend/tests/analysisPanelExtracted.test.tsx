@@ -36,6 +36,20 @@ describe('next step resolution', () => {
         expect(resolveNextStepKind({ needsStructureRepair: false, needsProviderRecovery: false, needsEvidenceReview: false })).toBe('report');
     });
 
+    it('asks to enable cloud AI before any other step when cloud analysis was never authorized', () => {
+        expect(resolveNextStepKind({
+            needsCloudAiConsent: true, needsStructureRepair: true, needsProviderRecovery: true, needsEvidenceReview: true,
+        })).toBe('enable_cloud_ai');
+        expect(resolveNextStepKind({
+            needsCloudAiConsent: false, needsStructureRepair: false, needsProviderRecovery: false, needsEvidenceReview: true,
+        })).toBe('review_evidence');
+        expect(resolveNextStepCopyKeys({ kind: 'enable_cloud_ai', degraded: true, hasReport: false, isGeneratingReport: false })).toEqual({
+            reason: 'analysis_results_next_step_reason_cloud_consent',
+            outcome: 'analysis_results_next_step_outcome_cloud_consent',
+            action: 'analysis_results_enable_cloud_ai_action',
+        });
+    });
+
     it('picks report copy by degraded, existing report and running state', () => {
         const base = { kind: 'report' as const, degraded: false, hasReport: false, isGeneratingReport: false };
         expect(resolveNextStepCopyKeys(base)).toMatchObject({ reason: 'analysis_results_next_step_reason_ready_report', action: 'generate_analyst_report' });
@@ -77,6 +91,16 @@ describe('extracted panel components', () => {
         />);
         expect((screen.getByRole('button', { name: 'Generate Analyst Report' }) as HTMLButtonElement).disabled).toBe(true);
         expect(screen.queryByRole('button', { name: 'Change provider' })).toBeNull();
+
+        rerender(<RecommendedNextStep
+            kind="enable_cloud_ai" language="English" degraded hasReport={false} isGeneratingReport={false}
+            disabled={false} onPrimaryAction={onPrimary} onChangeProvider={onChangeProvider}
+        />);
+        expect(screen.getByText(/Cloud analysis was not started because cloud AI was not authorized/)).toBeTruthy();
+        expect(screen.queryByText(/No business conclusion passed all evidence checks/)).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: 'Allow cloud AI analysis' }));
+        expect(onPrimary).toHaveBeenCalledTimes(2);
+        expect(screen.getByRole('button', { name: 'Change provider' })).toBeTruthy();
     });
 
     it('states the full row count and the sample size once', () => {

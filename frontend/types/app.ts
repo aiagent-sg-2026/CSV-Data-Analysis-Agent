@@ -92,7 +92,8 @@ export interface PendingVectorMemoryDoc {
     metadata?: VectorStoreDocumentMetadata;
 }
 export type InitialAnalysisStatus = 'idle' | 'running' | 'ready' | 'degraded' | 'paused' | 'error';
-export type InitialAnalysisFailureKind = 'provider' | 'analysis';
+/** `cloud_consent_declined` means cloud analysis never started because the user chose local processing only. */
+export type InitialAnalysisFailureKind = 'provider' | 'analysis' | 'cloud_consent_declined';
 export type InitialAnalysisTrigger = 'automatic' | 'manual';
 export type InitialAnalysisReasonCode =
     | 'parse_errors'

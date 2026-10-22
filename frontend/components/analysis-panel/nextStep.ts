@@ -1,13 +1,19 @@
-export type NextStepKind = 'repair_structure' | 'recover_provider' | 'review_evidence' | 'report';
+export type NextStepKind = 'enable_cloud_ai' | 'repair_structure' | 'recover_provider' | 'review_evidence' | 'report';
 
 export interface NextStepFlags {
+    /** Cloud analysis never started because the user chose local processing only. */
+    needsCloudAiConsent?: boolean;
     needsStructureRepair: boolean;
     needsProviderRecovery: boolean;
     needsEvidenceReview: boolean;
 }
 
-/** Structure problems come first, then a failed provider, then evidence review; otherwise the report. */
+/**
+ * A declined cloud AI consent comes first because no analysis ran and every other step needs it.
+ * Then structure problems, a failed provider and evidence review; otherwise the report.
+ */
 export const resolveNextStepKind = (flags: NextStepFlags): NextStepKind => {
+    if (flags.needsCloudAiConsent) return 'enable_cloud_ai';
     if (flags.needsStructureRepair) return 'repair_structure';
     if (flags.needsProviderRecovery) return 'recover_provider';
     if (flags.needsEvidenceReview) return 'review_evidence';
@@ -28,6 +34,12 @@ export const resolveNextStepCopyKeys = (params: {
 }): NextStepCopyKeys => {
     const { kind, degraded, hasReport, isGeneratingReport } = params;
     switch (kind) {
+        case 'enable_cloud_ai':
+            return {
+                reason: 'analysis_results_next_step_reason_cloud_consent',
+                outcome: 'analysis_results_next_step_outcome_cloud_consent',
+                action: 'analysis_results_enable_cloud_ai_action',
+            };
         case 'repair_structure':
             return {
                 reason: 'analysis_results_next_step_reason_structure',

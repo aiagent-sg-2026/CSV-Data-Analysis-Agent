@@ -3,7 +3,7 @@ import type { Settings } from '../../types';
 import { getTranslation } from '../../utils/localization';
 import { resolveNextStepCopyKeys, type NextStepKind } from './nextStep';
 
-/** The one recommended action after an analysis ends (repair, retry, review or report). */
+/** The one recommended action after an analysis ends (enable cloud AI, repair, retry, review or report). */
 export const RecommendedNextStep: React.FC<{
     kind: NextStepKind;
     language: Settings['language'];
@@ -14,7 +14,7 @@ export const RecommendedNextStep: React.FC<{
     /** Why the report cannot be generated yet, shown as the button tooltip. */
     blockedTitle?: string;
     onPrimaryAction: () => void;
-    /** Only offered when the provider failed and the settings surface is available. */
+    /** Only offered when the provider failed or cloud AI was declined, and the settings surface is available. */
     onChangeProvider?: () => void;
 }> = ({
     kind, language, degraded, hasReport, isGeneratingReport, disabled, blockedTitle, onPrimaryAction, onChangeProvider,
@@ -36,7 +36,7 @@ export const RecommendedNextStep: React.FC<{
             >
                 {getTranslation(copy.action, language)}
             </button>
-            {kind === 'recover_provider' && onChangeProvider && (
+            {(kind === 'recover_provider' || kind === 'enable_cloud_ai') && onChangeProvider && (
                 <button
                     type="button"
                     onClick={onChangeProvider}

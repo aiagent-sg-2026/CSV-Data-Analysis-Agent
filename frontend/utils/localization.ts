@@ -3639,6 +3639,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Japanese': '選択した AI プロバイダーが分析を完了できませんでした。取り込んだデータは保持されています。',
         'Malay': 'Penyedia AI yang dipilih tidak menyelesaikan analisis ini. Data yang anda import masih tersedia.',
     },
+    'analysis_results_next_step_reason_cloud_consent': {
+        'English': 'Cloud analysis was not started because cloud AI was not authorized. Your imported data stayed in this browser.',
+        'Mandarin': '由于未授权云端 AI，云端分析没有启动；已导入的数据仍保留在此浏览器中。',
+        'Japanese': 'クラウド AI が許可されなかったため、クラウド分析は開始されていません。取り込んだデータはこのブラウザー内に保持されています。',
+        'Malay': 'Analisis awan tidak dimulakan kerana AI awan tidak dibenarkan. Data yang anda import kekal dalam pelayar ini.',
+    },
     'analysis_results_next_step_outcome': {
         'English': 'Expected outcome: traceable evidence, adjustable chart settings, and the underlying aggregate data.',
         'Mandarin': '预期结果：可追溯证据、可调整的图表设置和底层聚合数据。',
@@ -3669,6 +3675,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Japanese': '現在のプロバイダーで再試行するか、設定で別のプロバイダーを選んでください。',
         'Malay': 'Cuba lagi dengan penyedia ini atau pilih penyedia lain dalam Tetapan.',
     },
+    'analysis_results_next_step_outcome_cloud_consent': {
+        'English': 'Allow cloud AI to run the analysis, or choose another provider in Settings.',
+        'Mandarin': '允许云端 AI 运行分析，或在 Settings 中选择其他 provider。',
+        'Japanese': 'クラウド AI に分析の実行を許可するか、設定で別のプロバイダーを選んでください。',
+        'Malay': 'Benarkan AI awan menjalankan analisis, atau pilih penyedia lain dalam Tetapan.',
+    },
     'analysis_results_next_step_outcome_evidence': {
         'English': 'Review the analysis evidence and reasons, then retry if needed.',
         'Mandarin': '请查看分析证据及原因，必要时重试。',
@@ -3686,6 +3698,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Mandarin': '重试分析',
         'Japanese': '分析を再試行',
         'Malay': 'Cuba analisis lagi',
+    },
+    'analysis_results_enable_cloud_ai_action': {
+        'English': 'Allow cloud AI analysis',
+        'Mandarin': '允许云端 AI 分析',
+        'Japanese': 'クラウド AI 分析を許可',
+        'Malay': 'Benarkan analisis AI awan',
     },
     'analysis_results_change_provider_action': {
         'English': 'Change provider',

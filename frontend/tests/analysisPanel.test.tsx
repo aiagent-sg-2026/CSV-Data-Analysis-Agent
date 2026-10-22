@@ -9,6 +9,12 @@ vi.mock('../store/useAppStore', () => ({
     useAppStore: vi.fn(),
 }));
 
+const { forgetCloudAiConsentDeclineMock } = vi.hoisted(() => ({ forgetCloudAiConsentDeclineMock: vi.fn() }));
+vi.mock('../services/privacy/cloudAiConsent', async importOriginal => ({
+    ...await importOriginal<typeof import('../services/privacy/cloudAiConsent')>(),
+    forgetCloudAiConsentDecline: forgetCloudAiConsentDeclineMock,
+}));
+
 vi.mock('react-masonry-css', () => ({
     default: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
@@ -1320,6 +1326,34 @@ describe('analysis panel rendering', () => {
         await waitFor(() => expect(store.handleInitialAnalysis).toHaveBeenCalledWith(
             store.csvData, 'Summarize resale prices.', { trigger: 'manual' },
         ));
+        fireEvent.click(screen.getByRole('button', { name: 'Change provider' }));
+        expect(store.setIsSettingsModalOpen).toHaveBeenCalledWith(true);
+    });
+
+    it('asks to allow cloud AI instead of reviewing evidence after a local-only import', async () => {
+        const store = {
+            ...createRecoveryStore(),
+            initialAnalysisStatus: 'degraded',
+            initialAnalysisFailureKind: 'cloud_consent_declined',
+            cleaningRun: { status: 'paused' },
+            currentDatasetId: 'dataset-local',
+            settings: { language: 'English', provider: 'openai' },
+        };
+        (useAppStoreModule.useAppStore as unknown as ReturnType<typeof vi.fn>).mockImplementation((selector: (value: typeof store) => unknown) => selector(store));
+
+        render(<AnalysisPanel />);
+
+        expect(screen.getByText(/Cloud analysis was not started because cloud AI was not authorized/)).toBeInTheDocument();
+        expect(screen.queryByText(/No business conclusion passed all evidence checks/)).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Review analysis evidence' })).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Allow cloud AI analysis' }));
+        // The session decline must be forgotten before the retry, otherwise no consent prompt appears.
+        expect(forgetCloudAiConsentDeclineMock).toHaveBeenCalledWith('dataset-local', 'openai');
+        await waitFor(() => expect(store.handleInitialAnalysis).toHaveBeenCalledWith(
+            store.csvData, 'Summarize resale prices.', { trigger: 'manual' },
+        ));
+        expect(forgetCloudAiConsentDeclineMock.mock.invocationCallOrder[0])
+            .toBeLessThan(store.handleInitialAnalysis.mock.invocationCallOrder[0]);
         fireEvent.click(screen.getByRole('button', { name: 'Change provider' }));
         expect(store.setIsSettingsModalOpen).toHaveBeenCalledWith(true);
     });

@@ -119,6 +119,16 @@ export const hasDeclinedCloudAiConsent = (
     return declinedConsentKeys.has(providerKey) || declinedConsentKeys.has(sensitiveKey);
 };
 
+/** Forget a session-only decline so the next cloud AI call asks for consent again. */
+export const forgetCloudAiConsentDecline = (
+    datasetId: string,
+    provider: CloudAiProvider,
+): void => {
+    const providerRequest = buildProviderRequest(datasetId, provider);
+    declinedConsentKeys.delete(buildCloudAiConsentKey(providerRequest));
+    declinedConsentKeys.delete(buildCloudAiConsentKey({ ...providerRequest, consentScope: 'sensitive_dataset' }));
+};
+
 export const ensureCloudAiConsent = async (
     provider: CloudAiProvider,
 ): Promise<void> => {
