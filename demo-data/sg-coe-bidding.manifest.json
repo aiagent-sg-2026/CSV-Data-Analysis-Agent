@@ -1,0 +1,45 @@
+{
+  "id": "sg-coe-bidding",
+  "source": "Land Transport Authority dataset published on data.gov.sg",
+  "licence": {
+    "name": "Singapore Open Data Licence",
+    "version": "1.0",
+    "url": "https://data.gov.sg/open-data-licence",
+    "attribution": "Contains information from \"COE Bidding Results / Prices\" accessed from data.gov.sg, which is made available under the terms of the Singapore Open Data Licence version 1.0 (https://data.gov.sg/open-data-licence)."
+  },
+  "transformationPolicy": "No source values are cleaned, normalized, renamed, reshaped, deduplicated, or sorted. Rows are the exact lines served by the data.gov.sg download API, copied byte for byte in source order; the only permitted change is the documented sampling rule below.",
+  "sampling": "None. The full source file is within the browser demo limits (1.5 MB and 10,000 data rows), so the CSV is byte-identical to the download.",
+  "shape": "Long time series, one row per month, bidding exercise and vehicle category (two exercises per month). Some bid counts are quoted strings with thousands separators such as \"1,034\".",
+  "output": {
+    "file": "sg-coe-bidding.csv",
+    "fields": [
+      "month",
+      "bidding_no",
+      "vehicle_class",
+      "quota",
+      "bids_success",
+      "bids_received",
+      "premium"
+    ],
+    "rowCount": 1990,
+    "columnCount": 7,
+    "sizeBytes": 79099,
+    "sha256": "769faf4821fd7fcb62358a705d7c1520bd3bdb1ec4cb994d9985ceaebd7fcfec"
+  },
+  "sources": [
+    {
+      "datasetId": "d_69b3380ad7e51aff3a7dcc84eba52b8a",
+      "title": "COE Bidding Results / Prices",
+      "publisher": "Land Transport Authority",
+      "canonicalUrl": "https://data.gov.sg/datasets/d_69b3380ad7e51aff3a7dcc84eba52b8a/view",
+      "metadataUrl": "https://api-production.data.gov.sg/v2/public/api/datasets/d_69b3380ad7e51aff3a7dcc84eba52b8a/metadata",
+      "downloadApi": "https://api-open.data.gov.sg/v1/public/api/datasets/d_69b3380ad7e51aff3a7dcc84eba52b8a/poll-download",
+      "lastUpdatedAt": "2026-10-21T17:25:34+08:00",
+      "coverageStart": "2010-01-01T08:00:00+08:00",
+      "coverageEnd": "2026-10-01T08:00:00+08:00",
+      "rowCount": 1990,
+      "sizeBytes": 79099,
+      "downloadedCsvSha256": "769faf4821fd7fcb62358a705d7c1520bd3bdb1ec4cb994d9985ceaebd7fcfec"
+    }
+  ]
+}

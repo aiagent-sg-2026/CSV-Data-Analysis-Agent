@@ -47,7 +47,9 @@ describe('CA-173 offline qualification preflight', () => {
         expect(manifest.suite.failureRecovery.map((item: { caseId: string }) => item.caseId)).toEqual(['S1-4', 'S6-4', 'S8-4']);
         expect(manifest.candidate.runtime.preflightNode).toBe(process.versions.node);
         expect(manifest.candidate.skills).toHaveLength(11);
-        expect(manifest.pins.deployment).toHaveLength(92);
+        // Every checksum-verified deployment file is pinned; derive the count so new demo data does not need a manual bump.
+        const deploymentEntries = (await readFile(path.join(repository, 'SHA256SUMS.txt'), 'utf8')).split('\n').filter(line => line.trim()).length;
+        expect(manifest.pins.deployment).toHaveLength(deploymentEntries);
         expect(manifest.candidate.settings.taskLimits).toEqual({ toolCalls: 40, skillReads: 8,
             providerTurns: 32, transformationAttempts: 3, activeMs: 900000 });
     });
