@@ -9,11 +9,12 @@ import {
     workspaceWriteSchema,
 } from '../toolManifestSchemas';
 import { requireDataset, validateWorkspacePayload } from '../toolManifestSupport';
+import { WORKSPACE_PATH_RULES } from '../../workspaceFileUtils';
 
 export const createWorkspaceToolManifests = (): ToolManifest[] => [
     {
         name: 'workspace.list',
-        description: 'List bounded workspace files.',
+        description: `List bounded workspace files and subdirectories. ${WORKSPACE_PATH_RULES}`,
         category: 'workspace',
         risk: 'low',
         enabledByDefault: true,

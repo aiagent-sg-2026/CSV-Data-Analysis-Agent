@@ -18,6 +18,16 @@ const WORKSPACE_READ_PREFIXES = [
     '/dataset/',
     `${WORKSPACE_ROOT}/`,
 ];
+/** Top-level directories a model may read; derived from the read prefixes so the two never drift. */
+export const WORKSPACE_READABLE_ROOTS = WORKSPACE_READ_PREFIXES.map(prefix => prefix.replace(/\/$/, ''));
+/**
+ * Compact path contract shown to models in tool schemas and in path denials.
+ * Each rejected guess costs a full agent turn, so the rule must be learnable from one message.
+ */
+export const WORKSPACE_PATH_RULES = `Use absolute paths with no trailing slash, ".", "..", "//", "%", "?", "#" or backslash. Readable roots: ${WORKSPACE_READABLE_ROOTS.join(', ')}. Writable: files under /workspace/ (e.g. /workspace/analysis.js; not /workspace/task-artifacts/, /workspace/skill-support/ or another task's /workspace/tasks/) and exactly ${WORKSPACE_DATASET_CLEAN_CSV}. List "/" to see the roots.`;
+/** Keeps the stable error code first so existing logs and checks still match, then explains the contract. */
+export const workspacePathDeniedError = (path: string, code = 'workspace_path_denied'): Error =>
+    new Error(`${code}: ${JSON.stringify(String(path).slice(0, 120))}. ${WORKSPACE_PATH_RULES}`);
 const DEFAULT_CSV_DELIMITER = ',';
 
 const splitCsvLine = (line: string): string[] => {

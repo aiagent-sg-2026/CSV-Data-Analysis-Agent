@@ -327,10 +327,13 @@ export const spreadsheetFilterSchema = {
     required: ['query'],
 };
 
+const WORKSPACE_WRITE_PATH_DESCRIPTION = 'Absolute file path under /workspace/ (e.g. /workspace/analysis.js) or exactly /dataset/cleaned.csv. No trailing slash.';
+
+// Path descriptions carry the virtual filesystem contract so models do not guess relative or host paths.
 export const workspaceListSchema = {
     type: 'object',
     properties: {
-        path: { type: 'string' },
+        path: { type: 'string', description: 'Absolute directory such as /workspace or /dataset. Omit or use / to list the readable roots.' },
         recursive: { type: 'boolean' },
         limit: { type: 'integer' },
     },
@@ -345,7 +348,7 @@ export const workspacePathSchema = {
 export const workspaceSearchSchema = {
     type: 'object',
     properties: {
-        path: { type: 'string' },
+        path: { type: 'string', description: 'Optional absolute scope such as /dataset or /workspace. Omit to search every readable root.' },
         query: { type: 'string' },
         limit: { type: 'integer' },
         caseSensitive: { type: 'boolean' },
@@ -378,7 +381,7 @@ export const workspaceReplaceSchema = {
     type: 'object',
     properties: {
         expectedRevision: { type: 'integer', minimum: 0 },
-        path: { type: 'string' },
+        path: { type: 'string', description: WORKSPACE_WRITE_PATH_DESCRIPTION },
         oldText: { type: 'string' },
         newText: { type: 'string' },
         replaceAll: { type: 'boolean' },
@@ -390,7 +393,7 @@ export const workspaceWriteSchema = {
     type: 'object',
     properties: {
         expectedRevision: { type: 'integer', minimum: 0 },
-        path: { type: 'string' },
+        path: { type: 'string', description: WORKSPACE_WRITE_PATH_DESCRIPTION },
         content: { type: 'string' },
     },
     required: ['path', 'content', 'expectedRevision'],
