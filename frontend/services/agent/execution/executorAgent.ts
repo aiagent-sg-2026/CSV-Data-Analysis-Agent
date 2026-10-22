@@ -620,13 +620,13 @@ export const handleExecutorAction = async (
         case 'data.query':
             return executeDataQueryAction(action, store, options?.abortSignal);
         case 'data.describe':
-            return executeDataDescribeAction(action, store);
+            return executeDataDescribeAction(action, store, options?.abortSignal);
         case 'data.value_counts':
-            return executeDataValueCountsAction(action, store);
+            return executeDataValueCountsAction(action, store, options?.abortSignal);
         case 'data.outliers':
-            return executeDataOutliersAction(action, store);
+            return executeDataOutliersAction(action, store, options?.abortSignal);
         case 'data.missing':
-            return executeDataMissingAction(action, store);
+            return executeDataMissingAction(action, store, options?.abortSignal);
         case 'spreadsheet.filter': {
             const query = action.args?.query?.trim() || action.thought?.trim();
             if (query) {

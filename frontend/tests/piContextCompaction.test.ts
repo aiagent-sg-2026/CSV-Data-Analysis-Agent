@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAssistantMessageEventStream, createModels, type AssistantMessage } from '@earendil-works/pi-ai';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { Agent, type AgentMessage, type StreamFn } from '@earendil-works/pi-agent-core';
-import { createPiContextCompactor } from '../services/agent/runtime/pi/piContextCompaction';
+import {
+    createPiContextCompactor, createPiProviderContextCompactor, estimatePiRequestBytes, fitSummaryHistory,
+    piSummarySystemPrompt, truncatePiSummary, type PiRequestByteBudget,
+} from '../services/agent/runtime/pi/piContextCompaction';
+import { resolvePiRequestByteBudget } from '../services/agent/runtime/pi/piProvider';
+import { DEFAULT_GATEWAY_PI_REQUEST_BYTE_BUDGET, DEFAULT_GATEWAY_PI_SUMMARY_MAX_BYTES } from '../config/agentDefaults';
 
 const system = { role: 'system', content: 'Keep the dataset evidence accurate.' } as AgentMessage;
 const user = (text: string) => ({
@@ -165,6 +170,249 @@ describe('Pi automatic context compaction', () => {
 
         expect(summarize).toHaveBeenCalledOnce();
         expect(result[1]).toMatchObject({ role: 'user', content: [{ type: 'text', text: expect.stringContaining('Earlier Chinese-language discussion.') }] });
+    });
+
+    it('keeps later system messages that declare tools when their region is summarized', async () => {
+        const summarize = vi.fn(async (_messages: AgentMessage[]) => 'Earlier stages passed.');
+        const compact = createPiContextCompactor(200_000, summarize);
+        const toolDelta = {
+            role: 'system', content: '', timestamp: 1,
+            toolsAdded: [{ name: 'data_query', description: 'Query', parameters: { type: 'object' } }],
+        } as AgentMessage;
+        const latest = user('Current question.');
+
+        const result = await compact([system, toolDelta, user('A'.repeat(500_000)), latest]);
+
+        expect(summarize).toHaveBeenCalledOnce();
+        expect(summarize.mock.calls[0][0]).not.toContain(toolDelta);
+        expect(result.slice(0, 2)).toEqual([system, toolDelta]);
+        expect(result[2]).toMatchObject({ role: 'user', content: [{ type: 'text', text: expect.stringContaining('Earlier stages passed.') }] });
+        expect(result.at(-1)).toBe(latest);
+    });
+
+    describe('with a request byte budget (Default gateway)', () => {
+        const defaultBudget = resolvePiRequestByteBudget({ provider: 'default' } as never) as PiRequestByteBudget;
+        const budget = { requestByteBudget: defaultBudget };
+        const pair = (id: string, resultChars: number) => [
+            {
+                role: 'assistant', content: [{ type: 'toolCall', id, name: 'query', arguments: {} }],
+                stopReason: 'toolUse', timestamp: 2,
+            } as AgentMessage,
+            {
+                role: 'toolResult', toolCallId: id, toolName: 'query',
+                content: [{ type: 'text', text: 'R'.repeat(resultChars) }], timestamp: 3,
+            } as AgentMessage,
+        ];
+
+        it('compacts on serialized bytes far below the 160k token trigger', async () => {
+            const summarize = vi.fn(async () => 'Earlier stages passed.');
+            const history = Array.from({ length: 30 }, (_, index) => pair(`call-${index}`, 6_000)).flat();
+            const messages = [system, user('Start.'), ...history];
+            expect(estimatePiRequestBytes(messages)).toBeGreaterThan(146_000);
+
+            expect(await createPiContextCompactor(200_000, summarize)(messages)).toEqual(messages);
+            const result = await createPiContextCompactor(200_000, summarize, undefined, budget)(messages);
+
+            expect(summarize).toHaveBeenCalledOnce();
+            expect(estimatePiRequestBytes(result)).toBeLessThanOrEqual(150_000 - 4_000);
+            expect(result[1]).toMatchObject({ role: 'user', content: [{ type: 'text', text: expect.stringContaining('Earlier stages passed.') }] });
+            // The kept history starts with a tool call and ends with the latest complete pair.
+            expect(result[2]).toMatchObject({ role: 'assistant' });
+            expect(result.slice(-2)).toEqual(history.slice(-2));
+        });
+
+        it('reports a failed summary with the byte estimate once and retries only after growth', async () => {
+            const summarize = vi.fn(async () => { throw new Error('gateway rejected the summary'); });
+            const onDegraded = vi.fn();
+            const compact = createPiContextCompactor(200_000, summarize, onDegraded, budget);
+            const messages = [system, user('A'.repeat(150_000)), ...pair('call-1', 1_000)];
+
+            expect(await compact(messages)).toEqual(messages);
+            expect(await compact([...messages, user('small follow-up')])).toHaveLength(5);
+            expect(summarize).toHaveBeenCalledOnce();
+            expect(onDegraded).toHaveBeenCalledOnce();
+            expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({
+                reason: 'summary_failed', estimatedBytes: expect.any(Number),
+            }));
+
+            await compact([...messages, user('B'.repeat(10_000))]);
+            expect(summarize).toHaveBeenCalledTimes(2);
+        });
+
+        it('keeps a smaller compacted request and reports when one recent pair is still too large', async () => {
+            const summarize = vi.fn(async () => 'Short summary.');
+            const onDegraded = vi.fn();
+            const compact = createPiContextCompactor(200_000, summarize, onDegraded, budget);
+            const messages = [system, user('A'.repeat(100_000)), ...pair('call-1', 160_000)];
+
+            const result = await compact(messages);
+            expect(result).toEqual([system, expect.objectContaining({ role: 'user' }), ...messages.slice(2)]);
+            expect(estimatePiRequestBytes(result)).toBeLessThan(estimatePiRequestBytes(messages));
+            expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({ reason: 'compaction_ineffective' }));
+
+            // No summary loop: the same oversized request is not re-summarized on the next turn.
+            expect(await compact(messages)).toEqual(result);
+            expect(summarize).toHaveBeenCalledOnce();
+        });
+
+        it('reports an oversized current turn that has no completed history to summarize', async () => {
+            const summarize = vi.fn(async () => 'summary');
+            const onDegraded = vi.fn();
+            const messages = [system, user('U'.repeat(200_000))];
+
+            expect(await createPiContextCompactor(200_000, summarize, onDegraded, budget)(messages)).toEqual(messages);
+            expect(summarize).not.toHaveBeenCalled();
+            expect(onDegraded).toHaveBeenCalledOnce();
+            expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({ reason: 'compaction_ineffective' }));
+        });
+
+        describe('with a CJK summary', () => {
+            // A realistic Default request: ~34 KB of tool declarations on the system message,
+            // then 30 tool turns of ~6 KB each (~220 KB in total).
+            const toolSystem = {
+                role: 'system', content: 'Coordinate the analysis.', timestamp: 0,
+                toolsAdded: [{ name: 'data_query', description: 'd'.repeat(34_000), parameters: { type: 'object' } }],
+            } as AgentMessage;
+            const turns = (from: number, count: number) =>
+                Array.from({ length: count }, (_, index) => pair(`call-${from + index}`, 6_000)).flat();
+            const triggerBytes = DEFAULT_GATEWAY_PI_REQUEST_BYTE_BUDGET - defaultBudget.overheadBytes;
+
+            it('derives a summary byte cap that leaves real headroom below the trigger', () => {
+                expect(DEFAULT_GATEWAY_PI_SUMMARY_MAX_BYTES).toBe(16_000);
+                expect(defaultBudget.summaryMaxBytes).toBe(DEFAULT_GATEWAY_PI_SUMMARY_MAX_BYTES);
+                // 20,000 CJK characters pass the character cap but are ~60 KB of UTF-8.
+                expect(new TextEncoder().encode('数'.repeat(20_000)).length).toBe(60_000);
+            });
+
+            it('truncates a 20,000-character CJK summary to the byte cap and keeps the compaction', async () => {
+                const summarize = vi.fn(async () => '数'.repeat(20_000));
+                const onDegraded = vi.fn();
+                const compact = createPiContextCompactor(200_000, summarize, onDegraded, budget);
+                const messages = [toolSystem, user('Start.'), ...turns(0, 30)];
+                const summaryText = (result: AgentMessage[]) =>
+                    ((result[1] as { content: Array<{ text: string }> }).content[0].text).replace('Earlier conversation summary:\n', '');
+
+                const compacted = await compact(messages);
+                const text = summaryText(compacted);
+                expect(text.endsWith('\n[summary truncated]')).toBe(true);
+                expect(new TextEncoder().encode(JSON.stringify(text)).length).toBeLessThanOrEqual(DEFAULT_GATEWAY_PI_SUMMARY_MAX_BYTES);
+                expect(text.length).toBeGreaterThan(5_000);
+                expect(estimatePiRequestBytes(compacted)).toBeLessThanOrEqual(triggerBytes - 45_000);
+                expect(compacted.slice(-2)).toEqual(messages.slice(-2));
+                expect(onDegraded).toHaveBeenCalledOnce();
+                expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({ reason: 'summary_truncated', estimatedBytes: expect.any(Number) }));
+
+                // The next turn reuses the truncated summary; no summarizer re-call.
+                const grown = [...messages, ...turns(30, 1)];
+                const next = await compact(grown);
+                expect(summarize).toHaveBeenCalledOnce();
+                expect(summaryText(next)).toBe(text);
+                expect(next.slice(-2)).toEqual(grown.slice(-2));
+                expect(next[2]).toMatchObject({ role: 'assistant' });
+                expect(estimatePiRequestBytes(next)).toBeLessThanOrEqual(triggerBytes);
+            });
+
+            it('still rejects an empty summary under a byte budget', async () => {
+                const summarize = vi.fn(async () => '   ');
+                const onDegraded = vi.fn();
+                const messages = [toolSystem, user('Start.'), ...turns(0, 30)];
+
+                expect(await createPiContextCompactor(200_000, summarize, onDegraded, budget)(messages)).toEqual(messages);
+                expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({ reason: 'summary_unusable' }));
+            });
+
+            it('truncates at UTF-8 safe boundaries with CJK, emoji and escaped characters', () => {
+                const decoder = new TextDecoder('utf-8', { fatal: true });
+                const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+                const source = '数😀"\n👩‍💻x'.repeat(50);
+                for (let cap = 60; cap <= 140; cap += 1) {
+                    const fitted = truncatePiSummary(source, cap);
+                    const encoded = new TextEncoder().encode(JSON.stringify(fitted));
+                    expect(encoded.length).toBeLessThanOrEqual(cap);
+                    expect(fitted.endsWith('\n[summary truncated]')).toBe(true);
+                    expect(loneSurrogate.test(fitted)).toBe(false);
+                    expect(decoder.decode(new TextEncoder().encode(fitted))).toBe(fitted);
+                    const kept = fitted.slice(0, -'\n[summary truncated]'.length);
+                    expect(source.startsWith(kept)).toBe(true);
+                    // Maximal: the next whole code point would not fit.
+                    const nextCodePoint = String.fromCodePoint(source.codePointAt(kept.length)!);
+                    expect(new TextEncoder().encode(JSON.stringify(kept + nextCodePoint + '\n[summary truncated]')).length).toBeGreaterThan(cap);
+                }
+            });
+
+            it('accepts a CJK summary within the byte cap and does not re-trigger on the next turns', async () => {
+                const summarize = vi.fn(async () => '数'.repeat(5_000));
+                const onDegraded = vi.fn();
+                const compact = createPiContextCompactor(200_000, summarize, onDegraded, budget);
+                let messages = [toolSystem, user('Start.'), ...turns(0, 30)];
+
+                const compacted = await compact(messages);
+                expect(summarize).toHaveBeenCalledOnce();
+                expect(compacted[1]).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('数'.repeat(5_000)) }] });
+                expect(estimatePiRequestBytes(compacted)).toBeLessThanOrEqual(triggerBytes - 45_000);
+
+                for (let turn = 0; turn < 5; turn += 1) {
+                    messages = [...messages, ...turns(30 + turn, 1)];
+                    const result = await compact(messages);
+                    expect(result[1]).toEqual(compacted[1]);
+                    expect(result.slice(-2)).toEqual(messages.slice(-2));
+                    expect(estimatePiRequestBytes(result)).toBeLessThanOrEqual(triggerBytes);
+                }
+                expect(summarize).toHaveBeenCalledOnce();
+                expect(onDegraded).not.toHaveBeenCalled();
+            });
+
+            it('keeps the non-budget path unchanged: a summary over 20,000 characters is rejected', async () => {
+                const summarize = vi.fn(async () => 'x'.repeat(20_001));
+                const onDegraded = vi.fn();
+                const messages = [system, user('A'.repeat(500_000)), user('Current question.')];
+
+                expect(await createPiContextCompactor(200_000, summarize, onDegraded)(messages)).toEqual(messages);
+                expect(onDegraded).toHaveBeenCalledWith(expect.objectContaining({ reason: 'summary_unusable' }));
+                expect(onDegraded.mock.calls[0][0]).not.toHaveProperty('estimatedBytes');
+            });
+
+            it('keeps the non-budget path unchanged: the same CJK summary is accepted by the character cap', async () => {
+                const summarize = vi.fn(async () => '数'.repeat(20_000));
+                const onDegraded = vi.fn();
+                const compact = createPiContextCompactor(200_000, summarize, onDegraded);
+
+                const result = await compact([system, user('A'.repeat(500_000)), user('Current question.')]);
+
+                expect(onDegraded).not.toHaveBeenCalled();
+                expect(result[1]).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('数'.repeat(20_000)) }] });
+            });
+
+            it('asks the summarizer for a shorter summary only under a byte budget', async () => {
+                const prompts: string[] = [];
+                const models = { completeSimple: vi.fn(async (_model: unknown, context: { systemPrompt?: string }) => {
+                    prompts.push(context.systemPrompt ?? '');
+                    return { stopReason: 'stop', content: [{ type: 'text', text: 'summary' }] };
+                }) } as never;
+                const model = { contextWindow: 200_000 } as never;
+                const history = [system, user('A'.repeat(500_000)), user('Current question.')];
+
+                await createPiProviderContextCompactor(model, models, 'k', undefined)(history);
+                await createPiProviderContextCompactor(model, models, 'k', undefined, undefined, budget)(history);
+
+                expect(prompts[0]).toBe(piSummarySystemPrompt());
+                expect(prompts[0]).not.toContain('characters');
+                expect(prompts[1]).toBe(piSummarySystemPrompt(defaultBudget));
+                expect(prompts[1]).toContain('under 5,333 characters');
+            });
+        });
+
+        it('trims summarizer history to the byte bound, keeping its start and end', () => {
+            const history = `GOAL ${'x'.repeat(300_000)} LATEST`;
+            const fitted = fitSummaryHistory(history, 100_000);
+            expect(new TextEncoder().encode(JSON.stringify(fitted)).length).toBeLessThanOrEqual(100_000);
+            expect(fitted.startsWith('GOAL ')).toBe(true);
+            expect(fitted.endsWith(' LATEST')).toBe(true);
+            expect(fitted).toContain('earlier history omitted');
+            expect(fitSummaryHistory('short', 100_000)).toBe('short');
+            const multilingual = fitSummaryHistory('数"'.repeat(60_000), 50_000);
+            expect(new TextEncoder().encode(JSON.stringify(multilingual)).length).toBeLessThanOrEqual(50_000);
+        });
     });
 
     it('passes the summary into Pi Agent model context while retaining full history', async () => {

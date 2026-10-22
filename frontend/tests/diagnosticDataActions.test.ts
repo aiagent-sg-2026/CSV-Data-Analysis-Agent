@@ -5,12 +5,17 @@ import { executeDataDescribeAction } from '../services/agent/execution/diagnosti
 import { createRuntimeTestStore } from './runtimeTestStore';
 import { buildDatasetId } from '../utils/datasetId';
 
-const { executeUnifiedQueryMock } = vi.hoisted(() => ({
+const { executeUnifiedQueryMock, executeBoundDuckDbQueryMock } = vi.hoisted(() => ({
     executeUnifiedQueryMock: vi.fn(),
+    executeBoundDuckDbQueryMock: vi.fn(),
 }));
 
 vi.mock('../services/duckdb/unifiedQueryExecutor', () => ({
     executeUnifiedQuery: executeUnifiedQueryMock,
+}));
+
+vi.mock('../services/duckdb/queryEngine', () => ({
+    executeBoundDuckDbQuery: executeBoundDuckDbQueryMock,
 }));
 
 describe('diagnostic data actions', () => {
@@ -32,18 +37,15 @@ describe('diagnostic data actions', () => {
             csvData: prepared,
             columnProfiles: [{ name: 'Amount', type: 'numerical' }],
         } as never);
-        store.setState({
-            canonicalCsvData: canonical,
-            duckDbSessionStatus: {
-                status: 'ready',
-                engine: 'duckdb',
-                tableName: 'session_clean_dataset',
-                loadVersion: canonicalLoadVersion,
-                fallbackReason: null,
-                fallbackStage: null,
-                lastSyncedAt: new Date(),
-            },
-        } as never);
+        // A stale session status must not matter: the action binds the preferred dataset itself.
+        store.setState({ canonicalCsvData: canonical } as never);
+        executeBoundDuckDbQueryMock.mockImplementation((data: { fileName: string; data: [] }, execute: (binding: unknown) => unknown) => execute({
+            engine: 'duckdb',
+            tableName: 'session_clean_dataset',
+            loadVersion: buildDatasetId(data.fileName, data.data),
+            fallbackReason: null,
+            fallbackStage: null,
+        }));
         executeUnifiedQueryMock.mockResolvedValue({
             rows: [{
                 column: 'Amount',
@@ -71,6 +73,7 @@ describe('diagnostic data actions', () => {
         }, store as never);
 
         expect(result.status).toBe('success');
+        expect(executeBoundDuckDbQueryMock).toHaveBeenCalledWith(canonical, expect.any(Function), undefined);
         expect(executeUnifiedQueryMock).toHaveBeenCalledWith(
             expect.objectContaining({
                 kind: 'describe',

@@ -17,8 +17,12 @@ import {
     WORKSPACE_DATASET_RAW_CSV,
     WORKSPACE_HISTORY_LIMIT,
     WORKSPACE_LIST_LIMIT,
+    WORKSPACE_PATH_RULES,
+    WORKSPACE_READABLE_ROOTS,
+    WORKSPACE_ROOT,
     WORKSPACE_SEARCH_DEFAULT_LIMIT,
     WORKSPACE_SEARCH_MAX_LIMIT,
+    workspacePathDeniedError,
 } from '../workspaceFileUtils';
 import { buildWorkspaceTree, diffWorkspaceFiles, grepWorkspaceFiles, headWorkspaceFile } from '../workspaceRetrieval';
 import { isRuntimeAbortError, throwIfAborted } from '../runtime/runtimeAbort';
@@ -134,17 +138,22 @@ export const executeWorkspaceFileAction = async (
     };
     const operation = workspaceAction.operation;
     const defaultPath = ['list', 'tree', 'search', 'grep'].includes(operation) ? '/' : operation === 'diff' ? WORKSPACE_DATASET_CLEAN_CSV : '/workspace';
-    const normalizedPath = String(workspaceAction.path || defaultPath);
+    const requestedPath = String(workspaceAction.path || defaultPath);
     const validatePath = (path: string) => {
-        if (!path.startsWith('/') || /[%\\?#\x00-\x1f\x7f]/.test(path) || path.includes('//') || path.split('/').some(part => part === '..' || part === '.') || path.trim() !== path) throw new Error('workspace_path_denied');
+        if (!path.startsWith('/') || /[%\\?#\x00-\x1f\x7f]/.test(path) || path.includes('//') || path.split('/').some(part => part === '..' || part === '.') || path.trim() !== path) throw workspacePathDeniedError(path);
     };
-    validatePath(normalizedPath);
+    validatePath(requestedPath);
+    // Directory scopes tolerate one trailing slash ("/workspace/"); file operations keep the exact path.
+    const isScopeOperation = ['list', 'tree', 'search', 'grep'].includes(operation);
+    const normalizedPath = isScopeOperation && requestedPath.length > 1 && requestedPath.endsWith('/') ? requestedPath.slice(0, -1) : requestedPath;
     const currentData = getState().csvData;
     const scope = captureSessionScope(store);
     const workspace = currentTaskWorkspace(store);
     const inputBundle = getState().datasetBundle;
     const inputBinding = inputBundle ? { tableId: inputBundle.primaryTableId, datasetId: getState().currentDatasetId, datasetVersion: inputBundle.datasetVersion, relationshipSetId: inputBundle.relationshipSetId, sourceSha256: inputBundle.source.inspection?.sha256 ?? null } : null;
-    if (!isWorkspaceReadablePath(normalizedPath) && !['list', 'tree'].includes(operation)) throw new Error(`Workspace path not allowed: ${normalizedPath}`);
+    // "/" is the default search scope; it means "every readable root", and results are filtered below.
+    const isRootSearch = normalizedPath === '/' && ['search', 'grep'].includes(operation);
+    if (!isWorkspaceReadablePath(normalizedPath) && !['list', 'tree'].includes(operation) && !isRootSearch) throw workspacePathDeniedError(normalizedPath, 'Workspace path not allowed');
 
     return withActionHistory(store, action, normalizedPath, async () => {
         throwIfAborted(options?.abortSignal);
@@ -152,12 +161,27 @@ export const executeWorkspaceFileAction = async (
         const taskFiles = workspace.list().map(artifact => ({ path: artifact.path, label: artifact.path.split('/').at(-1)!, language: 'text' as const, content: artifact.content, group: 'workspace' as const }));
         const allFiles = [...bundle.files.filter(file => !taskFiles.some(task => task.path === file.path)), ...taskFiles];
         const exactMatch = allFiles.find(file => file.path === normalizedPath);
+        const readableFiles = allFiles.filter(file => isWorkspaceReadablePath(file.path));
         if (operation === 'list') {
             const base = normalizedPath === '/' || normalizedPath === '' ? '/' : normalizedPath;
             const recursive = Boolean(workspaceAction.recursive);
             const limit = resolveWorkspaceListLimit(workspaceAction.limit as number | undefined);
-            const matched = allFiles.filter(file => { if (!file.path.startsWith(base === '/' ? '/' : `${base}/`)) return false; if (!recursive) { const relative = file.path.slice(base === '/' ? 1 : base.length + 1); return relative.length > 0 && !relative.includes('/'); } return true; }).map(file => ({ path: file.path, pathType: 'file' }));
-            return { successMessage: `Listed ${matched.length} workspace file(s).`, output: normalizeWorkspaceOutput({ operation, path: base, recursive, files: matched.slice(0, limit) }), payload: { workspace: { operation, path: base, changed: false, affectsCleanedDataset: false } } };
+            const prefix = base === '/' ? '/' : `${base}/`;
+            const matched = allFiles.filter(file => { if (!file.path.startsWith(prefix)) return false; if (!recursive) { const relative = file.path.slice(prefix.length); return relative.length > 0 && !relative.includes('/'); } return true; }).map(file => ({ path: file.path, pathType: 'file' }));
+            // Virtual files are all nested, so a flat listing must expose directories to be navigable.
+            // The root shows only readable roots (plus the writable /workspace), never other stored prefixes.
+            const directories = recursive ? [] : base === '/'
+                ? WORKSPACE_READABLE_ROOTS.filter(root => root === WORKSPACE_ROOT || readableFiles.some(file => file.path.startsWith(`${root}/`)))
+                : [...new Set(allFiles.filter(file => file.path.startsWith(prefix)).map(file => file.path.slice(prefix.length).split('/'))
+                    .filter(parts => parts.length > 1).map(parts => `${prefix}${parts[0]}`))].sort();
+            // `limit` caps the combined entries, directories first. Totals and `truncated` keep a cut listing truthful.
+            const entries = [...directories.map(path => ({ path, pathType: 'directory' })), ...matched].slice(0, limit);
+            const returnedDirectories = entries.filter(entry => entry.pathType === 'directory').length;
+            const returnedFiles = entries.length - returnedDirectories;
+            const truncated = entries.length < directories.length + matched.length;
+            return { successMessage: `Listed ${returnedFiles} of ${matched.length} workspace file(s) and ${returnedDirectories} of ${directories.length} director${directories.length === 1 ? 'y' : 'ies'}${truncated ? ' (truncated: raise limit or list a subdirectory)' : ''}.`,
+                output: normalizeWorkspaceOutput({ operation, path: base, recursive, files: entries, totalFiles: matched.length, totalDirectories: directories.length, truncated, ...(base === '/' ? { pathRules: WORKSPACE_PATH_RULES } : {}) }),
+                payload: { workspace: { operation, path: base, changed: false, affectsCleanedDataset: false } } };
         }
         if (operation === 'tree') {
             const base = normalizedPath === '/' || normalizedPath === '' ? '/' : normalizedPath;
@@ -193,14 +217,14 @@ export const executeWorkspaceFileAction = async (
             const queryNeedle = caseSensitive ? query : query.toLowerCase();
             const limit = resolveWorkspaceSearchLimit(workspaceAction.limit as number | undefined);
             const scope = normalizedPath === '/' || normalizedPath === '' ? '/' : normalizedPath;
-            const matches = allFiles.filter(file => file.path.startsWith(scope === '/' ? '/' : `${scope}/`)).map(file => ((caseSensitive ? file.content : file.content.toLowerCase()).includes(queryNeedle) ? { path: file.path, match: true, pathPreview: file.path } : null)).filter((item): item is { path: string; match: boolean; pathPreview: string } => item !== null).slice(0, limit);
+            const matches = readableFiles.filter(file => file.path.startsWith(scope === '/' ? '/' : `${scope}/`)).map(file => ((caseSensitive ? file.content : file.content.toLowerCase()).includes(queryNeedle) ? { path: file.path, match: true, pathPreview: file.path } : null)).filter((item): item is { path: string; match: boolean; pathPreview: string } => item !== null).slice(0, limit);
             return { successMessage: `Search completed for "${query}"`, output: normalizeWorkspaceOutput(matches), payload: { workspace: { operation, path: scope, changed: false, affectsCleanedDataset: false } } };
         }
         if (operation === 'grep') {
             const query = String(workspaceAction.query || '');
             if (!query) throw new Error('grep requires a non-empty query.');
             const scope = normalizedPath === '/' || normalizedPath === '' ? '/' : normalizedPath;
-            return { successMessage: `Grep completed for "${query}".`, output: normalizeWorkspaceOutput({ operation, path: scope, matches: grepWorkspaceFiles(allFiles, scope, query, resolveWorkspaceSearchLimit(workspaceAction.limit as number | undefined), Boolean(workspaceAction.caseSensitive)) }), payload: { workspace: { operation, path: scope, changed: false, affectsCleanedDataset: false } } };
+            return { successMessage: `Grep completed for "${query}".`, output: normalizeWorkspaceOutput({ operation, path: scope, matches: grepWorkspaceFiles(readableFiles, scope, query, resolveWorkspaceSearchLimit(workspaceAction.limit as number | undefined), Boolean(workspaceAction.caseSensitive)) }), payload: { workspace: { operation, path: scope, changed: false, affectsCleanedDataset: false } } };
         }
         if (operation === 'head') {
             if (!exactMatch) throw new Error(`File not found: ${normalizedPath}`);
@@ -222,15 +246,15 @@ export const executeWorkspaceFileAction = async (
             if (!exactMatch) throw new Error(`File not found: ${normalizedPath}`);
             const compareNormalizedPath = String(workspaceAction.comparePath || WORKSPACE_DATASET_RAW_CSV);
             validatePath(compareNormalizedPath);
-            if (!isWorkspaceReadablePath(compareNormalizedPath)) throw new Error(`Workspace path not allowed: ${compareNormalizedPath}`);
+            if (!isWorkspaceReadablePath(compareNormalizedPath)) throw workspacePathDeniedError(compareNormalizedPath, 'Workspace path not allowed');
             const compareFile = allFiles.find(file => file.path === compareNormalizedPath);
             if (!compareFile) throw new Error(`Compare file not found: ${compareNormalizedPath}`);
             const diff = diffWorkspaceFiles(compareNormalizedPath, compareFile.content, normalizedPath, exactMatch.content, Math.min(40, Math.max(1, Number(workspaceAction.limit ?? 20))));
             return { successMessage: `Diff completed between ${compareNormalizedPath} and ${normalizedPath}.`, output: normalizeWorkspaceOutput(diff), payload: { workspace: { operation, path: normalizedPath, comparePath: compareNormalizedPath, changedLines: diff.changedLines, changed: false, affectsCleanedDataset: false } } };
         }
 
-        canonicalTaskPath(normalizedPath);
-        if (!isWorkspaceWritablePath(normalizedPath)) throw new Error(`Write permission denied for ${normalizedPath}`);
+        try { canonicalTaskPath(normalizedPath); } catch { throw workspacePathDeniedError(normalizedPath); }
+        if (!isWorkspaceWritablePath(normalizedPath)) throw workspacePathDeniedError(normalizedPath, 'Write permission denied');
         if (operation === 'write' && workspaceAction.content === undefined) throw new Error('write requires content.');
         if (operation === 'append' && workspaceAction.content === undefined) throw new Error('append requires content.');
         if (operation === 'replace' && (workspaceAction.oldText == null || workspaceAction.newText == null)) throw new Error('replace requires oldText and newText.');
@@ -250,6 +274,9 @@ export const executeWorkspaceFileAction = async (
         const artifact = await workspace.write(normalizedPath, nextContent, workspaceAction.expectedRevision as number, () => {
             throwIfAborted(options?.abortSignal);
             assertWorkspaceOwner(store, scope);
+        }).catch((error: unknown) => {
+            // The task grant (for example another task's /workspace/tasks/ directory) uses the bare code; explain it.
+            throw error instanceof Error && error.message === 'workspace_path_denied' ? workspacePathDeniedError(normalizedPath) : error;
         });
         assertWorkspaceOwner(store, scope);
         throwIfAborted(options?.abortSignal);

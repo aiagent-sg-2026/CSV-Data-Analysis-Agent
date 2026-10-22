@@ -21,6 +21,26 @@
   - **Second blocker:** `DEMO_INPUT_TOO_LARGE` at about 216 KB (62 input items, 24 tools), around 140 s into the run.
     - Needs an owner decision: a Default-only Pi context budget (this changes the documented 200k/80% policy) or a gateway limit change.
   - **Also seen (not yet confirmed outside the route harness):** `DuckDB binding unavailable` and `workspace_path_denied` tool errors.
+- **Hotfix deployed (PR #33, Pages run 34, live build ff9cb0d49e61)**:
+  - Live real-AI run: no more `additional_tools` rejection. Analysis now reaches stage 4/9 "Prepare" (15 successful agent turns).
+  - It then stops at about 124 s with `DEMO_INPUT_TOO_LARGE` ("token safety bound", 209 KB, 51 items, 24 tools).
+  - The same live run logged `DuckDB binding unavailable` for Pi `data.missing`/`data.describe`, and `workspace_path_denied` for `workspace.list`. Both are real live tool errors, not harness artifacts. They waste agent turns and grow the transcript.
+  - Owner decision still pending on the input budget.
+- **Round 3 (owner chose B)**:
+  - Workers fixed three things:
+    - the workspace path discoverability that caused `workspace_path_denied` guesses;
+    - the diagnostic tools now bind DuckDB like `data.query`, which removes `DuckDB binding unavailable`;
+    - a Default-only byte-budget compaction (150 KB). It also stops compaction from dropping later tool declarations.
+  - AGENTS.md now records the approved exception.
+  - Full Vitest run: 435 files / 3,967 tests.
+  - Real-gateway check, with candidate 558a59b666c8 served under the Pages origin: the HDB sample finished in 139 s with 2 cards (median resale price by flat model and by flat type). The largest request was 67 KB, with no 400s and no tool errors. Medians match an independent recomputation (Type S1 980,000; Multi Generation 574,500).
+  - Root published as 1.0.0-558a59b666c8.
+- **Round 3 review fixes**:
+  - The independent reviewer found a P0: diagnostics bound the full dataset, so subtotal and grand-total rows leaked into their statistics. Now fixed by binding the semantic view; the regression test runs a real in-process DuckDB with a hidden 3,058,000 "Grand Total" row.
+  - Also fixed:
+    - A3: the summary is capped at 16,000 bytes (CJK-safe), and an overlong one is truncated rather than rejected;
+    - A6: truncated workspace listings report totals and a truncated flag.
+  - Full suite: 435 files / 3,976 tests. Root published as 1.0.0-7c5fd9faf41f.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
