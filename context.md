@@ -35,6 +35,12 @@
   - Full Vitest run: 435 files / 3,967 tests.
   - Real-gateway check, with candidate 558a59b666c8 served under the Pages origin: the HDB sample finished in 139 s with 2 cards (median resale price by flat model and by flat type). The largest request was 67 KB, with no 400s and no tool errors. Medians match an independent recomputation (Type S1 980,000; Multi Generation 574,500).
   - Root published as 1.0.0-558a59b666c8.
+- **Round 3 review fixes**:
+  - The independent reviewer found a P0: diagnostics bound the full dataset, so subtotal and grand-total rows leaked into their statistics. Now fixed by binding the semantic view; the regression test runs a real in-process DuckDB with a hidden 3,058,000 "Grand Total" row.
+  - Also fixed:
+    - A3: the summary is capped at 16,000 bytes (CJK-safe), and an overlong one is truncated rather than rejected;
+    - A6: truncated workspace listings report totals and a truncated flag.
+  - Full suite: 435 files / 3,976 tests. Root published as 1.0.0-7c5fd9faf41f.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
