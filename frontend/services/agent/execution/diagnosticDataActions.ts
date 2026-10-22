@@ -8,27 +8,70 @@
 
 import type { AiAction, ColumnProfile, ToolExecutionResult } from '../../../types';
 import type { StoreApi } from '../types';
-import { resolveCurrentDuckDbBinding } from '../datasetBinding';
 import { getPreferredAnalysisDataset } from '../reportStructureState';
-import { executeUnifiedQuery } from '../../duckdb/unifiedQueryExecutor';
+import { executeUnifiedQuery, type UnifiedQueryOptions, type UnifiedQueryResult } from '../../duckdb/unifiedQueryExecutor';
+import { executeBoundDuckDbQuery } from '../../duckdb/queryEngine';
 import type { QueryIntent } from '../../duckdb/queryIntent';
+import { isRuntimeAbortError } from '../runtime/runtimeAbort';
 
 const LOG_PREFIX = '[DiagnosticData]';
 const QUERY_TIMEOUT_MS = 8000;
 
-const resolveBinding = (store: StoreApi) => {
-    const state = store.getState();
-    const preferredDataset = getPreferredAnalysisDataset(state);
-    const binding = resolveCurrentDuckDbBinding({
-        mode: 'analysis',
-        csvData: preferredDataset,
-        snapshot: state.datasetSemanticSnapshot,
-        semanticDatasetVersion: state.semanticDatasetVersion,
-        sessionStatus: state.duckDbSessionStatus,
-        activeDataQuery: state.activeDataQuery ?? null,
-    });
-    if (!binding?.tableName) return null;
-    return binding;
+type DiagnosticToolName = 'data.describe' | 'data.value_counts' | 'data.outliers' | 'data.missing';
+
+class DiagnosticDatasetUnavailableError extends Error {}
+
+/**
+ * Bind the preferred analysis dataset exactly like data.query does, then run
+ * the diagnostic intent against that live binding.
+ *
+ * The previous implementation read a cached binding from store state
+ * (duckDbSessionStatus / activeDataQuery) and compared it with the
+ * semantic-view dataset. Those values are last-writer state: data.query
+ * rebinds the full preferred dataset, refreshDuckDbSession binds the semantic
+ * view, and ensureDatasetSemanticSnapshot can change the semantic view after
+ * binding. Any divergence made these tools fail with a dead-end
+ * "DuckDB binding unavailable" even though DuckDB was working. Priming through
+ * the engine reuses its cached table when it is current, loads it when it is
+ * not, and also returns file-backed (large) datasets already registered.
+ */
+const runBoundDiagnosticQuery = (
+    store: StoreApi,
+    intent: QueryIntent,
+    options: Omit<UnifiedQueryOptions, 'binding'>,
+    abortSignal?: AbortSignal,
+): Promise<UnifiedQueryResult> => {
+    const dataset = getPreferredAnalysisDataset(store.getState());
+    if (!dataset) {
+        throw new DiagnosticDatasetUnavailableError(
+            'The prepared analysis dataset is not ready for DuckDB queries yet (it is still being prepared or bound).',
+        );
+    }
+    return executeBoundDuckDbQuery(dataset, prime => {
+        if (!prime.tableName || !prime.loadVersion) {
+            throw new DiagnosticDatasetUnavailableError('DuckDB returned an incomplete dataset binding.');
+        }
+        return executeUnifiedQuery(intent, {
+            ...options,
+            binding: { tableName: prime.tableName, loadVersion: prime.loadVersion },
+            abortSignal,
+        });
+    }, abortSignal);
+};
+
+/** Turn a failed diagnostic query into an error the model can act on. */
+const buildDiagnosticFailure = (
+    toolName: DiagnosticToolName,
+    label: string,
+    error: unknown,
+    abortSignal?: AbortSignal,
+): ToolExecutionResult => {
+    if (isRuntimeAbortError(error, abortSignal)) throw error;
+    const reason = error instanceof Error ? error.message : String(error);
+    const retryHint = error instanceof DiagnosticDatasetUnavailableError || /requires DuckDB/i.test(reason)
+        ? `${toolName} needs the dataset bound to DuckDB. Do not retry it now. Use data.query (Pi tool data_query) with a structured plan instead, for example aggregates COUNT/MIN/MAX/AVG over the columns you need.`
+        : `Check the column names and arguments, or use data.query (Pi tool data_query) with a structured plan instead.`;
+    return { status: 'error', toolName, message: `${label} failed: ${reason}`, shouldStop: false, retryHint };
 };
 
 const numericTypes = new Set(['numerical', 'currency', 'percentage']);
@@ -44,14 +87,11 @@ const getNumericColumns = (profiles: ColumnProfile[], requested?: string[]) => {
 export const executeDataDescribeAction = async (
     action: AiAction,
     store: StoreApi,
+    abortSignal?: AbortSignal,
 ): Promise<ToolExecutionResult> => {
     const state = store.getState();
     if (action.type !== 'tool_call' || !state.csvData) {
         return { status: 'error', toolName: 'data.describe', message: 'No dataset loaded.', shouldStop: false };
-    }
-    const binding = resolveBinding(store);
-    if (!binding) {
-        return { status: 'error', toolName: 'data.describe', message: 'DuckDB binding unavailable.', shouldStop: false };
     }
 
     const args = action.args ?? {};
@@ -68,10 +108,9 @@ export const executeDataDescribeAction = async (
     };
 
     try {
-        const queryResult = await executeUnifiedQuery(intent, {
-            binding,
+        const queryResult = await runBoundDiagnosticQuery(store, intent, {
             columnProfiles: state.columnProfiles,
-        });
+        }, abortSignal);
 
         const explanation = args.explanation || `Summary statistics for ${cols.length} numeric column(s).`;
         console.log(`${LOG_PREFIX} data.describe returned ${queryResult.returnedRows} column stats.`);
@@ -106,7 +145,7 @@ export const executeDataDescribeAction = async (
             },
         };
     } catch (error) {
-        return { status: 'error', toolName: 'data.describe', message: `Describe query failed: ${error instanceof Error ? error.message : String(error)}`, shouldStop: false };
+        return buildDiagnosticFailure('data.describe', 'Describe query', error, abortSignal);
     }
 };
 
@@ -115,14 +154,11 @@ export const executeDataDescribeAction = async (
 export const executeDataValueCountsAction = async (
     action: AiAction,
     store: StoreApi,
+    abortSignal?: AbortSignal,
 ): Promise<ToolExecutionResult> => {
     const state = store.getState();
     if (action.type !== 'tool_call' || !state.csvData) {
         return { status: 'error', toolName: 'data.value_counts', message: 'No dataset loaded.', shouldStop: false };
-    }
-    const binding = resolveBinding(store);
-    if (!binding) {
-        return { status: 'error', toolName: 'data.value_counts', message: 'DuckDB binding unavailable.', shouldStop: false };
     }
 
     const args = action.args ?? {};
@@ -143,11 +179,10 @@ export const executeDataValueCountsAction = async (
     };
 
     try {
-        const queryResult = await executeUnifiedQuery(intent, {
-            binding,
+        const queryResult = await runBoundDiagnosticQuery(store, intent, {
             allowedColumns: state.columnProfiles.map(c => c.name),
             columnProfiles: state.columnProfiles,
-        });
+        }, abortSignal);
 
         const explanation = args.explanation || `Value counts for "${column}" (top ${limit}).`;
         console.log(`${LOG_PREFIX} data.value_counts returned ${queryResult.returnedRows} values for "${column}".`);
@@ -182,7 +217,7 @@ export const executeDataValueCountsAction = async (
             },
         };
     } catch (error) {
-        return { status: 'error', toolName: 'data.value_counts', message: `Value counts query failed: ${error instanceof Error ? error.message : String(error)}`, shouldStop: false };
+        return buildDiagnosticFailure('data.value_counts', 'Value counts query', error, abortSignal);
     }
 };
 
@@ -191,14 +226,11 @@ export const executeDataValueCountsAction = async (
 export const executeDataOutliersAction = async (
     action: AiAction,
     store: StoreApi,
+    abortSignal?: AbortSignal,
 ): Promise<ToolExecutionResult> => {
     const state = store.getState();
     if (action.type !== 'tool_call' || !state.csvData) {
         return { status: 'error', toolName: 'data.outliers', message: 'No dataset loaded.', shouldStop: false };
-    }
-    const binding = resolveBinding(store);
-    if (!binding) {
-        return { status: 'error', toolName: 'data.outliers', message: 'DuckDB binding unavailable.', shouldStop: false };
     }
 
     const args = action.args ?? {};
@@ -219,10 +251,9 @@ export const executeDataOutliersAction = async (
     };
 
     try {
-        const queryResult = await executeUnifiedQuery(intent, {
-            binding,
+        const queryResult = await runBoundDiagnosticQuery(store, intent, {
             columnProfiles: state.columnProfiles,
-        });
+        }, abortSignal);
 
         const explanation = args.explanation || `IQR outlier detection for "${column}".`;
         const statsRow = queryResult.rows[0];
@@ -262,7 +293,7 @@ export const executeDataOutliersAction = async (
             },
         };
     } catch (error) {
-        return { status: 'error', toolName: 'data.outliers', message: `Outlier query failed: ${error instanceof Error ? error.message : String(error)}`, shouldStop: false };
+        return buildDiagnosticFailure('data.outliers', 'Outlier query', error, abortSignal);
     }
 };
 
@@ -271,14 +302,11 @@ export const executeDataOutliersAction = async (
 export const executeDataMissingAction = async (
     action: AiAction,
     store: StoreApi,
+    abortSignal?: AbortSignal,
 ): Promise<ToolExecutionResult> => {
     const state = store.getState();
     if (action.type !== 'tool_call' || !state.csvData) {
         return { status: 'error', toolName: 'data.missing', message: 'No dataset loaded.', shouldStop: false };
-    }
-    const binding = resolveBinding(store);
-    if (!binding) {
-        return { status: 'error', toolName: 'data.missing', message: 'DuckDB binding unavailable.', shouldStop: false };
     }
 
     const args = action.args ?? {};
@@ -299,10 +327,9 @@ export const executeDataMissingAction = async (
     };
 
     try {
-        const queryResult = await executeUnifiedQuery(intent, {
-            binding,
+        const queryResult = await runBoundDiagnosticQuery(store, intent, {
             columnProfiles: state.columnProfiles,
-        });
+        }, abortSignal);
 
         const explanation = args.explanation || `Missing data profile for ${targetCols.length} column(s).`;
         const issueCount = queryResult.rows.filter(r => Number(r['null_rate']) + Number(r['blank_rate']) > 0.05).length;
@@ -339,6 +366,6 @@ export const executeDataMissingAction = async (
             },
         };
     } catch (error) {
-        return { status: 'error', toolName: 'data.missing', message: `Missing data query failed: ${error instanceof Error ? error.message : String(error)}`, shouldStop: false };
+        return buildDiagnosticFailure('data.missing', 'Missing data query', error, abortSignal);
     }
 };
