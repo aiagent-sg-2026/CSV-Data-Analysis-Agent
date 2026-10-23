@@ -33,6 +33,7 @@ import { buildLearningHintsFromHistory } from './topicLearningHints';
 import { isRuntimeAbortError, throwIfAborted } from '../runtime/runtimeAbort';
 import { describeVolumeDependence, measureEvidenceVolumeDependence } from './volumeDrivenSum';
 import { measureLeadingGroupSampleSize } from './groupSampleSize';
+import { measureGroupCoverage, SERIES_NON_ADDITIVE_REASON_CODES } from './groupCoverage';
 import { assessSeriesMeasurePlan, resolveSeriesMeasure } from './seriesMeasureGuard';
 
 type StoreApi = {
@@ -842,6 +843,15 @@ export const processSingleTopic = async (
                     reasonCodes: valueGate.reasonCodes,
                 });
                 console.log(_elapsed('creating_card→executePresentationPlan'));
+                // The evidence query returns only its top groups; the card's shares and "Overall"
+                // need the total over all of them, measured over the same population.
+                const groupCoverage = presentationPlan.presentationMode === 'hidden'
+                    ? null
+                    : await measureGroupCoverage(evidencePlan, evidenceExecution.result, runCompanionQuery, {
+                        valueColumn: presentationPlan.bindings?.valueColumn,
+                        signal: options?.abortSignal,
+                        totalSuppressed: valueGate.reasonCodes.some(code => SERIES_NON_ADDITIVE_REASON_CODES.has(code)),
+                    });
                 const presentation = await executePresentationPlanAndCreateCard(
                     evidencePlan,
                     presentationPlan,
@@ -851,6 +861,7 @@ export const processSingleTopic = async (
                     {
                         topic: planningTopic,
                         valueGate,
+                        groupCoverage,
                         sourceStepIds,
                         analysisSessionRunId: options?.analysisSessionRunId ?? null,
                         existingAcceptedOutputs,

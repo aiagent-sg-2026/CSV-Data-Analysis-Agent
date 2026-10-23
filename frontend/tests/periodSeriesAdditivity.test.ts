@@ -4,7 +4,7 @@ import { processCsvWithIntakeIr } from '../services/data/csvParser';
 import { buildCsvDataFromIntakeIr } from '../services/data/reportCsvIntake';
 import { profileData } from '../services/data/dataProfiler';
 import { resolveReportStructureArtifactsWithProposal } from '../services/agent/orchestration/reportStructureOrchestrator';
-import { assessSeriesMeasurePlan, buildSeriesMeasureFallbackTopics } from '../services/agent/planning/seriesMeasureGuard';
+import { assessSeriesMeasurePlan, buildSeriesMeasureFallbackTopics, selectsSingleSeries } from '../services/agent/planning/seriesMeasureGuard';
 import { generateEvidenceQueryPlanStepped } from '../services/agent/planning/planGenerator';
 import { checkQuestionSeriesScope, validateResearchQuestions } from '../services/agent/runtime/pi/researchPlan';
 import { createTestSettings } from './testSettings';
@@ -140,5 +140,54 @@ describe('additivity of melted period-header wide tables', () => {
             ...plan('Period'),
             query: { ...plan('Period').query, where: { predicates: [{ column: 'RowClass', operator: 'eq', value: 'fact' }] } },
         }, seriesMeasure).decision).toBe('pass');
+    });
+});
+
+describe('detail-row and series filters written as a plan pre-filter', () => {
+    const semantics = (): SeriesMeasureSemantics => ({
+        seriesColumn: 'DataSeries',
+        measureColumn: 'Value',
+        periodColumn: 'Period',
+        periodGrain: 'month',
+        parentColumn: 'ParentSeries',
+        detailRowColumns: ['RowClass'],
+        detailRowValue: 'fact',
+        additiveAcrossSeries: true,
+        unitFamilies: [],
+        evidence: { rootSeries: 1, parentSeriesChecked: 1, parentSeriesVerified: 1, parentPeriodsChecked: 1, parentPeriodsMatched: 1, summary: 'Parents equal the sum of their children.' },
+        series: [
+            { name: 'Total', parent: null, rowClass: 'total', observations: 2, latestPeriod: '2026-08-01' },
+            { name: 'Asia', parent: 'Total', rowClass: 'subtotal', observations: 2, latestPeriod: '2026-08-01' },
+            { name: 'China', parent: 'Asia', rowClass: 'fact', observations: 2, latestPeriod: '2026-08-01' },
+        ],
+    } as SeriesMeasureSemantics);
+
+    const rankedBySeries = (): SqlEvidenceQueryPlan => ({
+        title: 'Total Arrivals by Data Series',
+        queryMode: 'aggregate',
+        intentSummary: 'Rank the series.',
+        query: {
+            select: ['DataSeries', 'total_value'],
+            groupBy: ['DataSeries'],
+            aggregates: [{ function: 'sum', column: 'Value', as: 'total_value' }],
+            orderBy: [{ column: 'total_value', direction: 'desc' }],
+            limit: 20,
+        },
+    });
+
+    it('passes a sum by series whose RowClass = fact filter is the pre-filter, exactly as when it is in the WHERE clause', () => {
+        const inWhere = { ...rankedBySeries(), query: { ...rankedBySeries().query, where: { predicates: [{ column: 'RowClass', operator: 'eq' as const, value: 'fact' }] } } };
+        const inPreFilter = { ...rankedBySeries(), preFilter: [{ column: 'RowClass', operator: 'eq' as const, value: 'fact' }] };
+
+        expect(assessSeriesMeasurePlan(inWhere, semantics())).toMatchObject({ decision: 'pass', reasonCodes: [] });
+        expect(assessSeriesMeasurePlan(inPreFilter, semantics())).toMatchObject({ decision: 'pass', reasonCodes: [] });
+        // Without any detail-row filter the hierarchy levels still mix.
+        expect(assessSeriesMeasurePlan(rankedBySeries(), semantics())).toMatchObject({ decision: 'table_only', reasonCodes: ['series_hierarchy_mix'] });
+    });
+
+    it('reads one series named in the pre-filter', () => {
+        const plan = { ...rankedBySeries(), preFilter: [{ column: 'DataSeries', operator: 'eq' as const, value: 'China' }] };
+        expect(selectsSingleSeries(plan, semantics())).toBe(true);
+        expect(selectsSingleSeries(rankedBySeries(), semantics())).toBe(false);
     });
 });

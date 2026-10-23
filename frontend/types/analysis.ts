@@ -530,10 +530,30 @@ export interface CardTrustDecision {
     detail: string;
 }
 
+/**
+ * What the rows of a ranked additive card (SUM or COUNT per group) cover,
+ * recorded when its evidence query ran. The query returns at most `limit`
+ * groups, so the rows alone cannot give the total over every group.
+ */
+export interface AnalysisCardGroupCoverage {
+    /** `complete`: the rows are every group the query matched. `partial`: the query limit cut groups off. */
+    status: 'complete' | 'partial';
+    /** Groups the query matched before its row limit; null when unknown. */
+    groupCount: number | null;
+    /**
+     * The aggregate over every matched group, measured by a companion query
+     * with the same filters and no grouping or limit. Null when a partial
+     * result could not be measured: no share or overall total may be shown then.
+     */
+    overallTotal: number | null;
+}
+
 export interface AnalysisCardData {
     id: string;
     plan: AnalysisPlan;
     aggregatedData: CsvRow[];
+    /** Absent on cards saved before coverage was recorded and on cards whose rows are aggregated in the client. */
+    groupCoverage?: AnalysisCardGroupCoverage | null;
     summary: LocalizedText;
     visualSummary?: LocalizedText | null;
     visuallyGrounded?: boolean;
@@ -657,6 +677,8 @@ export interface CardContext {
     aggregation?: AggregationType;
     periodSeries?: AnalysisPlanPeriodSeries;
     rowCount?: number;
+    /** Present when the rows are only the top of a ranking: the total over all groups, or that it is unknown. */
+    scopeNote?: string;
     aggregatedDataSample: CsvRow[];
 }
 
@@ -718,6 +740,8 @@ export interface DisplayAnalysisNarrativeInput {
     summary: string;
     aggregatedDataSample: CsvRow[];
     aggregatedRowCount?: number;
+    /** Present when the rows are only the top of a ranking: the total over all groups, or that it is unknown. */
+    scopeNote?: string;
     isFallback: boolean;
 }
 

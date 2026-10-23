@@ -119,6 +119,8 @@ const buildCardScope = (
     rowCount: number | null,
     pluralGroupLabel: string,
     language?: Settings['language'],
+    /** Rows of a cut-off ranking whose total over all groups could not be measured. */
+    unmeasuredRankedRows?: number,
 ): ExecutiveKpi['scope'] => {
     const explicitTopN = getEffectiveTopN(card);
     const filters = [
@@ -137,6 +139,21 @@ const buildCardScope = (
                 ? (language === 'Mandarin' ? `最低 ${explicitTopN} 个${pluralGroupLabel}` : `Lowest ${explicitTopN} ${pluralGroupLabel}`)
                 : (language === 'Mandarin' ? `前 ${explicitTopN} 个${pluralGroupLabel}` : `Top ${explicitTopN} ${pluralGroupLabel}`),
             topN: explicitTopN,
+            rowCount: rowCount ?? undefined,
+            ...(filters.length > 0 ? { filterSummary: filters.join(' · ') } : {}),
+        };
+    }
+
+    // The query returned only the head of its ranking and no total over all groups exists:
+    // these rows are not the full dataset, so the KPIs must not claim that scope.
+    if (unmeasuredRankedRows !== undefined) {
+        return {
+            kind: 'top_n',
+            sourceCardId: card.id,
+            label: card.plan.rankDirection === 'asc'
+                ? (language === 'Mandarin' ? `最低 ${unmeasuredRankedRows} 个${pluralGroupLabel}` : `Lowest ${unmeasuredRankedRows} ${pluralGroupLabel}`)
+                : (language === 'Mandarin' ? `前 ${unmeasuredRankedRows} 个${pluralGroupLabel}` : `Top ${unmeasuredRankedRows} ${pluralGroupLabel}`),
+            topN: unmeasuredRankedRows,
             rowCount: rowCount ?? undefined,
             ...(filters.length > 0 ? { filterSummary: filters.join(' · ') } : {}),
         };
@@ -268,7 +285,21 @@ export const buildExecutiveKpis = ({
     const groupLabel = primaryIr.displayGroupLabel;
     const pluralGroupLabel = pluralizeLabel(groupLabel);
     const datasetRowCount = csvData ? getCsvDataRowCount(csvData) : null;
-    const scope = buildCardScope(primaryCard, datasetRowCount, pluralGroupLabel, language);
+    // A cut-off ranking (the query limit dropped groups) has a measured total over all groups, or none.
+    const coverage = primaryCard.groupCoverage;
+    const isCutOffRanking = Boolean(
+        isAdditiveAggregation(primaryCard.plan.aggregation)
+        && coverage?.status === 'partial'
+        && !(primaryCard.filter?.column && primaryCard.filter.values.length > 0),
+    );
+    const overallTotal = isCutOffRanking ? coverage?.overallTotal ?? null : null;
+    const scope = buildCardScope(
+        primaryCard,
+        datasetRowCount,
+        pluralGroupLabel,
+        language,
+        isCutOffRanking && overallTotal === null ? metricRows.length : undefined,
+    );
     const topEntry = metricRows[0];
     const topGroupColumn = primaryIr.groupByColumn ?? primaryCard.plan.groupByColumn;
     const rawTopLabel = getRowValue(topEntry.row, topGroupColumn);
@@ -320,11 +351,18 @@ export const buildExecutiveKpis = ({
         ];
     }
 
-    const totalValue = metricRows.reduce((sum, entry) => sum + entry.value, 0);
-    const topEntryShare = totalValue !== 0 ? topEntry.value / totalValue : null;
+    const shownTotal = metricRows.reduce((sum, entry) => sum + entry.value, 0);
+    // The headline total and every share are relative to all groups when the rows are only
+    // the top of a ranking; a "Top N" scope keeps its own shown total as the headline.
+    const totalValue = overallTotal !== null && scope.kind !== 'top_n' ? overallTotal : shownTotal;
+    const shareBase: number | null = isCutOffRanking ? overallTotal : shownTotal;
+    const topEntryShare = shareBase !== null && shareBase !== 0 ? topEntry.value / shareBase : null;
+    const groupCount = isCutOffRanking && scope.kind !== 'top_n' && coverage?.groupCount
+        ? coverage.groupCount
+        : metricRows.length;
     const datasetRowDetail = buildTotalMetricKpiDetail({
         rowCount: scope.kind === 'dataset' ? datasetRowCount : null,
-        groupCount: metricRows.length,
+        groupCount,
         pluralGroupLabel,
         language,
     });
@@ -348,7 +386,8 @@ export const buildExecutiveKpis = ({
                 columnProfiles: safeProfiles,
                 csvData,
                 metricRows,
-                totalValue,
+                // No total over all groups means no share to show on the distribution delta.
+                totalValue: shareBase ?? 0,
                 groupLabel,
                 language,
             }),
@@ -371,7 +410,7 @@ export const buildExecutiveKpis = ({
         buildInteractiveKpi({
             id: 'group-count',
             label: buildGroupCountKpiLabel(pluralGroupLabel, language),
-            value: metricRows.length.toLocaleString(),
+            value: groupCount.toLocaleString(),
             detail: buildGroupCountKpiDetail({
                 pluralGroupLabel,
                 language,
@@ -388,14 +427,14 @@ export const buildExecutiveKpis = ({
         : null;
     if (inactiveKpi) {
         kpis.push(inactiveKpi);
-    } else if (metricRows.length > 1 && totalValue !== 0 && !lowestFirst) {
+    } else if (metricRows.length > 1 && shareBase !== null && shareBase !== 0 && !lowestFirst) {
         // Concentration describes the largest groups, so a lowest-first card omits it.
         const concentrationSize = Math.min(3, metricRows.length);
         const concentrationTotal = metricRows.slice(0, concentrationSize).reduce((sum, entry) => sum + entry.value, 0);
         kpis.push(buildInteractiveKpi({
             id: 'top-share',
             label: buildTopShareKpiLabel(concentrationSize, language),
-            value: formatShareValue(concentrationTotal / totalValue),
+            value: formatShareValue(concentrationTotal / shareBase),
             detail: buildTopShareKpiDetail({
                 count: concentrationSize,
                 pluralGroupLabel,

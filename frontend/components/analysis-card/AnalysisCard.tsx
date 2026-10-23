@@ -66,7 +66,7 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
 
     const {
         cardData: storedCardData, tableDataForDisplay, chartDataForDisplay, stackedChartColumnState, dataForLegend, totalValue,
-        displayedTotalValue, totalRowCount, displayedRowCount, chartHiddenZeroValueRowCount, tableZeroValueRowCount, summary, valueKey, groupByKey, tableSort,
+        displayedTotalValue, overallTotalValue, groupsComplete, matchedGroupCount, totalRowCount, displayedRowCount, chartHiddenZeroValueRowCount, tableZeroValueRowCount, summary, valueKey, groupByKey, tableSort,
         rankDirection, tiedLeadingWindow,
     } = useAnalysisCardData(cardId);
     // Legacy saved cards may carry only the verdict, without its presentation projection.
@@ -125,6 +125,12 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
         if (cardData?.topN) {
             scopeParts.push(`${rankDirection === 'asc' ? 'Lowest' : 'Top'} ${cardData.topN}`);
         }
+        if (!groupsComplete) {
+            // The query limit cut groups off: an export must not claim the whole card aggregation.
+            scopeParts.push(matchedGroupCount !== null && overallTotalValue !== null
+                ? `${totalRowCount} of ${matchedGroupCount} groups returned`
+                : 'Only the groups returned');
+        }
         if (cardData?.filter?.column && cardData.filter.values.length > 0) {
             scopeParts.push(`${cardData.filter.column} = ${cardData.filter.values.join(', ')}`);
         }
@@ -148,7 +154,7 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
             totalRows: totalRowCount,
             completeness: !cardData?.provenance ? 'unverified' : scopeParts.length || tableDataForDisplay.length < totalRowCount ? 'visible_subset' : 'full_card',
         };
-    }, [cardData, cardId, totalRowCount, tableDataForDisplay.length, hasAdditiveMeasure, trustDecision.status, hideChartByDefault, rankDirection]);
+    }, [cardData, cardId, totalRowCount, tableDataForDisplay.length, hasAdditiveMeasure, trustDecision.status, hideChartByDefault, rankDirection, groupsComplete, matchedGroupCount, overallTotalValue]);
 
     // Panel-level expand/collapse override
     useEffect(() => {
@@ -446,7 +452,8 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
                 <CompactCardSummary
                     displayedTotalValue={displayedTotalValue}
                     displayedRowCount={displayedRowCount}
-                    totalRowCount={totalRowCount}
+                    // A cut-off ranking stands for every matched group, not only the rows it returned.
+                    totalRowCount={!groupsComplete && overallTotalValue !== null && matchedGroupCount !== null ? matchedGroupCount : totalRowCount}
                     summaryText={summary?.text ?? null}
                     aggregation={plan.aggregation}
                     valueColumn={plan.valueColumn}
@@ -504,12 +511,13 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
                     <div className="flex flex-col">
                         <InteractiveLegend
                             data={dataForLegend}
-                            total={totalValue}
+                            total={overallTotalValue ?? totalValue}
                             groupByKey={groupByKey}
                             valueKey={valueKey}
                             hiddenLabels={cardData.hiddenLabels || []}
                             onLabelClick={onLabelClick}
-                            showPercentage={hasAdditiveMeasure}
+                            // A share needs the total over all groups; a cut-off ranking without one shows none.
+                            showPercentage={hasAdditiveMeasure && overallTotalValue !== null}
                             aggregation={plan.aggregation}
                         />
                     </div>
@@ -530,9 +538,11 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
                 cardId={cardId}
                 plan={plan}
                 totalValue={displayedTotalValue}
-                overallTotalValue={totalValue}
+                overallTotalValue={hasAdditiveMeasure ? overallTotalValue : totalValue}
                 displayedRowCount={displayedRowCount}
                 totalRowCount={totalRowCount}
+                totalGroupCount={matchedGroupCount}
+                groupsComplete={groupsComplete}
                 displayedMetricLabel={displayMetricLabel}
                 displayedGroupLabel={displayGroupLabel}
                 topN={topN}

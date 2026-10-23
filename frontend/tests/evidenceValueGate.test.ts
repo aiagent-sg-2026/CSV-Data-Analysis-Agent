@@ -657,6 +657,32 @@ describe('evidenceValueGate', () => {
         expect(result.reasonCodes).not.toContain('missing_detail_row_filter');
     });
 
+    it('counts a detail-row filter written as a plan pre-filter, which runs as part of the WHERE clause', () => {
+        const result = evaluateEvidenceValue({
+            semanticUnderstanding: baseSemanticUnderstanding,
+            evidencePlan: { ...basePlan, preFilter: [{ column: 'RowClass', operator: 'eq', value: 'fact' }] },
+            evidenceSummary: baseSummary,
+            harnessContext: {
+                preferGroupBy: ['Project'],
+                blockGroupBy: [],
+                reportShapeClass: 'hierarchical_statement',
+                detailRowPolicy: 'exclude_non_detail_rows',
+                hierarchyMode: 'preserve',
+                widePivotMode: 'none',
+                signalConfidence: 'high',
+                excludeFromAggregation: ['Grand Total'],
+                hierarchyColumn: 'Description',
+                parentDescriptions: ['Grand Total'],
+                duplicateDescriptions: [],
+                detailRowColumn: 'RowClass',
+                detailRowValue: 'fact',
+            },
+        });
+
+        expect(result.decision).toBe('pass');
+        expect(result.reasonCodes).not.toContain('missing_detail_row_filter');
+    });
+
     it('caps reshape-required wide pivot evidence to table_only', () => {
         const result = evaluateEvidenceValue({
             semanticUnderstanding: baseSemanticUnderstanding,

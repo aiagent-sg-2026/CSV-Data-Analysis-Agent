@@ -30,6 +30,7 @@ const createCard = (overrides: Partial<AnalysisCardData> = {}): AnalysisCardData
         isFallback: overrides.plan?.isFallback ?? false,
     },
     aggregatedData: overrides.aggregatedData ?? [{ Region: 'East', Revenue: 1200 }],
+    ...(overrides.groupCoverage ? { groupCoverage: overrides.groupCoverage } : {}),
     summary: overrides.summary ?? { language: 'English', text: 'Normal summary' },
     displayChartType: overrides.displayChartType ?? 'bar',
     isDataVisible: overrides.isDataVisible ?? false,
@@ -153,6 +154,40 @@ describe('generateAllSummaries', () => {
         expect(aiServiceMocks.generateFinalSummary.mock.calls[0][0]).toHaveLength(1);
         expect(state.aiCoreAnalysisSummary?.text).toContain('Reliability Note');
         expect(state.finalSummary?.text).toContain('Reliability Note');
+    });
+
+    it('tells the summary model when a card shows only the top of a ranking and what the real total is', async () => {
+        const cutOffCard = createCard({
+            id: 'card-cut-off',
+            aggregatedData: [{ Region: 'East', Revenue: 1200 }, { Region: 'West', Revenue: 800 }],
+            groupCoverage: { status: 'partial', groupCount: 40, overallTotal: 10_000 },
+        });
+        const { store } = createStore([cutOffCard]);
+
+        aiServiceMocks.generateCoreAnalysisSummary.mockResolvedValue({ language: 'English', text: 'Core summary' });
+        aiServiceMocks.generateFinalSummary.mockResolvedValue({ language: 'English', text: 'Executive summary' });
+        aiServiceMocks.generateProactiveInsights.mockResolvedValue(null);
+
+        await generateAllSummaries(store as any);
+
+        const scopeNote = aiServiceMocks.generateSummary.mock.calls[0][5] as string;
+        expect(scopeNote).toContain('top of a ranking of 40 groups');
+        expect(scopeNote).toContain('together they total 2,000');
+        expect(scopeNote).toContain('The total over all groups is 10,000');
+        expect(aiServiceMocks.generateCoreAnalysisSummary.mock.calls[0][0][0].scopeNote).toBe(scopeNote);
+    });
+
+    it('adds no scope note for a card that shows every group', async () => {
+        const { store } = createStore([createCard({ id: 'card-complete', groupCoverage: { status: 'complete', groupCount: 1, overallTotal: 1200 } })]);
+
+        aiServiceMocks.generateCoreAnalysisSummary.mockResolvedValue({ language: 'English', text: 'Core summary' });
+        aiServiceMocks.generateFinalSummary.mockResolvedValue({ language: 'English', text: 'Executive summary' });
+        aiServiceMocks.generateProactiveInsights.mockResolvedValue(null);
+
+        await generateAllSummaries(store as any);
+
+        expect(aiServiceMocks.generateSummary.mock.calls[0][5]).toBeNull();
+        expect(aiServiceMocks.generateCoreAnalysisSummary.mock.calls[0][0][0]).not.toHaveProperty('scopeNote');
     });
 
     it('includes caveated non-fallback cards in headline summary synthesis', async () => {

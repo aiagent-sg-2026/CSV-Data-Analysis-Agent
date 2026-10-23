@@ -10,6 +10,7 @@ import type {
     SeriesMeasureSemantics,
     SqlEvidenceQueryPlan,
 } from '../../../types';
+import { mergeEvidencePreFilterIntoQuery } from './evidenceQuerySemantics';
 
 /**
  * Guards analyses of a melted period-header wide table, where every row is one
@@ -222,11 +223,13 @@ const assessRawSql = (sql: string, semantics: SeriesMeasureSemantics, title: str
  * - Record counts per series or period say little here and stay tables.
  */
 export const assessSeriesMeasurePlan = (
-    plan: Pick<SqlEvidenceQueryPlan, 'title' | 'queryMode' | 'query'>,
+    plan: Pick<SqlEvidenceQueryPlan, 'title' | 'queryMode' | 'query'> & Partial<Pick<SqlEvidenceQueryPlan, 'preFilter'>>,
     semantics: SeriesMeasureSemantics | null | undefined,
 ): SeriesMeasurePlanVerdict => {
     if (!semantics) return PASS;
-    const { query } = plan;
+    // A pre-filter runs as part of the WHERE clause, so a detail-row or series
+    // restriction written there protects the sum exactly as one in `query.where`.
+    const query = mergeEvidencePreFilterIntoQuery(plan.query, plan.preFilter);
     if (typeof query.rawSql === 'string' && query.rawSql.trim()) {
         return assessRawSql(query.rawSql, semantics, plan.title);
     }
@@ -277,11 +280,12 @@ export const assessSeriesMeasurePlan = (
 
 /** True when the query's WHERE clause reads exactly one series, so parent and child rows cannot mix. */
 export const selectsSingleSeries = (
-    plan: Pick<SqlEvidenceQueryPlan, 'query'>,
+    plan: Pick<SqlEvidenceQueryPlan, 'query'> & Partial<Pick<SqlEvidenceQueryPlan, 'preFilter'>>,
     semantics: SeriesMeasureSemantics | null | undefined,
 ): boolean => {
     if (!semantics || plan.query.rawSql) return false;
-    const series = resolveSeriesValues(semantics, restrictedValues(plan.query.where, semantics.seriesColumn));
+    const { where } = mergeEvidencePreFilterIntoQuery(plan.query, plan.preFilter);
+    const series = resolveSeriesValues(semantics, restrictedValues(where, semantics.seriesColumn));
     return series !== null && series.length === 1;
 };
 

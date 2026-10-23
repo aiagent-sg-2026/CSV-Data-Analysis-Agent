@@ -1541,4 +1541,110 @@ describe('topicProcessor', { timeout: 15000 }, () => {
             expect(valueGate.sampleSizeCaveat).toBeUndefined();
         });
     });
+
+    describe('ranked group total (shares need the total over every group)', () => {
+        const sumPlan = (fn: 'sum' | 'avg' = 'sum') => ({
+            title: 'Revenue by Region',
+            queryMode: 'aggregate',
+            query: {
+                select: ['Region', 'Revenue'],
+                where: { predicates: [{ column: 'RowClass', operator: 'eq', value: 'fact' }] },
+                groupBy: ['Region'],
+                aggregates: [{ function: fn, column: 'Revenue', as: 'Revenue' }],
+                orderBy: [{ column: 'Revenue', direction: 'desc' }],
+                limit: 5,
+            },
+            preFilter: [{ column: 'Year', operator: 'eq', value: '2025' }],
+            intentSummary: 'Rank regions by revenue.',
+            preferredResultShape: 'ranked_aggregate',
+        });
+        const rankedRows = [
+            { Region: 'East', Revenue: 500 },
+            { Region: 'West', Revenue: 400 },
+            { Region: 'North', Revenue: 300 },
+            { Region: 'South', Revenue: 200 },
+            { Region: 'Centre', Revenue: 100 },
+        ];
+        const run = async (options: {
+            fn?: 'sum' | 'avg';
+            matched?: number;
+            companion?: () => Promise<unknown>;
+        } = {}) => {
+            generateEvidenceQueryPlanWithRetryMock.mockResolvedValue(sumPlan(options.fn));
+            const defaults = await executeEvidenceQueryMock.getMockImplementation()!({} as never);
+            const matched = options.matched ?? 40;
+            executeEvidenceQueryMock.mockImplementation(async (plan: { title: string }) => {
+                if (String(plan.title).startsWith('Total check')) return options.companion!();
+                return {
+                    ...defaults,
+                    result: {
+                        ...defaults.result,
+                        rows: rankedRows,
+                        totalMatchedRows: matched,
+                        returnedRows: rankedRows.length,
+                        truncated: matched > rankedRows.length,
+                        appliedLimit: 5,
+                        appliedOrderBy: [{ column: 'Revenue', direction: 'desc' }],
+                    },
+                };
+            });
+            const { processSingleTopic } = await import('../services/agent/planning/topicProcessor');
+            const state = {
+                isChangingGoal: false,
+                columnProfiles: [
+                    { name: 'Region', type: 'categorical', uniqueValues: 40 },
+                    { name: 'Revenue', type: 'numerical' },
+                ],
+                settings: { provider: 'google', geminiApiKey: 'test-key', openAIApiKey: '', language: 'English', autoConfirmGoal: true },
+                reportContextResolution: null, datasetSemanticSnapshot: null,
+                semanticDatasetVersion: null, dataPreparationPlan: null,
+                agentMemoryHistory: [], recordAgentEvent: vi.fn(),
+            } as any;
+            const store = { getState: () => state, setState: vi.fn() };
+            await processSingleTopic('Revenue by Region', {
+                fileName: 'revenue.csv',
+                data: [{ Region: 'East', Revenue: 500 }],
+            } as any, store, { tableName: 'session_clean_dataset', loadVersion: 'dataset-1' }, []);
+            const totalCalls = executeEvidenceQueryMock.mock.calls.filter(([plan]) => String(plan.title).startsWith('Total check'));
+            return {
+                totalCalls,
+                groupCoverage: executePresentationPlanAndCreateCardMock.mock.calls[0]?.[5]?.groupCoverage,
+            };
+        };
+
+        it('measures the total over all groups with the evidence query\'s filters when the query limit cut groups off', async () => {
+            const { totalCalls, groupCoverage } = await run({ companion: async () => ({ result: { rows: [{ group_coverage_total: 4000 }] } }) });
+
+            expect(totalCalls).toHaveLength(1);
+            expect(totalCalls[0][0].query).toEqual({
+                select: ['group_coverage_total'],
+                where: { predicates: [{ column: 'RowClass', operator: 'eq', value: 'fact' }] },
+                aggregates: [{ function: 'sum', column: 'Revenue', as: 'group_coverage_total' }],
+                limit: 1,
+            });
+            expect(totalCalls[0][0].preFilter).toEqual([{ column: 'Year', operator: 'eq', value: '2025' }]);
+            expect(groupCoverage).toEqual({ status: 'partial', groupCount: 40, overallTotal: 4000 });
+        });
+
+        it('records the card as cut off without a total when the companion query fails', async () => {
+            const { totalCalls, groupCoverage } = await run({ companion: async () => { throw new Error('companion failed'); } });
+
+            expect(totalCalls).toHaveLength(1);
+            expect(groupCoverage).toEqual({ status: 'partial', groupCount: 40, overallTotal: null });
+        });
+
+        it('runs no companion query when the query returned every group', async () => {
+            const { totalCalls, groupCoverage } = await run({ matched: 5, companion: async () => { throw new Error('must not run'); } });
+
+            expect(totalCalls).toHaveLength(0);
+            expect(groupCoverage).toEqual({ status: 'complete', groupCount: 5, overallTotal: 1500 });
+        });
+
+        it('records nothing for an average, which has no total', async () => {
+            const { totalCalls, groupCoverage } = await run({ fn: 'avg', companion: async () => { throw new Error('must not run'); } });
+
+            expect(totalCalls).toHaveLength(0);
+            expect(groupCoverage).toBeNull();
+        });
+    });
 });

@@ -191,6 +191,11 @@ export const createCardSlice: StateCreator<AppStore, [], [], ICardSlice> = (set,
                 newCard.plan = newPlan;
             }
 
+            // The measured overall total belongs to the measure the query ran, not to a new calculated one.
+            if (newCard.plan.valueColumn !== card.plan.valueColumn && newCard.groupCoverage?.status === 'partial') {
+                newCard.groupCoverage = { ...newCard.groupCoverage, overallTotal: null };
+            }
+
             newCards[cardIndex] = newCard;
             didUpdate = true;
             return {

@@ -1,4 +1,5 @@
 import type { CsvRow, ReportCardEvidence, ReportEvidenceBundle } from '../../types';
+import { resolveCardGroupTotals } from '../../utils/cardGroupTotals';
 
 /* ── Interfaces ──────────────────────────────────────────── */
 
@@ -214,8 +215,17 @@ const extractBusinessKpis = (
         if (!card.reportChartRows?.length && !card.aggregatedDataSample?.length) continue;
 
         const rows = card.reportChartRows?.length ? card.reportChartRows : card.aggregatedDataSample;
-        const total = computeCardTotal(rows, card.valueColumn);
-        if (!Number.isFinite(total) || total === 0) continue;
+        const rowsTotal = computeCardTotal(rows, card.valueColumn);
+        // A cut-off ranking is headlined with the measured total over all its groups; unmeasured, it has none.
+        const groupTotals = resolveCardGroupTotals({
+            additive: true,
+            coverage: card.groupCoverage,
+            rowsTotal,
+            rowCount: rows.length,
+            filterActive: false,
+        });
+        const total = groupTotals.overallTotal;
+        if (total === null || !Number.isFinite(total) || total === 0) continue;
 
         const { category, priority } = classifyMetricFromCard(card);
         if (seenCategories.has(category)) continue;
@@ -224,7 +234,7 @@ const extractBusinessKpis = (
         metrics.push({
             label: buildMetricLabel(card),
             total,
-            groupCount: rows.length,
+            groupCount: groupTotals.matchedGroupCount ?? rows.length,
             groupLabel: card.groupByColumn ?? 'items',
             priority,
             card,

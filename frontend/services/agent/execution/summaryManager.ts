@@ -6,6 +6,7 @@ import { getTranslation } from '../../../utils/localization';
 import { buildDisplayAnalysisIrList } from '../../dashboard/displayAnalysisIr';
 import { buildNarrativeAnalysisIrInputList } from '../../dashboard/displayAnalysisNarrative';
 import { buildNarrativeArtifactProvenance } from '../artifactProvenance';
+import { describeCardGroupCoverage } from '../../../utils/cardGroupTotals';
 import { formatPeriodRowsForDisplay, formatTemporalDisplayValue, getTemporalSortTimestamp, resolvePeriodGrain } from '../../../utils/temporalDisplay';
 import { isPlaceholderSummaryText } from '../../../utils/summaryPlaceholders';
 import { coerceNumericValue, normalizeCategoryLabel } from '../../../utils/analysisCardPresentation';
@@ -197,6 +198,7 @@ const buildCardContext = (cards: AnalysisCardData[]): CardContext[] => {
     const irList = buildDisplayAnalysisIrList(cards);
     return cards.map(c => {
         const ir = irList.find(candidate => candidate.cardId === c.id);
+        const scopeNote = describeCardGroupCoverage(c);
         return {
             id: c.id,
             title: ir?.displayTitle ?? c.plan.title,
@@ -208,6 +210,7 @@ const buildCardContext = (cards: AnalysisCardData[]): CardContext[] => {
             aggregation: c.plan.aggregation,
             ...(c.plan.periodSeries ? { periodSeries: c.plan.periodSeries } : {}),
             rowCount: c.aggregatedData.length,
+            ...(scopeNote ? { scopeNote } : {}),
             aggregatedDataSample: formatPeriodRowsForDisplay(c.aggregatedData.slice(0, 10), c.plan.periodSeries),
         };
     });
@@ -359,7 +362,7 @@ export const generateAllSummaries = async (
                 const ir = displayIrList.find(d => d.cardId === card.id);
                 const title = ir?.displayTitle ?? card.plan.title ?? '';
                 const t0 = performance.now();
-                return generateSummary(title, formatPeriodRowsForDisplay(card.aggregatedData, card.plan.periodSeries), settings, columnProfiles, getState())
+                return generateSummary(title, formatPeriodRowsForDisplay(card.aggregatedData, card.plan.periodSeries), settings, columnProfiles, getState(), describeCardGroupCoverage(card))
                     .then(result => { console.log(`[Perf:BatchSummary] "${title.slice(0, 40)}" OK in ${Math.round(performance.now() - t0)}ms`); return result; })
                     .catch(() => { console.log(`[Perf:BatchSummary] "${title.slice(0, 40)}" FAILED in ${Math.round(performance.now() - t0)}ms`); return card.summary; });
             }),

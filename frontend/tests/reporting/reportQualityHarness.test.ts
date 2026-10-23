@@ -152,4 +152,24 @@ describe('reportQualityHarness', () => {
 
         expect(result.detectedCurrency).toBeNull();
     });
+
+    describe('a ranking the query limit cut off', () => {
+        it('headlines the measured total over all groups and counts all of them', () => {
+            const card = createCard({ groupCoverage: { status: 'partial', groupCount: 25, overallTotal: 4_000_000 } });
+            const result = runReportQualityHarness(createBundle({ cards: [card] }));
+
+            expect(result.businessKpis[0].value).toBe('4.0M');
+            // East holds 500,000 of 4,000,000 (13%), not of the 1,000,000 in the four returned rows (50%).
+            expect(result.businessKpis[0].supportingNote).toContain('13% of total');
+            expect(result.businessKpis[0].supportingNote).toContain('across 25 categories');
+            expect(result.businessKpis.find(kpi => kpi.source === 'card_count')?.value).toBe('25');
+        });
+
+        it('has no headline total when the total over all groups could not be measured', () => {
+            const card = createCard({ groupCoverage: { status: 'partial', groupCount: 25, overallTotal: null } });
+            const result = runReportQualityHarness(createBundle({ cards: [card] }));
+
+            expect(result.businessKpis).toEqual([]);
+        });
+    });
 });

@@ -11,6 +11,7 @@
  */
 
 import type { ReportCardEvidence, ReportEvidenceBundle, CsvRow } from '../../types';
+import { resolveCardGroupTotals } from '../../utils/cardGroupTotals';
 
 /* ── Interfaces ──────────────────────────────────────────── */
 
@@ -131,20 +132,32 @@ const profileCard = (
 
     if (!Number.isFinite(total) || total === 0) return null;
 
+    // The rows can be only the top of a ranking the query limit cut off. Shares and the
+    // total are then relative to the measured total over all groups, or not stated at all.
+    const groupTotals = resolveCardGroupTotals({
+        additive: true,
+        coverage: card.groupCoverage,
+        rowsTotal: total,
+        rowCount: entries.length,
+        filterActive: false,
+    });
+    if (groupTotals.overallTotal === null || groupTotals.overallTotal === 0) return null;
+    const cardTotal = groupTotals.overallTotal;
+
     entries.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
     const topGroups = entries.slice(0, MAX_TOP_GROUPS).map(e => ({
         label: e.label,
         value: e.value,
-        share: total !== 0 ? e.value / total : 0,
+        share: cardTotal !== 0 ? e.value / cardTotal : 0,
     }));
 
     return {
         column: valueCol,
         displayLabel: cleanLabel(valueCol),
-        total,
-        formattedTotal: formatCurrency(total, currency),
+        total: cardTotal,
+        formattedTotal: formatCurrency(cardTotal, currency),
         groupColumn: groupCol,
-        groupCount: entries.length,
+        groupCount: groupTotals.matchedGroupCount ?? entries.length,
         topGroups,
         category: classifyMetric(valueCol),
         cardId: card.cardId,

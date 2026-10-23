@@ -62,6 +62,8 @@ export const generateSummary = async (
     settings: Settings,
     allColumns: ColumnProfile[],
     telemetryTarget?: ContextTelemetryTarget,
+    /** What the rows cover when they are only the top of a ranking (see describeCardGroupCoverage). */
+    scopeNote?: string | null,
 ): Promise<LocalizedText> => {
     if (!isProviderConfigured(settings)) {
         return {
@@ -89,6 +91,7 @@ export const generateSummary = async (
                     sections: [
                         createContextSection('report_context', `Report context:\n${formatReportContextForPrompt(reportContext)}`, 'high', 'sticky'),
                         createContextSection('chart_data', `Chart data: ${Math.min(data.length, 24)} of ${data.length} aggregated rows shown.\n${formatRows(trimRawDataSample(data, 24))}`, 'required', 'sticky'),
+                        ...(scopeNote ? [createContextSection('population_scope', scopeNote, 'required', 'sticky')] : []),
                         createContextSection('dataset_columns', `Dataset columns:\n${formatColumnNames(allColumns)}`, 'medium', 'prunable'),
                         createContextSection('column_display_hints', `User-facing column label hints:\n${formatColumnDisplayHints(allColumns)}`, 'medium', 'prunable'),
                     ],

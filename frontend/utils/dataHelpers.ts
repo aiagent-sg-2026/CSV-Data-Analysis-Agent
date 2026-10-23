@@ -25,14 +25,23 @@ export const parseNullableNumericValue = (value: unknown): number | null => {
     return Number.isFinite(parsed) ? parsed : null;
 };
 
+/**
+ * Keeps the first `topN` groups and folds the rest into one "Others" row.
+ *
+ * `overallTotal` is the measured total over every group the query matched,
+ * passed only when the rows are a cut-off ranking (the query limit dropped
+ * groups). "Others" is then the total minus the groups shown, so it also holds
+ * the groups the query never returned, not only the returned rows past `topN`.
+ */
 export const applyTopNWithOthers = (
     data: CsvRow[],
     groupByKey: string,
     valueKey: string,
     topN: number,
     direction: 'asc' | 'desc' = 'desc',
+    overallTotal: number | null = null,
 ): CsvRow[] => {
-    if (data.length <= topN) {
+    if (data.length <= topN && overallTotal === null) {
         return data;
     }
 
@@ -48,7 +57,19 @@ export const applyTopNWithOthers = (
             return (b.value - a.value) * sign || a.index - b.index;
         });
 
-    const topData = sortedData.slice(0, topN).map(entry => entry.row);
+    const topEntries = sortedData.slice(0, topN);
+    const topData = topEntries.map(entry => entry.row);
+
+    if (overallTotal !== null) {
+        const shownTotal = topEntries.reduce((acc, entry) => acc + (entry.value ?? 0), 0);
+        const remainder = overallTotal - shownTotal;
+        // Summing the same numbers in another order leaves float noise; that is not a group.
+        if (Math.abs(remainder) <= 1e-9 * Math.max(1, Math.abs(overallTotal))) {
+            return topData;
+        }
+        return [...topData, { [groupByKey]: 'Others', [valueKey]: remainder }];
+    }
+
     // A group without a value adds nothing to "Others"; a bucket of only such
     // groups would otherwise appear as a real total of 0.
     const otherValues = sortedData.slice(topN).flatMap(entry => (entry.value === null ? [] : [entry.value]));
