@@ -1,4 +1,3 @@
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from './streamGenerateText';
 import type {
     AiIntakeStructureBoundary,
@@ -6,7 +5,7 @@ import type {
     Settings,
 } from '../../types';
 import { createProviderModel, isProviderConfigured } from './providerConfig';
-import { prepareSchemaForProvider } from './googleSchemaAdapter';
+import { createStructuredOutput } from './structuredOutput';
 import { intakeStructureBoundarySchema } from './schemas/intakeStructureSchema';
 import { withTransientRetry } from './transientRetry';
 import {
@@ -115,9 +114,7 @@ export const detectIntakeStructureWithAi = async (
                             { role: 'system', content: managed.systemText },
                             { role: 'user', content: createIntakeStructurePrompt(managed.userText) },
                         ],
-                        output: Output.object({
-                            schema: jsonSchema(prepareSchemaForProvider(intakeStructureBoundarySchema, settings.provider)),
-                        }),
+                        output: createStructuredOutput(intakeStructureBoundarySchema, settings.provider),
                     }),
                     { settings, primaryModelId: modelId, label: 'intakeStructureDetector' },
                 );

@@ -1,6 +1,5 @@
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from '../ai/streamGenerateText';
-import { prepareSchemaForProvider } from '../ai/googleSchemaAdapter';
+import { createStructuredOutput } from '../ai/structuredOutput';
 import type { ModelMessage } from 'ai';
 import type {
     AnalystConfidence,
@@ -416,7 +415,7 @@ export const generateForumSummaryWithDiagnostics = async (
             (fb) => streamGenerateText({
                 model: fb ?? model,
                 messages,
-                output: Output.object({ schema: jsonSchema(prepareSchemaForProvider(forumSummarySchema, settings.provider) as Parameters<typeof jsonSchema>[0]) }),
+                output: createStructuredOutput(forumSummarySchema, settings.provider),
             }),
             { settings, primaryModelId: modelId, label: 'forumSummaryGenerator', abortSignal },
         );

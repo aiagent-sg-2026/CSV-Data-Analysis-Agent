@@ -1,9 +1,8 @@
 import { CardContext, DisplayAnalysisNarrativeInput, Settings } from '../../types';
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from './streamGenerateText';
 import { robustlyParseJsonObject } from '../../utils/jsonParser';
 import { proactiveInsightSchema } from './schemas/agentSchemas';
-import { prepareSchemaForProvider } from './googleSchemaAdapter';
+import { createStructuredOutput } from './structuredOutput';
 import { createProactiveInsightPrompt, insightGeneratorSystemPrompt } from '../prompts/insightPrompts';
 import { createProviderModel, isProviderConfigured } from './providerConfig';
 import {
@@ -142,7 +141,7 @@ export const generateProactiveInsights = async (
                             { role: 'system', content: managed.systemText },
                             { role: 'user', content: promptContent },
                         ],
-                        output: Output.object({ schema: jsonSchema(prepareSchemaForProvider(proactiveInsightSchema, settings.provider) as Parameters<typeof jsonSchema>[0]) }),
+                        output: createStructuredOutput(proactiveInsightSchema, settings.provider),
                     }),
                     { settings, primaryModelId: modelId, label: 'insightGenerator' },
                 );

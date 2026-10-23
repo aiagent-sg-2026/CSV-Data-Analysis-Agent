@@ -1,4 +1,3 @@
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from './streamGenerateText';
 import type {
     AiExtractedReportContext,
@@ -7,7 +6,7 @@ import type {
 } from '../../types';
 import { createProviderModel, isProviderConfigured } from './providerConfig';
 import { withTransientRetry } from './transientRetry';
-import { prepareSchemaForProvider } from './googleSchemaAdapter';
+import { createStructuredOutput } from './structuredOutput';
 import { reportContextExtractionSchema } from './schemas/dataSchemas';
 import {
     type ContextTelemetryTarget,
@@ -83,9 +82,7 @@ export const extractAiReportContext = async (
                             { role: 'system', content: managed.systemText },
                             { role: 'user', content: createReportContextExtractionPrompt(managed.userText) },
                         ],
-                        output: Output.object({
-                            schema: jsonSchema(prepareSchemaForProvider(reportContextExtractionSchema, settings.provider)),
-                        }),
+                        output: createStructuredOutput(reportContextExtractionSchema, settings.provider),
                     }),
                     { settings, primaryModelId: modelId, label: 'reportContextExtractor' },
                 );

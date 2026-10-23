@@ -1,5 +1,4 @@
-import { Output, jsonSchema } from 'ai';
-import { prepareSchemaForProvider } from '../../ai/googleSchemaAdapter';
+import { createStructuredOutput } from '../../ai/structuredOutput';
 import type {
     AnalysisPlan,
     ChartType,
@@ -627,9 +626,7 @@ export const callAiPresentationPlan = async (
                         { role: 'system', content: buildAnalysisPlannerSystemPrompt('presentation') },
                         { role: 'user', content: prompt },
                     ],
-                    output: Output.object({
-                        schema: jsonSchema(prepareSchemaForProvider(createSqlPresentationPlanSchema(evidenceColumnNames), settings.provider) as Parameters<typeof jsonSchema>[0]),
-                    }),
+                    output: createStructuredOutput(createSqlPresentationPlanSchema(evidenceColumnNames), settings.provider),
                     activityTimeoutMs: AI_PRESENTATION_TIMEOUT_MS,
                 }),
                 { settings, primaryModelId: modelId, label: 'sqlPresentationPlanner' },

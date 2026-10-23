@@ -475,8 +475,94 @@ const compactWideTableDataPreparationProviderSchema = {
     required: ['explanation', 'operations', 'outputColumns'],
 };
 
-export const getDataPreparationProviderSchema = (options?: { compactWideTable?: boolean }) =>
-    options?.compactWideTable ? compactWideTableDataPreparationProviderSchema : dataPreparationProviderSchema;
+export const DEFAULT_GATEWAY_DATA_PREPARATION_OPERATION_TYPES: DataOperationType[] = [
+    'drop_rows_by_index',
+    'drop_blank_rows',
+    'drop_rows_by_condition',
+    'promote_header_row',
+    'rename_columns',
+    'drop_columns',
+    'trim_whitespace',
+    'normalize_empty_values',
+    'replace_values',
+    'cast_column',
+    'dedupe_rows',
+    'filter_rows',
+    'unpivot_columns',
+];
+
+/**
+ * Data-preparation schema for the Default demo gateway. The gateway refused
+ * both the operation union and the compact wide-table schema (25 fields per
+ * operation, 49 in total) with HTTP 400 DEMO_SCHEMA_UNSUPPORTED "JSON Schema
+ * property names are invalid", yet accepted schemas with at most 14 fields per
+ * object and 30 in total (2026-10-23 probes). Operations therefore share one
+ * small field set whose meaning depends on the operation type;
+ * liftGatewayDataPreparationOutput maps each one back to the canonical
+ * operation contract. Not offered here: fill_missing, split_column, OR groups
+ * and unpivot label/row-class/hierarchy mappings.
+ */
+export const defaultGatewayDataPreparationSchema = {
+    type: 'object',
+    properties: {
+        explanation: { type: 'string', description: 'A brief, user-facing explanation of the transformations that will be applied to the data.' },
+        operations: {
+            type: 'array',
+            maxItems: 8,
+            description: 'A short sequence of deterministic data operations. Keep the list empty if no permanent cleaning is needed. Fields an operation type does not use stay empty ([] or "").',
+            items: {
+                type: 'object',
+                properties: {
+                    id: { type: 'string', description: 'Stable operation identifier.' },
+                    type: { type: 'string', enum: DEFAULT_GATEWAY_DATA_PREPARATION_OPERATION_TYPES, description: 'The operation type.' },
+                    reason: { type: 'string', description: 'Short explanation for why this operation is needed.' },
+                    indices: { type: 'array', items: { type: 'integer' }, description: 'drop_rows_by_index: zero-based row indices to drop. promote_header_row: exactly one element, the header row index.' },
+                    predicates: {
+                        type: 'array',
+                        description: 'drop_rows_by_condition (rows to remove) and filter_rows (rows to keep): conditions that must all match.',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                column: { type: 'string' },
+                                operator: { type: 'string', enum: ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'between', 'contains', 'starts_with', 'ends_with', 'in', 'is_null', 'not_null'] },
+                                value: { type: 'string', description: 'Comparison value; empty for is_null and not_null.' },
+                            },
+                            required: ['column', 'operator', 'value'],
+                        },
+                    },
+                    mappings: {
+                        type: 'array',
+                        description: 'rename_columns: from = current column name, to = new name. replace_values: from = cell value, to = replacement value.',
+                        items: {
+                            type: 'object',
+                            properties: { from: { type: 'string' }, to: { type: 'string' } },
+                            required: ['from', 'to'],
+                        },
+                    },
+                    columns: { type: 'array', items: { type: 'string' }, description: 'drop_columns: columns to drop. trim_whitespace and normalize_empty_values: columns to clean, or ["*"] for all. dedupe_rows: key columns that identify a duplicate. unpivot_columns: the wide source columns that become rows.' },
+                    emptyMarkers: { type: 'array', items: { type: 'string' }, description: 'normalize_empty_values: cell values that mean empty, such as "N/A" or "-".' },
+                    column: { type: 'string', description: 'cast_column and replace_values: the column to change.' },
+                    targetType: { type: 'string', enum: ['number', 'currency', 'percentage', 'date', 'boolean', 'string'], description: 'cast_column: the target type.' },
+                    keyColumn: { type: 'string', description: 'unpivot_columns: output column that holds the source column names.' },
+                    valueColumn: { type: 'string', description: 'unpivot_columns: output column that holds the values.' },
+                    keepColumns: { type: 'array', items: { type: 'string' }, description: 'unpivot_columns: identifier columns repeated on every output row.' },
+                },
+                required: ['id', 'type', 'reason'],
+            },
+        },
+        outputColumns: {
+            type: 'array',
+            description: 'Column profiles describing the data AFTER the transformation; the input profiles when nothing changes.',
+            items: compactColumnProfileSchema,
+        },
+    },
+    required: ['explanation', 'operations', 'outputColumns'],
+};
+
+export const getDataPreparationProviderSchema = (options?: { compactWideTable?: boolean; defaultGateway?: boolean }) => {
+    if (options?.defaultGateway) return defaultGatewayDataPreparationSchema;
+    return options?.compactWideTable ? compactWideTableDataPreparationProviderSchema : dataPreparationProviderSchema;
+};
 
 export const reportContextExtractionSchema = {
     type: 'object',

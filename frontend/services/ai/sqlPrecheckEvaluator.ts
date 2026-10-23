@@ -1,4 +1,3 @@
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from './streamGenerateText';
 import type {
     ColumnProfile,
@@ -8,7 +7,7 @@ import type {
     SqlPrecheckFinding,
 } from '../../types';
 import { createProviderModel, isProviderConfigured } from './providerConfig';
-import { prepareSchemaForProvider } from './googleSchemaAdapter';
+import { createStructuredOutput } from './structuredOutput';
 import { sqlPrecheckAssessmentSchema } from './schemas/dataSchemas';
 import {
     createContextSection,
@@ -147,9 +146,7 @@ export const evaluateAiSqlPrecheck = async ({
                             { role: 'system', content: managed.systemText },
                             { role: 'user', content: createSqlPrecheckPrompt(managed.userText) },
                         ],
-                        output: Output.object({
-                            schema: jsonSchema(prepareSchemaForProvider(sqlPrecheckAssessmentSchema, settings.provider)),
-                        }),
+                        output: createStructuredOutput(sqlPrecheckAssessmentSchema, settings.provider),
                     }),
                     { settings, primaryModelId: modelId, label: 'sqlPrecheckEvaluator' },
                 );
