@@ -312,11 +312,42 @@ export const buildSeriesMeasureFallbackTopics = (semantics: SeriesMeasureSemanti
     return ordered.slice(0, limit).map(series => buildSeriesTrendTopic(semantics, series.name));
 };
 
-/** The series a topic names with `<seriesColumn> = '<series>'`; only exact, known series names count. */
+/** Lower-cases and unifies dash and space variants, so "Ridership – MRT" matches "Ridership - MRT". */
+const normalizeMention = (value: string) => value
+    .toLowerCase()
+    .replace(/[‐-―−]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const isWordCharacter = (character: string | undefined) => Boolean(character && /[\p{L}\p{N}]/u.test(character));
+
+/** True when `name` occurs in `text` as a whole phrase, not inside a longer word. */
+const mentionsPhrase = (text: string, name: string): boolean => {
+    if (!name) return false;
+    for (let index = text.indexOf(name); index >= 0; index = text.indexOf(name, index + 1)) {
+        if (!isWordCharacter(text[index - 1]) && !isWordCharacter(text[index + name.length])) return true;
+    }
+    return false;
+};
+
+/**
+ * The one series a topic is about: named as `<seriesColumn> = '<series>'`, or
+ * quoted verbatim as in an AI topic "Average Daily Ridership - MRT by Period".
+ * A name that is part of a longer matched name does not count separately, and
+ * a topic naming two different series (a comparison) resolves to none.
+ */
 export const resolveTopicSeriesFilter = (topic: string, semantics: SeriesMeasureSemantics | null | undefined): string | null => {
     if (!semantics) return null;
     const escaped = semantics.seriesColumn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const match = new RegExp(`["\`]?${escaped}["\`]?\\s*=\\s*'((?:[^']|'')+)'`, 'i').exec(topic);
-    if (!match) return null;
-    return findSeries(semantics, match[1].replace(/''/g, "'"))?.name ?? null;
+    if (match) return findSeries(semantics, match[1].replace(/''/g, "'"))?.name ?? null;
+
+    const text = normalizeMention(topic);
+    const mentioned = semantics.series
+        .map(series => ({ name: series.name, key: normalizeMention(series.name) }))
+        .filter(series => mentionsPhrase(text, series.key));
+    const outermost = mentioned.filter(series => !mentioned.some(other =>
+        other.key.length > series.key.length && mentionsPhrase(other.key, series.key)));
+    const distinct = [...new Set(outermost.map(series => series.key))];
+    return distinct.length === 1 ? outermost[0].name : null;
 };

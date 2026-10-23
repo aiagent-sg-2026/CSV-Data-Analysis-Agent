@@ -9,10 +9,18 @@ const {
     generateEvidenceQueryPlanWithRetryMock,
     executeEvidenceQueryMock,
     executePresentationPlanAndCreateCardMock,
+    streamGenerateTextMock,
 } = vi.hoisted(() => ({
     generateEvidenceQueryPlanWithRetryMock: vi.fn(),
     executeEvidenceQueryMock: vi.fn(),
     executePresentationPlanAndCreateCardMock: vi.fn(),
+    streamGenerateTextMock: vi.fn(),
+}));
+
+// The stepped planner's small AI steps; each test scripts the answers it needs.
+vi.mock('../services/ai/streamGenerateText', async importOriginal => ({
+    ...(await importOriginal() as Record<string, unknown>),
+    streamGenerateText: streamGenerateTextMock,
 }));
 
 vi.mock('../services/agent/planning/planGenerator', async importOriginal => ({
@@ -93,6 +101,7 @@ describe('topic pipeline on a melted table whose series measure different things
 
     beforeEach(() => {
         vi.clearAllMocks();
+        streamGenerateTextMock.mockRejectedValue(new Error('No AI step is scripted for this test.'));
         executeEvidenceQueryMock.mockImplementation(async (evidencePlan: SqlEvidenceQueryPlan) => {
             const resultRows = aggregateByPeriod(rows, evidencePlan);
             return {
@@ -176,5 +185,97 @@ describe('topic pipeline on a melted table whose series measure different things
 
         expect(result).toMatchObject({ status: 'completed', cardCreated: false, accepted: false, valueDecision: 'reject' });
         expect(executePresentationPlanAndCreateCardMock).not.toHaveBeenCalled();
+    });
+
+    it('turns AI and fallback single-series topics into trusted Period trends without the full planner', async () => {
+        const { buildSeriesMeasureFallbackTopics } = await import('../services/agent/planning/seriesMeasureGuard');
+        const { processSingleTopic } = await import('../services/agent/planning/topicProcessor');
+        // The full planner is the path that failed on the Default gateway; it must not be needed.
+        generateEvidenceQueryPlanWithRetryMock.mockRejectedValue(new Error('JSON Schema is too deep or complex'));
+        // A small model asked for a metric or filter answers like the real one would.
+        streamGenerateTextMock.mockImplementation(async ({ messages }: { messages: Array<{ content: string }> }) => {
+            const prompt = messages[messages.length - 1].content;
+            if (prompt.includes('Which metric')) return { text: 'AVG(Value)' };
+            if (prompt.includes('WHERE filters')) return { text: '"RowClass" = fact' };
+            return { text: 'Period' };
+        });
+        const state = {
+            isChangingGoal: false,
+            columnProfiles: profiles,
+            canonicalBuildMeta,
+            settings: { provider: 'google', geminiApiKey: 'k', openAIApiKey: '', simpleModel: 'm', complexModel: 'm', language: 'English' },
+            reportContextResolution: null,
+            datasetSemanticSnapshot: null,
+            semanticDatasetVersion: null,
+            dataPreparationPlan: null,
+            agentMemoryHistory: [],
+            recordAgentEvent: vi.fn(),
+        } as never;
+        const store = { getState: () => state, setState: vi.fn() };
+        const fallbackTopics = buildSeriesMeasureFallbackTopics(canonicalBuildMeta!.seriesMeasure!);
+        const cases: Array<[string, string]> = [
+            ['Average Daily Ridership - MRT by Period', 'Average Daily Ridership - MRT'],
+            ['Year-over-year trend in Average Daily Ridership - Public Bus', 'Average Daily Ridership - Public Bus'],
+            [fallbackTopics[0], /'(.+)'\)$/.exec(fallbackTopics[0])![1]],
+        ];
+
+        for (const [topic, series] of cases) {
+            executeEvidenceQueryMock.mockClear();
+            const result = await processSingleTopic(topic, { fileName: TRANSPORT, data: rows }, store, {
+                tableName: 't',
+                loadVersion: 'v1',
+            }, [], { harnessSummary: 'Detail rows: RowClass = fact' });
+
+            expect(result).toMatchObject({ status: 'completed', cardCreated: true, accepted: true, valueDecision: 'pass' });
+            const executed = executeEvidenceQueryMock.mock.calls.map(call => call[0] as SqlEvidenceQueryPlan);
+            expect(executed).toHaveLength(1);
+            expect(executed[0].query).toMatchObject({
+                groupBy: ['Period'],
+                aggregates: [expect.objectContaining({ function: 'avg', column: 'Value' })],
+                where: { predicates: [{ column: 'DataSeries', operator: 'eq', value: series }] },
+            });
+        }
+        expect(generateEvidenceQueryPlanWithRetryMock).not.toHaveBeenCalled();
+    });
+
+    it('shows the filter step the series values when the topic names a series loosely', async () => {
+        const { processSingleTopic } = await import('../services/agent/planning/topicProcessor');
+        generateEvidenceQueryPlanWithRetryMock.mockRejectedValue(new Error('JSON Schema is too deep or complex'));
+        const filterPrompts: string[] = [];
+        streamGenerateTextMock.mockImplementation(async ({ messages }: { messages: Array<{ content: string }> }) => {
+            const prompt = messages[messages.length - 1].content;
+            if (prompt.includes('Which metric')) return { text: 'AVG(Value)' };
+            if (prompt.includes('WHERE filters')) {
+                filterPrompts.push(prompt);
+                return { text: "DataSeries = 'average daily ridership - mrt'" };
+            }
+            return { text: 'Period' };
+        });
+        const state = {
+            isChangingGoal: false,
+            columnProfiles: profiles,
+            canonicalBuildMeta,
+            settings: { provider: 'google', geminiApiKey: 'k', openAIApiKey: '', simpleModel: 'm', complexModel: 'm', language: 'English' },
+            reportContextResolution: null,
+            datasetSemanticSnapshot: null,
+            semanticDatasetVersion: null,
+            dataPreparationPlan: null,
+            agentMemoryHistory: [],
+            recordAgentEvent: vi.fn(),
+        } as never;
+        const store = { getState: () => state, setState: vi.fn() };
+
+        const result = await processSingleTopic('MRT ridership by Period', { fileName: TRANSPORT, data: rows }, store, {
+            tableName: 't',
+            loadVersion: 'v1',
+        }, []);
+
+        expect(filterPrompts).toHaveLength(1);
+        expect(filterPrompts[0]).toContain('Average Daily Ridership - MRT');
+        expect(result).toMatchObject({ status: 'completed', cardCreated: true, accepted: true, valueDecision: 'pass' });
+        expect(executeEvidenceQueryMock.mock.calls[0][0].query.where).toEqual({
+            predicates: [{ column: 'DataSeries', operator: 'eq', value: 'Average Daily Ridership - MRT' }],
+        });
+        expect(generateEvidenceQueryPlanWithRetryMock).not.toHaveBeenCalled();
     });
 });

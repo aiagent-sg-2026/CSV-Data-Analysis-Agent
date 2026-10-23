@@ -21,6 +21,7 @@ import { resolveCardTrustDecision } from '../services/agent/cardTrustDecision';
 import { buildExecutiveKpis } from '../services/dashboard/executiveKpis';
 import { buildDeterministicTopics, generateEvidenceQueryPlanStepped } from '../services/agent/planning/planGenerator';
 import { buildResearchTopic, checkQuestionSeriesScope, validateResearchQuestions } from '../services/agent/runtime/pi/researchPlan';
+import { assessSeriesMeasurePlan, resolveTopicSeriesFilter } from '../services/agent/planning/seriesMeasureGuard';
 import { createTestSettings } from './testSettings';
 
 // The three SingStat-style demo files that the intake melts into
@@ -362,6 +363,36 @@ describe('melted period-series tables keep the value tied to its series', () => 
         const gated = gate(transport, plan);
         expect(gated.result.decision).toBe('pass');
         expect(gated.rows.length).toBeGreaterThan(10);
+    });
+
+    it('plans an AI topic that names one transport series in words as that series over Period', async () => {
+        const transport = demos.get(TRANSPORT)!;
+        const datasetContext = {
+            dimensionColumns: ['DataSeries', 'Period'],
+            metricColumns: ['Value'],
+            seriesMeasure: transport.seriesMeasure,
+        };
+        const cases = [
+            ['Average Daily Ridership - MRT by Period', 'Average Daily Ridership - MRT'],
+            ['Year-over-year trend in Average Daily Ridership – Public Bus', 'Average Daily Ridership - Public Bus'],
+            ['How did Mass Rapid Transit (MRT) change over the years?', 'Mass Rapid Transit (MRT)'],
+        ] as const;
+        for (const [topic, series] of cases) {
+            expect(resolveTopicSeriesFilter(topic, transport.seriesMeasure)).toBe(series);
+            // Not deterministicOnly: the plan must come without asking the AI
+            // (these settings have no key), from the named series alone.
+            const plan = await generateEvidenceQueryPlanStepped(topic, transport.profiles, createTestSettings(), 'Detail rows: RowClass = fact', datasetContext, null, null);
+            expect(plan.query.groupBy).toEqual(['Period']);
+            expect(plan.query.where?.predicates).toEqual([{ column: 'DataSeries', operator: 'eq', value: series }]);
+            expect(plan.query.aggregates).toEqual([expect.objectContaining({ function: 'avg', column: 'Value' })]);
+            expect(assessSeriesMeasurePlan(plan, transport.seriesMeasure).decision).toBe('pass');
+            const gated = gate(transport, plan);
+            expect(gated.result.decision).toBe('pass');
+            expect(gated.rows.length).toBeGreaterThan(5);
+        }
+        // Two series, or only part of a series name, pick no single series.
+        expect(resolveTopicSeriesFilter('Average Daily Ridership - MRT vs Average Daily Ridership - LRT', transport.seriesMeasure)).toBeNull();
+        expect(resolveTopicSeriesFilter('MRT ridership by Period', transport.seriesMeasure)).toBeNull();
     });
 
     it('sends back Pi research questions that aggregate the transport value across series', () => {

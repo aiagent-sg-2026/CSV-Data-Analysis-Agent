@@ -942,6 +942,16 @@ export const generateEvidenceQueryPlanStepped = async (
     } else if (!countIntent && metrics.length === 1) {
         aggColumn = metrics[0].name;
         aggFunction = 'sum';
+    } else if (
+        !countIntent
+        && topicSeries
+        && seriesMeasure
+        && numericMetrics.some(column => column.name === seriesMeasure.measureColumn)
+    ) {
+        // One named series of a melted table is read from its value column;
+        // helper numbers such as header years are never that series' metric.
+        aggColumn = seriesMeasure.measureColumn;
+        aggFunction = 'sum';
     } else if (deterministicOnly) {
         aggColumn = metrics[0]?.name;
         aggFunction = countIntent ? 'count' : 'sum';
@@ -1017,9 +1027,14 @@ export const generateEvidenceQueryPlanStepped = async (
             value: steering.detailRowValue,
         });
     }
-    if (!deterministicOnly && !topicSeries && (harnessSummary || steering)) {
+    // Without this the filter step cannot know which series the melted value
+    // column holds, so it leaves the plan aggregating across all of them.
+    const seriesFilterHint = seriesMeasure && !topicSeries
+        ? `Series: each row of "${seriesMeasure.seriesColumn}" is a different series and "${seriesMeasure.measureColumn}" means whatever that series measures. If the topic is about one series, add ${seriesMeasure.seriesColumn} = <exact value>. Values: ${seriesMeasure.series.slice(0, 40).map(series => series.name).join('; ')}\n`
+        : '';
+    if (!deterministicOnly && !topicSeries && (harnessSummary || steering || seriesFilterHint)) {
         const step3Response = await callSmallAiStep(settings, systemPrompt,
-            `Topic: "${topic}"\nGroupBy: ${groupBy}\nAggregate: ${aggFunction.toUpperCase()}(${aggColumn ?? '*'})\n${retryFeedback ? `Retry guidance: ${retryFeedback}\n` : ''}${steering ? `Structured steering:\n${formatAnalysisSteeringBundle(steering)}\n` : ''}\nData findings:\n${harnessSummary ?? 'None'}\n\nWhat additional WHERE filters are needed? Reply as one predicate per line using the exact column name, for example:\n"Row Class" = fact\nCountry <> Internal\nOr reply NONE if no extra filters are needed.`,
+            `Topic: "${topic}"\nGroupBy: ${groupBy}\nAggregate: ${aggFunction.toUpperCase()}(${aggColumn ?? '*'})\n${retryFeedback ? `Retry guidance: ${retryFeedback}\n` : ''}${steering ? `Structured steering:\n${formatAnalysisSteeringBundle(steering)}\n` : ''}${seriesFilterHint}\nData findings:\n${harnessSummary ?? 'None'}\n\nWhat additional WHERE filters are needed? Reply as one predicate per line using the exact column name, for example:\n"Row Class" = fact\nCountry <> Internal\nOr reply NONE if no extra filters are needed.`,
             abortSignal,
             `filter[${topic.slice(0, 25)}]`,
         );
@@ -1035,7 +1050,10 @@ export const generateEvidenceQueryPlanStepped = async (
                     });
                 }
                 if (parsed.predicate) {
-                    parsedPredicates.push(parsed.predicate);
+                    const series = seriesMeasure && parsed.predicate.column === seriesMeasure.seriesColumn
+                        ? seriesMeasure.series.find(entry => entry.name.trim().toLowerCase() === parsed.predicate!.value.trim().toLowerCase())
+                        : undefined;
+                    parsedPredicates.push(series ? { ...parsed.predicate, value: series.name } : parsed.predicate);
                 }
             }
             wherePredicates = [...wherePredicates, ...parsedPredicates];
