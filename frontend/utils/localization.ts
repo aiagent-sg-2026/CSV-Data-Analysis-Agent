@@ -4345,6 +4345,206 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Peranan perniagaan bagi {column}',
     },
 
+    // --- Structure review reason codes (plain-language explanations) ---
+    'structure_review_reason_boundary_incomplete': {
+        'English': 'The app could not find where the column headers and the data rows start.',
+        'Mandarin': '无法确定列标题和数据行从哪里开始。',
+        'Japanese': 'ヘッダー行とデータ行の開始位置を特定できませんでした。',
+        'Malay': 'Aplikasi tidak dapat menentukan di mana tajuk lajur dan baris data bermula.',
+    },
+    'structure_review_reason_header_shape_drift': {
+        'English': 'The header row has a different number of columns than the data rows.',
+        'Mandarin': '标题行的列数与数据行不一致。',
+        'Japanese': 'ヘッダー行とデータ行の列数が一致しません。',
+        'Malay': 'Baris tajuk mempunyai bilangan lajur yang berbeza daripada baris data.',
+    },
+    'structure_review_reason_runtime_boundary_ambiguous': {
+        'English': 'The table boundaries are unclear, so the file can be read in more than one way.',
+        'Mandarin': '表格边界不明确，文件可能有多种解读方式。',
+        'Japanese': '表の境界があいまいで、ファイルを複数の方法で解釈できます。',
+        'Malay': 'Sempadan jadual tidak jelas, jadi fail boleh ditafsir dengan lebih daripada satu cara.',
+    },
+    'structure_review_reason_runtime_boundary_rejected': {
+        'English': 'The detected table boundaries did not pass validation.',
+        'Mandarin': '检测到的表格边界未通过验证。',
+        'Japanese': '検出した表の境界が検証に合格しませんでした。',
+        'Malay': 'Sempadan jadual yang dikesan tidak lulus pengesahan.',
+    },
+    'structure_review_reason_repeated_header_leakage': {
+        'English': 'Repeated header rows are still mixed into the data.',
+        'Mandarin': '重复的标题行仍混在数据中。',
+        'Japanese': '繰り返しのヘッダー行がデータに残っています。',
+        'Malay': 'Baris tajuk berulang masih bercampur dengan data.',
+    },
+    'structure_review_reason_repeated_header_leakage_rate': {
+        'English': 'Repeated header rows are still mixed into the data.',
+        'Mandarin': '重复的标题行仍混在数据中。',
+        'Japanese': '繰り返しのヘッダー行がデータに残っています。',
+        'Malay': 'Baris tajuk berulang masih bercampur dengan data.',
+    },
+    'structure_review_reason_low_structure_confidence': {
+        'English': 'The app is not confident that it read the table layout correctly.',
+        'Mandarin': '系统对表格结构的识别把握不足。',
+        'Japanese': '表のレイアウトを正しく読み取れたか確信が持てません。',
+        'Malay': 'Aplikasi tidak pasti susun atur jadual telah dibaca dengan betul.',
+    },
+    'structure_review_reason_structure_proposal_verification_failed': {
+        'English': 'The suggested table layout did not pass the data checks.',
+        'Mandarin': '建议的表格结构未通过数据检查。',
+        'Japanese': '提案された表のレイアウトがデータチェックに合格しませんでした。',
+        'Malay': 'Susun atur jadual yang dicadangkan tidak lulus semakan data.',
+    },
+    'structure_review_reason_complex_report_requires_confirmation': {
+        'English': 'This looks like a complex report layout, so please confirm it before analysis.',
+        'Mandarin': '这看起来是复杂的报表结构，请在分析前确认。',
+        'Japanese': '複雑なレポート形式のため、分析の前に確認してください。',
+        'Malay': 'Ini kelihatan seperti susun atur laporan yang kompleks, jadi sila sahkan sebelum analisis.',
+    },
+    'structure_review_reason_empty_dataset_guard': {
+        'English': 'No data rows remain after preparation.',
+        'Mandarin': '准备后没有剩余的数据行。',
+        'Japanese': '準備後にデータ行が残っていません。',
+        'Malay': 'Tiada baris data yang tinggal selepas penyediaan.',
+    },
+    'structure_review_reason_raw_inspection_completed': {
+        'English': 'The original file has not been fully inspected yet.',
+        'Mandarin': '原始文件尚未完成检查。',
+        'Japanese': '元のファイルの検査がまだ完了していません。',
+        'Malay': 'Fail asal belum diperiksa sepenuhnya.',
+    },
+    'structure_review_reason_dominant_block_resolved': {
+        'English': 'The file contains several blocks, and the main data table has not been separated yet.',
+        'Mandarin': '文件包含多个区块，尚未分离出主数据表。',
+        'Japanese': 'ファイルに複数のブロックがあり、主なデータ表をまだ分離できていません。',
+        'Malay': 'Fail mengandungi beberapa blok, dan jadual data utama belum diasingkan.',
+    },
+    'structure_review_reason_mixed_report_block_resolution': {
+        'English': 'The report mixes several tables, and the main one has not been separated yet.',
+        'Mandarin': '报表混合了多个表格，尚未分离出主表。',
+        'Japanese': 'レポートに複数の表が混在し、主な表をまだ分離できていません。',
+        'Malay': 'Laporan mencampurkan beberapa jadual, dan jadual utama belum diasingkan.',
+    },
+    'structure_review_reason_label_layer_retention_complete': {
+        'English': 'Some header label levels would be lost when the table is reshaped.',
+        'Mandarin': '重塑表格时会丢失部分标题层级。',
+        'Japanese': '表を変換すると、見出しの階層の一部が失われます。',
+        'Malay': 'Sebahagian tahap label tajuk akan hilang apabila jadual dibentuk semula.',
+    },
+    'structure_review_reason_multi_header_layer_retention_rate': {
+        'English': 'Not every row of the multi-row header was kept.',
+        'Mandarin': '多行标题未被完整保留。',
+        'Japanese': '複数行ヘッダーの一部の行が保持されていません。',
+        'Malay': 'Tidak semua baris tajuk berbilang baris dikekalkan.',
+    },
+    'structure_review_reason_wide_reshape_contract_complete': {
+        'English': 'The reshaped table is missing required key or value columns.',
+        'Mandarin': '重塑后的表格缺少必要的键列或数值列。',
+        'Japanese': '変換後の表に必要なキー列または値列がありません。',
+        'Malay': 'Jadual yang dibentuk semula tiada lajur kunci atau nilai yang diperlukan.',
+    },
+    'structure_review_reason_summary_like_series_key_leakage': {
+        'English': 'Total or subtotal labels are still mixed into the category values.',
+        'Mandarin': '分类值中仍混有合计或小计标签。',
+        'Japanese': 'カテゴリ値に合計または小計のラベルが残っています。',
+        'Malay': 'Label jumlah atau subjumlah masih bercampur dengan nilai kategori.',
+    },
+    'structure_review_reason_summary_series_exclusion_rate': {
+        'English': 'Total columns are being treated as regular data columns.',
+        'Mandarin': '合计列被当作普通数据列处理。',
+        'Japanese': '合計列が通常のデータ列として扱われています。',
+        'Malay': 'Lajur jumlah sedang dianggap sebagai lajur data biasa.',
+    },
+    'structure_review_reason_suspicious_collapse_score': {
+        'English': 'Reshaping would collapse the data into too few groups.',
+        'Mandarin': '重塑会让数据坍缩成过少的分组。',
+        'Japanese': '変換するとデータが少なすぎるグループにまとまってしまいます。',
+        'Malay': 'Pembentukan semula akan meringkaskan data kepada terlalu sedikit kumpulan.',
+    },
+    'structure_review_reason_hierarchy_depth_retention_rate': {
+        'English': 'The rows look grouped into levels, such as sections and items, and that grouping would be lost.',
+        'Mandarin': '数据行看起来按层级分组（例如章节与明细），这些层级会丢失。',
+        'Japanese': '行がセクションと明細などの階層に分かれているように見え、その階層が失われます。',
+        'Malay': 'Baris kelihatan dikumpulkan mengikut tahap, seperti bahagian dan item, dan pengumpulan itu akan hilang.',
+    },
+    'structure_review_reason_noise_leakage_rate': {
+        'English': 'Blank, header, or footer rows are still mixed into the data.',
+        'Mandarin': '数据中仍混有空白、标题或页脚行。',
+        'Japanese': '空白行、ヘッダー行、フッター行がデータに残っています。',
+        'Malay': 'Baris kosong, tajuk atau pengaki masih bercampur dengan data.',
+    },
+    'structure_review_reason_numeric_parse_rate': {
+        'English': 'Some values in number columns could not be read as numbers.',
+        'Mandarin': '数值列中有部分值无法识别为数字。',
+        'Japanese': '数値列の一部の値を数値として読み取れません。',
+        'Malay': 'Sebahagian nilai dalam lajur nombor tidak dapat dibaca sebagai nombor.',
+    },
+    'structure_review_reason_detail_series_coverage_rate': {
+        'English': 'The table still looks wide, for example one column per month, so it may need reshaping.',
+        'Mandarin': '表格仍是宽表格式（例如每月一列），可能需要转换。',
+        'Japanese': '表がまだ横長の形式（月ごとに1列など）のため、変換が必要な場合があります。',
+        'Malay': 'Jadual masih kelihatan lebar, contohnya satu lajur bagi setiap bulan, jadi ia mungkin perlu dibentuk semula.',
+    },
+    'structure_review_reason_descriptor_preservation_rate': {
+        'English': 'Some descriptive columns, such as names or categories, would be lost.',
+        'Mandarin': '部分描述列（例如名称或分类）会丢失。',
+        'Japanese': '名前やカテゴリなどの説明列の一部が失われます。',
+        'Malay': 'Sebahagian lajur keterangan, seperti nama atau kategori, akan hilang.',
+    },
+    'structure_review_reason_header_band_resolved': {
+        'English': 'A heading band above the column names has not been resolved.',
+        'Mandarin': '列名上方的标题带尚未解析。',
+        'Japanese': '列名の上にある見出し帯をまだ解決できていません。',
+        'Malay': 'Jalur tajuk di atas nama lajur belum diselesaikan.',
+    },
+    'structure_review_reason_fact_key_uniqueness_rate': {
+        'English': 'Some records appear more than once for the same key values.',
+        'Mandarin': '部分记录在相同键值下重复出现。',
+        'Japanese': '同じキー値で重複しているレコードがあります。',
+        'Malay': 'Sebahagian rekod muncul lebih daripada sekali untuk nilai kunci yang sama.',
+    },
+    'structure_review_reason_needs_structure_review': {
+        'English': 'The table structure needs your confirmation.',
+        'Mandarin': '表格结构需要你确认。',
+        'Japanese': '表の構造の確認が必要です。',
+        'Malay': 'Struktur jadual memerlukan pengesahan anda.',
+    },
+    'structure_review_reason_structure_outcome_unavailable': {
+        'English': 'The structure check did not finish.',
+        'Mandarin': '结构检查未完成。',
+        'Japanese': '構造チェックが完了しませんでした。',
+        'Malay': 'Semakan struktur tidak selesai.',
+    },
+    'structure_review_reason_unknown': {
+        'English': 'The data structure did not pass an automatic check.',
+        'Mandarin': '数据结构未通过一项自动检查。',
+        'Japanese': 'データ構造が自動チェックに合格しませんでした。',
+        'Malay': 'Struktur data tidak lulus satu semakan automatik.',
+    },
+    'structure_review_required_message': {
+        'English': 'Automatic analysis is paused until you confirm the table structure.',
+        'Mandarin': '在你确认表格结构之前，自动分析已暂停。',
+        'Japanese': '表の構造を確認するまで、自動分析は一時停止しています。',
+        'Malay': 'Analisis automatik dijeda sehingga anda mengesahkan struktur jadual.',
+    },
+    'structure_review_no_blocking_reason': {
+        'English': 'No structure problem remains. You can still adjust the boundary below.',
+        'Mandarin': '没有剩余的结构问题。你仍可在下方调整边界。',
+        'Japanese': '構造の問題は残っていません。下で境界を調整することもできます。',
+        'Malay': 'Tiada masalah struktur yang tinggal. Anda masih boleh melaraskan sempadan di bawah.',
+    },
+    'structure_review_technical_details': {
+        'English': 'Technical details',
+        'Mandarin': '技术详情',
+        'Japanese': '技術的な詳細',
+        'Malay': 'Butiran teknikal',
+    },
+    'structure_review_technical_codes': {
+        'English': 'Check codes: {codes}',
+        'Mandarin': '检查代码：{codes}',
+        'Japanese': 'チェックコード: {codes}',
+        'Malay': 'Kod semakan: {codes}',
+    },
+
     // --- Data Provenance Modal ---
     'provenance_title': {
         'English': 'Data Provenance',
@@ -5171,4 +5371,47 @@ export const getTranslation = (
         const value = params[token];
         return value === undefined ? `{${token}}` : String(value);
     });
+};
+
+/**
+ * Reason codes that the structure review can emit: resolver blocking reasons,
+ * shape-verification signal keys, and pipeline outcome fallbacks. Each has a
+ * `structure_review_reason_<code>` entry so end users never see the raw code.
+ */
+export const STRUCTURE_REVIEW_REASON_CODES = [
+    'boundary_incomplete',
+    'header_shape_drift',
+    'runtime_boundary_ambiguous',
+    'runtime_boundary_rejected',
+    'repeated_header_leakage',
+    'repeated_header_leakage_rate',
+    'low_structure_confidence',
+    'structure_proposal_verification_failed',
+    'complex_report_requires_confirmation',
+    'empty_dataset_guard',
+    'raw_inspection_completed',
+    'dominant_block_resolved',
+    'mixed_report_block_resolution',
+    'label_layer_retention_complete',
+    'multi_header_layer_retention_rate',
+    'wide_reshape_contract_complete',
+    'summary_like_series_key_leakage',
+    'summary_series_exclusion_rate',
+    'suspicious_collapse_score',
+    'hierarchy_depth_retention_rate',
+    'noise_leakage_rate',
+    'numeric_parse_rate',
+    'detail_series_coverage_rate',
+    'descriptor_preservation_rate',
+    'header_band_resolved',
+    'fact_key_uniqueness_rate',
+    'needs_structure_review',
+    'structure_outcome_unavailable',
+] as const;
+
+export const getStructureReviewReasonText = (code: string, language: string = 'English'): string => {
+    const key = `structure_review_reason_${code.trim()}`;
+    return translations[key]
+        ? getTranslation(key, language)
+        : getTranslation('structure_review_reason_unknown', language);
 };

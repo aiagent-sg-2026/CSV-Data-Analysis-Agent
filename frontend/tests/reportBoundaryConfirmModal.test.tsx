@@ -11,7 +11,11 @@ const mockStore = (overrides: {
     summaryStartIndex: number | null;
     normalizedRows: string[][];
     saveBoundary?: ReturnType<typeof vi.fn>;
+    blockingReasons?: string[];
+    language?: string;
 }) => {
+    const blockingReasons = overrides.blockingReasons ?? ['detail_series_coverage_rate'];
+    const decisionReason = `Structure needs review: ${blockingReasons.join(', ')}.`;
     const store = {
         isReportBoundaryConfirmModalOpen: true,
         setIsReportBoundaryConfirmModalOpen: vi.fn(),
@@ -22,24 +26,24 @@ const mockStore = (overrides: {
             summaryStartIndex: overrides.summaryStartIndex,
             parameterRowIndexes: [],
             repeatedHeaderRowIndexes: [],
-            blockingReasons: ['detail_series_coverage_rate'],
+            blockingReasons,
             requiresHumanReview: true,
             decision: {
                 targetShape: 'row_table',
                 shouldCanonicalize: false,
-                reason: 'Structure needs review: detail_series_coverage_rate.',
+                reason: decisionReason,
             },
         },
         rawIntakeIr: { normalizedRows: overrides.normalizedRows },
         saveReportStructureBoundaryOverride: overrides.saveBoundary ?? vi.fn(async () => undefined),
         isBusy: false,
-        settings: { language: 'English' },
+        settings: { language: overrides.language ?? 'English' },
         pipelineOutcome: {
             status: 'needs_structure_review',
             canAutoAnalyze: false,
             severity: 'warning',
-            reasonCode: 'detail_series_coverage_rate',
-            message: 'Structure review is required before automatic analysis. Structure needs review: detail_series_coverage_rate.',
+            reasonCode: blockingReasons[0],
+            message: `Structure review is required before automatic analysis. ${decisionReason}`,
         },
         cleaningRun: null,
         columnProfiles: [],
@@ -174,5 +178,44 @@ describe('ReportBoundaryConfirmModal guided repair', () => {
         expect(within(summaryCard).getByText('1')).toBeInTheDocument();
         expect(within(summaryCard).getByText('from row 4')).toBeInTheDocument();
         expect(screen.getByPlaceholderText('None detected')).toHaveValue(4);
+    });
+
+    it('explains structure review reasons in plain language and keeps codes in technical details', () => {
+        const codes = ['hierarchy_depth_retention_rate', 'structure_proposal_verification_failed', 'complex_report_requires_confirmation'];
+        mockStore({
+            summaryStartIndex: null,
+            normalizedRows: [['Section', 'Item', 'Amount'], ['A', 'One', '10'], ['A', 'Two', '20']],
+            blockingReasons: codes,
+        });
+
+        render(<ReportBoundaryConfirmModal />);
+
+        const dialog = screen.getByRole('dialog', { name: 'Review and repair data structure' });
+        const details = dialog.querySelector('details');
+        expect(details).not.toBeNull();
+        const visibleText = (dialog.textContent ?? '').replace(details!.textContent ?? '', '');
+        for (const code of codes) {
+            expect(visibleText).not.toContain(code);
+            expect(details!.textContent).toContain(code);
+        }
+        expect(screen.getByText('The rows look grouped into levels, such as sections and items, and that grouping would be lost.')).toBeInTheDocument();
+        expect(screen.getByText('The suggested table layout did not pass the data checks.')).toBeInTheDocument();
+        expect(screen.getByText('This looks like a complex report layout, so please confirm it before analysis.')).toBeInTheDocument();
+        expect(screen.getByText('Automatic analysis is paused until you confirm the table structure.')).toBeInTheDocument();
+        expect(within(details!).getByText('Technical details')).toBeInTheDocument();
+    });
+
+    it('shows the plain-language reason in the selected language', () => {
+        mockStore({
+            summaryStartIndex: null,
+            normalizedRows: [['DataSeries', '2026Aug', '2026Jul'], ['Total', '100', '90']],
+            blockingReasons: ['detail_series_coverage_rate'],
+            language: 'Mandarin',
+        });
+
+        render(<ReportBoundaryConfirmModal />);
+
+        expect(screen.getByText('表格仍是宽表格式（例如每月一列），可能需要转换。')).toBeInTheDocument();
+        expect(screen.getByText('技术详情')).toBeInTheDocument();
     });
 });

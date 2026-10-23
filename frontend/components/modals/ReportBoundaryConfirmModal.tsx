@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { getTranslation } from '../../utils/localization';
+import { getStructureReviewReasonText, getTranslation } from '../../utils/localization';
 import type { ReportBoundary } from '../../types';
 import { useDialogAccessibility } from '../../hooks/useDialogAccessibility';
 import {
@@ -55,6 +55,21 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
     const totalRows = rows.length;
     const headerLayerIdxs = reportStructureResolution.headerLayerRowIndexes;
     const headerDepth = headerLayerIdxs.length || 1;
+    // Reason codes are internal check identifiers; end users get plain
+    // explanations and the codes stay in the technical details disclosure.
+    const structureReviewPending = pipelineOutcome?.status === 'needs_structure_review'
+        || reportStructureResolution.requiresHumanReview === true;
+    const blockingReasonCodes = reportStructureResolution.blockingReasons ?? [];
+    const reasonCodes = blockingReasonCodes.length > 0
+        ? blockingReasonCodes
+        : structureReviewPending && pipelineOutcome?.reasonCode
+            ? [pipelineOutcome.reasonCode]
+            : [];
+    const reasonTexts = Array.from(new Set(reasonCodes.map(code => getStructureReviewReasonText(code, language))));
+    const technicalMessages = Array.from(new Set(
+        [reportStructureResolution.decision?.reason, pipelineOutcome?.message]
+            .filter((message): message is string => Boolean(message)),
+    ));
 
     // Build preview: header rows + first body rows + summary rows
     type PreviewRow = { rowIndex: number; role: 'header' | 'body' | 'summary'; cells: string[] };
@@ -143,11 +158,21 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
                         <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
                             <div>
                                 <dt className="font-semibold text-slate-700">{t('guided_repair_detected')}</dt>
-                                <dd className="mt-1 text-slate-600">{reportStructureResolution.decision.reason}</dd>
+                                <dd className="mt-1 text-slate-600">
+                                    {reasonTexts.length > 0 ? (
+                                        <ul className="list-disc space-y-1 pl-4">
+                                            {reasonTexts.map(text => <li key={text}>{text}</li>)}
+                                        </ul>
+                                    ) : t('structure_review_no_blocking_reason')}
+                                </dd>
                             </div>
                             <div>
                                 <dt className="font-semibold text-slate-700">{t('guided_repair_why_blocked')}</dt>
-                                <dd className="mt-1 text-slate-600">{pipelineOutcome?.message ?? t('guided_repair_default_block_reason')}</dd>
+                                <dd className="mt-1 text-slate-600">
+                                    {structureReviewPending
+                                        ? t('structure_review_required_message')
+                                        : pipelineOutcome?.message ?? t('guided_repair_default_block_reason')}
+                                </dd>
                             </div>
                             <div>
                                 <dt className="font-semibold text-slate-700">{t('guided_repair_attempted')}</dt>
@@ -162,6 +187,17 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
                                 <dd className="mt-1 text-slate-600">{t('guided_repair_required_action')}</dd>
                             </div>
                         </dl>
+                        {(reasonCodes.length > 0 || technicalMessages.length > 0) && (
+                            <details className="mt-3 text-xs text-slate-600">
+                                <summary className="cursor-pointer font-medium text-slate-700">{t('structure_review_technical_details')}</summary>
+                                <div className="mt-2 space-y-1 break-words font-mono">
+                                    {reasonCodes.length > 0 && (
+                                        <p>{t('structure_review_technical_codes', { codes: reasonCodes.join(', ') })}</p>
+                                    )}
+                                    {technicalMessages.map(message => <p key={message}>{message}</p>)}
+                                </div>
+                            </details>
+                        )}
                     </section>
 
                     {/* Summary cards */}
