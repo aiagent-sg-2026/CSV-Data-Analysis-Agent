@@ -9,6 +9,7 @@ import type { DimensionNormalizationConfig } from './dimensionNormalization';
 import { duckDbWorkerClient } from '../workers/duckDbWorkerClient';
 import type { WorkerDiagnosticsReporter } from '../workers/workerDiagnostics';
 import { collectOrderedColumnNames } from '../data/columnRegistry';
+import { normalizeDecimalCommaColumns } from '../data/numberLocale';
 import { DUCKDB_QUERY_TIMEOUT_MS, resolveDuckDbQueryTimeoutMs } from './queryTimeout';
 import { validateSqlLimit, validateSqlText, SQL_POLICY_VERSION } from './sqlSecurity';
 
@@ -70,7 +71,11 @@ const escapeCsvValue = (value: unknown) => {
     return text;
 };
 
-const serializeRowsToCsv = (rows: CsvData['data'], columns: string[]) => {
+const serializeRowsToCsv = (sourceRows: CsvData['data'], columns: string[]) => {
+    // DuckDB casts cells one by one and cannot tell `4.567` (European thousands)
+    // from a decimal. A column that proves the decimal comma is therefore
+    // written as plain `4567` / `1234.56` text; US and text columns are untouched.
+    const { rows } = normalizeDecimalCommaColumns(sourceRows, columns);
     const lines = [columns.map(escapeCsvValue).join(',')];
     rows.forEach(row => {
         lines.push(columns.map(column => escapeCsvValue(row[column] ?? '')).join(','));
