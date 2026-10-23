@@ -1,5 +1,5 @@
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CredibilityBanner } from '../components/dashboard/CredibilityBanner';
 
 describe('CredibilityBanner', () => {
@@ -53,5 +53,31 @@ describe('CredibilityBanner', () => {
         expect(screen.getByText('Results ready with limitations')).toBeTruthy();
         expect(screen.getByText(/data-quality limitations remain/i)).toBeTruthy();
         expect(screen.queryByText(/use these findings directly/i)).toBeNull();
+    });
+
+    it('offers a way to the cards under review when the current view hides them', () => {
+        const onReviewAction = vi.fn();
+        render(
+            <CredibilityBanner
+                overallVerdict="caveated"
+                trustedCount={0}
+                caveatedCount={2}
+                weakCount={0}
+                language="English"
+                reviewActionLabel="Show the 2 cards to review"
+                onReviewAction={onReviewAction}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: 'Show the 2 cards to review' }));
+        expect(onReviewAction).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows no review action unless the view asks for one', () => {
+        render(
+            <CredibilityBanner overallVerdict="caveated" trustedCount={0} caveatedCount={2} weakCount={0} language="English" />,
+        );
+
+        expect(screen.queryByRole('button')).toBeNull();
     });
 });

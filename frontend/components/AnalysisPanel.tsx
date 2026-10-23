@@ -341,6 +341,12 @@ const AnalysisPanelComponent: React.FC = () => {
                             weakCount={credibilitySummary.weakCount}
                             hasRunCaveats={initialAnalysisStatus === 'degraded'}
                             language={language}
+                            // The simple view lists verified cards only. With none verified it
+                            // would show an empty page under a hint that says "review these cards".
+                            {...(resultsViewMode === 'simple' && simpleCardIds.length === 0 && cards.length > 0 ? {
+                                reviewActionLabel: getTranslation('credibility_show_review_cards', language, { count: String(cards.length) }),
+                                onReviewAction: () => handleResultsViewChange('explore'),
+                            } : {})}
                         />
                     )}
 
