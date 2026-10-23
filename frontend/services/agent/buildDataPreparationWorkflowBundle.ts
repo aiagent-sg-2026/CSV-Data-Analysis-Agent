@@ -2,6 +2,7 @@ import type { AppStore } from '../../store/useAppStore';
 import type { DataPreparationWorkflowBundle } from '../../types';
 import { buildCleaningInspectionBundle } from './buildCleaningInspectionBundle';
 import { evaluateIntakeDiagnostics, evaluatePostCleaningGateRelaxation } from './intakeDiagnosticsPolicy';
+import { resolveEffectiveSummaryStartIndex } from './reportStructureNormalization';
 
 // Narrower state type accepted by this function — all fields accessed directly or via buildCleaningInspectionBundle.
 export type WorkflowBundleState = Pick<AppStore,
@@ -381,7 +382,12 @@ export const buildDataPreparationWorkflowBundle = (state: WorkflowBundleState): 
                     headerRowIndex: state.reportStructureResolution.headerRowIndex,
                     headerLayerRowIndexes: state.reportStructureResolution.headerLayerRowIndexes,
                     bodyStartIndex: state.reportStructureResolution.bodyStartIndex,
-                    summaryStartIndex: state.reportStructureResolution.summaryStartIndex,
+                    summaryStartIndex: state.rawIntakeIr?.normalizedRows.length
+                        ? resolveEffectiveSummaryStartIndex(
+                            state.rawIntakeIr.normalizedRows,
+                            state.reportStructureResolution.summaryStartIndex,
+                        )
+                        : state.reportStructureResolution.summaryStartIndex,
                     parameterRowIndexes: state.reportStructureResolution.parameterRowIndexes,
                     repeatedHeaderRowIndexes: state.reportStructureResolution.repeatedHeaderRowIndexes,
                 },

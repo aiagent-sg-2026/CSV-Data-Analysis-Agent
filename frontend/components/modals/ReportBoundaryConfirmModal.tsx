@@ -4,6 +4,10 @@ import { useAppStore } from '../../store/useAppStore';
 import { getTranslation } from '../../utils/localization';
 import type { ReportBoundary } from '../../types';
 import { useDialogAccessibility } from '../../hooks/useDialogAccessibility';
+import {
+    countSummaryContentRows,
+    resolveEffectiveSummaryStartIndex,
+} from '../../services/agent/reportStructureNormalization';
 
 const MAX_PREVIEW_COLS = 7;
 const MAX_BODY_PREVIEW_ROWS = 4;
@@ -36,10 +40,14 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
     useEffect(() => {
         if (isOpen && reportStructureResolution) {
             setBodyStart(reportStructureResolution.bodyStartIndex ?? 0);
-            setSummaryStart(reportStructureResolution.summaryStartIndex ?? null);
+            // A boundary followed only by trailing blank lines is "no summary".
+            setSummaryStart(resolveEffectiveSummaryStartIndex(
+                rawIntakeIr?.normalizedRows ?? [],
+                reportStructureResolution.summaryStartIndex,
+            ));
             setConfirming(false);
         }
-    }, [isOpen, reportStructureResolution]);
+    }, [isOpen, reportStructureResolution, rawIntakeIr]);
 
     if (!isOpen || !reportStructureResolution) return null;
 
@@ -66,7 +74,8 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
         }
     }
 
-    const effectiveSummaryStart = summaryStart !== null ? summaryStart : null;
+    const effectiveSummaryStart = summaryStart !== null && summaryStart < totalRows ? summaryStart : null;
+    const summaryRowCount = countSummaryContentRows(rows, effectiveSummaryStart);
     const dataRowCount = effectiveSummaryStart !== null
         ? Math.max(0, effectiveSummaryStart - bStart)
         : Math.max(0, totalRows - bStart);
@@ -176,10 +185,10 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
                         <div className="bg-amber-50 rounded-lg p-3">
                             <div className="text-xs text-amber-600 font-medium mb-0.5">{t('boundary_confirm_summary_rows')}</div>
                             <div className="text-xl font-semibold text-amber-800">
-                                {effectiveSummaryStart !== null ? totalRows - effectiveSummaryStart : 0}
+                                {summaryRowCount}
                             </div>
                             <div className="text-xs text-amber-500">
-                                {effectiveSummaryStart !== null
+                                {effectiveSummaryStart !== null && summaryRowCount > 0
                                     ? t('boundary_confirm_summary_rows_from', { row: effectiveSummaryStart + 1 })
                                     : t('boundary_confirm_no_summary')}
                             </div>

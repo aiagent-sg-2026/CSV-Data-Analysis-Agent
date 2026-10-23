@@ -885,4 +885,28 @@ describe('buildCleaningInspectionBundle', () => {
             source: 'cleaning_tool_log',
         });
     });
+
+    it('reports no summary start when the structure boundary only covers trailing blank rows', () => {
+        const state = createBaseState();
+        const normalizedRows = [...state.rawIntakeIr!.normalizedRows, ['', '']];
+        state.rawIntakeIr = { ...state.rawIntakeIr!, normalizedRows };
+        const resolution = {
+            headerRowIndex: 2,
+            headerLayerRowIndexes: [],
+            bodyStartIndex: 3,
+            parameterRowIndexes: [],
+            repeatedHeaderRowIndexes: [1],
+            blockingReasons: [],
+            requiresHumanReview: false,
+            source: 'deterministic',
+            confidence: { overall: 0.9 },
+            decision: { targetShape: 'row_table', shouldCanonicalize: true, reason: 'Structure resolved as row_table.' },
+        };
+
+        state.reportStructureResolution = { ...resolution, summaryStartIndex: 6 } as unknown as AppStore['reportStructureResolution'];
+        expect(buildDataPreparationWorkflowBundle(state).structureReview?.detectedBoundary?.summaryStartIndex).toBeNull();
+
+        state.reportStructureResolution = { ...resolution, summaryStartIndex: 5 } as unknown as AppStore['reportStructureResolution'];
+        expect(buildDataPreparationWorkflowBundle(state).structureReview?.detectedBoundary?.summaryStartIndex).toBe(5);
+    });
 });
