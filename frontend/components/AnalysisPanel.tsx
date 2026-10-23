@@ -12,7 +12,7 @@ import { LargeDatasetNotice } from './analysis-panel/LargeDatasetNotice';
 import { RecommendedNextStep } from './analysis-panel/RecommendedNextStep';
 import { ResultsViewToggle, type ResultsViewMode } from './analysis-panel/ResultsViewToggle';
 import { summarizeCardCredibility } from './analysis-panel/credibilitySummary';
-import { isStructureReviewPending, resolveNextStepKind } from './analysis-panel/nextStep';
+import { isRetryableOutcomeBlock, isStructureOutcomeBlock, isStructureReviewPending, resolveNextStepKind } from './analysis-panel/nextStep';
 import { selectSimpleViewCardIds } from './analysis-panel/simpleViewSelection';
 import { useCardWindow } from './analysis-panel/useCardWindow';
 import { useResponsiveColumnCount } from './analysis-panel/useResponsiveColumnCount';
@@ -33,7 +33,7 @@ import { DEFAULT_AUTO_ANALYSIS_GOAL } from '../services/agent/analysisDefaults';
 import { hasOpenableLatestReport, isLatestReportPartial, resolveLatestReportBlockedInfo } from '../services/reporting/reportArtifactManifest';
 import { forgetCloudAiConsentDecline } from '../services/privacy/cloudAiConsent';
 
-import { getTranslation } from '../utils/localization';
+import { getStructureReviewReasonText, getTranslation } from '../utils/localization';
 
 const AnalysisPanelComponent: React.FC = () => {
     const _renderT0 = performance.now(); // PERF-309 diagnostic
@@ -182,7 +182,7 @@ const AnalysisPanelComponent: React.FC = () => {
             // The decline is remembered for this session; forget it so the retry asks for consent again.
             if (currentDatasetId) forgetCloudAiConsentDecline(currentDatasetId, provider);
             void retryAnalysis();
-        } else if (kind === 'recover_provider') {
+        } else if (kind === 'recover_provider' || kind === 'retry_analysis') {
             void retryAnalysis();
         } else if (kind === 'review_evidence') {
             handleResultsViewChange('explore');
@@ -221,13 +221,29 @@ const AnalysisPanelComponent: React.FC = () => {
         // Nothing to show yet: hide the results controls and reserve the space with placeholders.
         const analysisRunning = !analysisTerminal && cards.length === 0 && !aiTaskDone;
         const needsCloudAiConsent = initialAnalysisFailureKind === 'cloud_consent_declined';
-        const needsStructureRepair = completionGate.status === 'blocked' && structureReviewPending;
+        // Import and shape-verification blocks cannot be confirmed away, but the boundary dialog is still the
+        // place to inspect and adjust them, so they must not end in a dead end.
+        const structureBlocked = structureReviewPending
+            || (isStructureOutcomeBlock(pipelineOutcome) && Boolean(reportStructureResolution && rawIntakeIr));
+        const needsStructureRepair = completionGate.status === 'blocked' && structureBlocked;
         const needsProviderRecovery = !needsStructureRepair
             && initialAnalysisFailureKind === 'provider'
             && (initialAnalysisStatus === 'error' || initialAnalysisStatus === 'degraded');
+        const needsAnalysisRetry = completionGate.status === 'blocked'
+            && !needsStructureRepair && !needsProviderRecovery
+            && isRetryableOutcomeBlock(pipelineOutcome);
         const needsEvidenceReview = completionGate.status === 'blocked'
-            && !needsStructureRepair && !needsProviderRecovery;
-        const nextStepKind = resolveNextStepKind({ needsCloudAiConsent, needsStructureRepair, needsProviderRecovery, needsEvidenceReview });
+            && !needsStructureRepair && !needsProviderRecovery && !needsAnalysisRetry;
+        const nextStepKind = resolveNextStepKind({ needsCloudAiConsent, needsStructureRepair, needsProviderRecovery, needsAnalysisRetry, needsEvidenceReview });
+        // The check behind a block, in plain words; the internal code never reaches this text.
+        const blockedOutcomeDetail = (nextStepKind === 'repair_structure' || nextStepKind === 'retry_analysis')
+            && pipelineOutcome?.reasonCode && pipelineOutcome.canAutoAnalyze === false
+            ? getStructureReviewReasonText(pipelineOutcome.reasonCode, language)
+            : undefined;
+        // The detailed view has nothing to show without cards, so a blocked run keeps its action there too.
+        const showBlockedNextStepWithoutCards = cards.length === 0
+            && (nextStepKind === 'repair_structure' || nextStepKind === 'retry_analysis'
+                || nextStepKind === 'recover_provider' || nextStepKind === 'enable_cloud_ai');
         const showHeadlineSections = aiTaskDone;
         const showAnalystReportAction = analysisComplete && cards.length > 0;
         const isArtifactReportGeneration = reportGenerationProgress?.mode === 'artifact';
@@ -375,9 +391,10 @@ const AnalysisPanelComponent: React.FC = () => {
                         />
                     )}
 
-                    {resultsViewMode === 'simple' && analysisTerminal && (
+                    {analysisTerminal && (resultsViewMode === 'simple' || showBlockedNextStepWithoutCards) && (
                         <RecommendedNextStep
                             kind={nextStepKind}
+                            detail={blockedOutcomeDetail}
                             language={language}
                             degraded={initialAnalysisStatus === 'degraded'}
                             hasReport={hasLatestAnalystReport}

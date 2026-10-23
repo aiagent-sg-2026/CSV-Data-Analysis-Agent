@@ -225,7 +225,7 @@ export const buildDataPreparationWorkflowBundle = (state: WorkflowBundleState): 
             label: 'Inspect',
             status: state.reportStructureResolution?.requiresHumanReview || intakeGuard.severity !== 'clear' || inspection.profiling.detectedIssues.length > 0 ? 'warning' : inspection.importFacts.fileName ? 'done' : 'not_started',
             description: state.reportStructureResolution?.requiresHumanReview
-                ? pipelineOutcome?.message ?? `Report structure requires review: ${state.reportStructureResolution.blockingReasons.join(', ')}`
+                ? pipelineOutcome?.message ?? 'Report structure requires review.'
                 : intakeGuard.inspectMessage
                 ? intakeGuard.inspectMessage
                 : inspection.profiling.detectedIssues.length > 0

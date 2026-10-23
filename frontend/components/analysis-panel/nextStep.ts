@@ -1,12 +1,28 @@
-export type NextStepKind = 'enable_cloud_ai' | 'repair_structure' | 'recover_provider' | 'review_evidence' | 'report';
+export type NextStepKind = 'enable_cloud_ai' | 'repair_structure' | 'recover_provider' | 'retry_analysis' | 'review_evidence' | 'report';
 
 export interface NextStepFlags {
     /** Cloud analysis never started because the user chose local processing only. */
     needsCloudAiConsent?: boolean;
     needsStructureRepair: boolean;
     needsProviderRecovery: boolean;
+    /** The data checks stopped the run for a reason a new attempt can clear (a stale failure, pending checks). */
+    needsAnalysisRetry?: boolean;
     needsEvidenceReview: boolean;
 }
+
+/** Pipeline outcomes that a re-run can clear without any change to the structure. */
+const RETRYABLE_OUTCOME_STATUSES = new Set(['cleaning_failed', 'blocked_by_sql_precheck']);
+/** Pipeline outcomes where the user can still change the detected table boundary. */
+const STRUCTURE_OUTCOME_STATUSES = new Set(['blocked_by_intake', 'blocked_by_shape_verification']);
+
+export const isRetryableOutcomeBlock = (
+    pipelineOutcome: { status?: string; canAutoAnalyze?: boolean } | null | undefined,
+): boolean => pipelineOutcome?.canAutoAnalyze === false && RETRYABLE_OUTCOME_STATUSES.has(pipelineOutcome.status ?? '');
+
+/** The outcome blocks analysis on a structure or import check; the boundary dialog is the way to react to it. */
+export const isStructureOutcomeBlock = (
+    pipelineOutcome: { status?: string; canAutoAnalyze?: boolean } | null | undefined,
+): boolean => pipelineOutcome?.canAutoAnalyze === false && STRUCTURE_OUTCOME_STATUSES.has(pipelineOutcome.status ?? '');
 
 /**
  * The detected structure must be confirmed before cleaning or analysis can
@@ -27,6 +43,7 @@ export const resolveNextStepKind = (flags: NextStepFlags): NextStepKind => {
     if (flags.needsCloudAiConsent) return 'enable_cloud_ai';
     if (flags.needsStructureRepair) return 'repair_structure';
     if (flags.needsProviderRecovery) return 'recover_provider';
+    if (flags.needsAnalysisRetry) return 'retry_analysis';
     if (flags.needsEvidenceReview) return 'review_evidence';
     return 'report';
 };
@@ -61,6 +78,12 @@ export const resolveNextStepCopyKeys = (params: {
             return {
                 reason: 'analysis_results_next_step_reason_provider',
                 outcome: 'analysis_results_next_step_outcome_provider',
+                action: 'analysis_results_retry_action',
+            };
+        case 'retry_analysis':
+            return {
+                reason: 'analysis_results_next_step_reason_blocked',
+                outcome: 'analysis_results_next_step_outcome_blocked',
                 action: 'analysis_results_retry_action',
             };
         case 'review_evidence':

@@ -67,5 +67,26 @@ export const updateCleaningRun = (
     };
 };
 
-export const shouldResumeCleaningRun = (run: CleaningRun | null) =>
+/**
+ * A failed run describes the previous attempt, not the data. The post-import
+ * pipeline also marks the run failed when the initial analysis stops (for
+ * example at the structure check), and `resolvePipelineOutcome` treats a failed
+ * run as `cleaning_failed` before it looks at the structure. A new attempt
+ * (Retry, or a confirmed structure) must therefore start from a cleared run,
+ * otherwise the old failure is replayed and the attempt never starts.
+ */
+export const retireFailedCleaningRun = (run: CleaningRun | null | undefined): CleaningRun | null | undefined => (
+    run?.status === 'failed'
+        ? updateCleaningRun(run, {
+            status: 'idle',
+            lastError: null,
+            lastFailedStage: null,
+            shouldAutoResume: false,
+            userFacingMessage: null,
+            technicalDetail: null,
+        })
+        : run
+);
+
+export const shouldResumeCleaningRun =(run: CleaningRun | null) =>
     Boolean(run && (run.status === 'running' || run.shouldAutoResume));

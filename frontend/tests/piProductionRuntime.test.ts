@@ -678,6 +678,22 @@ describe('Pi production runtime', () => {
         });
         expect(store.getState().csvData.data).toEqual([{Town:'A',Amount:10}]);
     });
+    it('starts a fresh run from a cleared failed cleaning run so the earlier failure is not replayed', async () => {
+        const seen: Array<string | undefined> = [];
+        stageMock.mockImplementation(async ({ toolName, phase, context }) => {
+            seen.push(context.store.getState().cleaningRun?.status);
+            return {
+                decision: 'pass', phase, toolName, datasetVersion: context.request.datasetVersion,
+                summary: 'ok', warningCodes: [], artifactRefs: [], transformationIds: [], cardIds: [],
+            };
+        });
+        const store = createStore();
+        store.setState({ cleaningRun: { runId: 'old', status: 'failed', lastError: 'Stage 5/9 failed earlier.', userFacingMessage: 'old', steps: [], currentStep: 0 } });
+        await runPiInitialAnalysis({ appSessionId: 'session-1', datasetId: 'dataset-1', datasetVersion: 'version-1',
+            researchGoal: 'Find patterns.', provider: { provider: 'openai', modelId: 'mock' } }, store as never, stageToolStream());
+        expect(seen[0]).toBe('idle');
+        expect(seen).not.toContain('failed');
+    });
     it('preserves optional skips with preparation enabled',async()=>{
         const names:string[]=[];passingStages(names);
         const result=await runPiInitialAnalysis({appSessionId:'session-1',datasetId:'dataset-1',datasetVersion:'version-1',researchGoal:'Find patterns.',provider:{provider:'openai',modelId:'mock'}},

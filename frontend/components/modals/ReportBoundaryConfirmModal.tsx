@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { getStructureReviewReasonText, getTranslation } from '../../utils/localization';
+import { getPipelineOutcomeUserText, getStructureReviewReasonText, getTranslation } from '../../utils/localization';
 import type { ReportBoundary } from '../../types';
 import { useDialogAccessibility } from '../../hooks/useDialogAccessibility';
 import {
@@ -171,7 +171,9 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
                                 <dd className="mt-1 text-slate-600">
                                     {structureReviewPending
                                         ? t('structure_review_required_message')
-                                        : pipelineOutcome?.message ?? t('guided_repair_default_block_reason')}
+                                        : getPipelineOutcomeUserText(pipelineOutcome, language)
+                                            ?? pipelineOutcome?.message
+                                            ?? t('guided_repair_default_block_reason')}
                                 </dd>
                             </div>
                             <div>
