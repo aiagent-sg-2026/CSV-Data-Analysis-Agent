@@ -25,6 +25,7 @@ import {
     splitAggregateSourceExpression,
     repairAggregateAliasConflicts, repairEvidenceQuerySelectAlignment,
     normalizeQuery, normalizeEvidenceQuery, liftEvidenceAggregateFilters,
+    widenTimeSeriesEvidenceLimit,
 } from './queryRepair';
 
 /** Semantic role hints from the dataset context, used for fallback validation
@@ -755,6 +756,9 @@ export const normalizeAndValidateSqlEvidenceQueryPlan = (
     });
 
     plan.query = normalizeEvidenceQuery(plan);
+    if (widenTimeSeriesEvidenceLimit(plan, columns)) {
+        console.debug('[SqlPlanValidator] Raised the time-series evidence limit so no period is dropped.');
+    }
 
     const aliasRepair = repairAggregateAliasConflicts(plan.query);
     if (aliasRepair.repaired) {
