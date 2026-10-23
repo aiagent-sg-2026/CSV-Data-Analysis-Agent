@@ -151,6 +151,13 @@
   - Next round in progress:
     - Y: sweep every structured-output schema for gateway compatibility (`anyOf`, depth), and stop time-series plans from truncating periods.
     - Z: period display by grain (`2025`, `Aug 2026`); single-series card titles; an empty final summary under a "Verified evidence" badge.
+  - Integrated and deployed as PR #38 (merge 4dead06), **live 1.0.0-33187a92ba70**:
+    - Y: every structured-output call site goes through `createStructuredOutput`. Only provider `default` gets the gateway form (no `anyOf`, object depth <= 4, <= 14 fields per object). Data preparation has a gateway schema that lifts back into canonical operations, so `fill_missing`, `split_column`, OR groups and unpivot label mappings are not yet expressible on the gateway. Time-series evidence plans keep every period.
+    - Z: melted periods show at their grain (`2025`, `Aug 2026`, `2024 Q1`). One-series cards are named by their series, and the card fingerprint includes the series. An empty AI summary no longer shows under a "Verified evidence" badge.
+  - Gate: 463 files / 4,327 tests, `test:publish` 4/4, bundle budget, `stage:pages` 107 files. Live no-AI audit: 6 viewports clean, all 8 fast datasets load (rent 9,507, business 7,056, visitors 13,888, transport 396). One live real-AI run on visitor arrivals: 4 cards, no gateway error.
+  - Independent check on live visitors: the leaf rows sum to 244,299,398, the published total. The Parent Series card and the Month trend match it exactly.
+  - **Known issue (next round)**: a ranked card that is limited to the top 10 groups shows "Overall 179,811,161" and shares (Indonesia 23.6%) relative to those 10 rows, under a "Full dataset" label. The true total is 244,299,398 and Indonesia is 17.4%. Fix: compute share and overall from the full-dataset total, or label the scope as top 10.
+  - Not verified against the live gateway: `datasetSemanticAnnotationSchema`, `reportStructureProposalSchema`, tool schemas. The analyst report export and the provenance modal still use DD/MM/YYYY for periods.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
