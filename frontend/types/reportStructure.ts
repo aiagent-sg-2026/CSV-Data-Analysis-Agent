@@ -205,7 +205,10 @@ export interface CanonicalReshapeProvenance {
 
 /** One published series of a melted period-header wide table. */
 export interface PeriodSeriesInfo {
+    /** Unique series key as stored in the series column. */
     name: string;
+    /** Source label, present only when it repeats and so differs from `name` (e.g. `Male` for `Citizens > Male`). */
+    label?: string;
     parent: string | null;
     rowClass: 'fact' | 'subtotal' | 'total';
     /** Periods with a published (non-missing) value. */

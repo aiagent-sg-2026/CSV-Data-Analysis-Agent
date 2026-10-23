@@ -52,6 +52,12 @@ export interface PeriodWideReshape {
     hasHierarchy: boolean;
     /** Hierarchy aligned with `sourceRows`; null when the labels carry none. */
     hierarchy: PeriodWideRowHierarchy[] | null;
+    /**
+     * Trimmed source labels aligned with `sourceRows`, for a single label
+     * column. The series column itself holds a unique key per row, which
+     * differs from this label only when the label repeats.
+     */
+    seriesLabels: string[] | null;
 }
 
 export const PERIOD_WIDE_OUTPUT_COLUMNS = {
@@ -271,6 +277,66 @@ export const resolvePeriodWideHierarchy = (labels: string[]): PeriodWideRowHiera
     }));
 };
 
+const SERIES_PATH_SEPARATOR = ' > ';
+
+/**
+ * One key per series row. A label that appears once is its own key, so most
+ * tables keep their labels. A repeated label (Male under both Total Residents
+ * and Citizens) would make `series = 'Male'` read two different series, so it
+ * gets its shortest ancestor path that tells the repeats apart
+ * (`Total Residents > Male`), plus a `#n` ordinal when even the full path
+ * repeats. Labels compare case-insensitively, like the series guard.
+ */
+export const buildUniqueSeriesKeys = (
+    labels: string[],
+    hierarchy: PeriodWideRowHierarchy[] | null,
+): string[] => {
+    const norm = (value: string) => value.trim().toLowerCase();
+    const ancestorChains = labels.map((_, index) => {
+        const chain: string[] = [];
+        let parentIndex = hierarchy?.[index]?.parentIndex ?? null;
+        while (parentIndex !== null && chain.length < labels.length) {
+            chain.push(labels[parentIndex]);
+            parentIndex = hierarchy?.[parentIndex]?.parentIndex ?? null;
+        }
+        return chain;
+    });
+    const groups = new Map<string, number[]>();
+    labels.forEach((label, index) => groups.set(norm(label), [...(groups.get(norm(label)) ?? []), index]));
+
+    const keys = [...labels];
+    const used = new Set(labels.filter(label => groups.get(norm(label))!.length === 1).map(norm));
+    for (const members of groups.values()) {
+        if (members.length === 1) continue;
+        const maxDepth = Math.max(...members.map(index => ancestorChains[index].length));
+        const pathAt = (index: number, depth: number) =>
+            [...ancestorChains[index].slice(0, depth).reverse(), labels[index]].join(SERIES_PATH_SEPARATOR);
+        let depth = 1;
+        while (depth < maxDepth && new Set(members.map(index => norm(pathAt(index, depth)))).size < members.length) {
+            depth += 1;
+        }
+        const paths = members.map(index => pathAt(index, depth));
+        const repeats = new Map<string, number>();
+        paths.forEach(path => repeats.set(norm(path), (repeats.get(norm(path)) ?? 0) + 1));
+        const ordinals = new Map<string, number>();
+        members.forEach((index, position) => {
+            const path = paths[position];
+            let key = path;
+            if ((repeats.get(norm(path)) ?? 0) > 1 || used.has(norm(path))) {
+                let ordinal = ordinals.get(norm(path)) ?? 0;
+                do {
+                    ordinal += 1;
+                    key = `${path} #${ordinal}`;
+                } while (used.has(norm(key)));
+                ordinals.set(norm(path), ordinal);
+            }
+            used.add(norm(key));
+            keys[index] = key;
+        });
+    }
+    return keys;
+};
+
 /**
  * Builds the deterministic reshape for a detected period-header wide table:
  * hierarchy-annotated wide rows plus the unpivot and numeric cast that turn
@@ -291,18 +357,24 @@ export const buildPeriodWideReshape = (data: CsvData | null): PeriodWideReshape 
     const hierarchy = hierarchyLabelColumn
         ? resolvePeriodWideHierarchy(bodyRows.map(row => String(row[hierarchyLabelColumn] ?? '')))
         : null;
+    const seriesLabels = hierarchyLabelColumn
+        ? bodyRows.map(row => String(row[hierarchyLabelColumn] ?? '').trim())
+        : null;
+    const seriesKeys = seriesLabels ? buildUniqueSeriesKeys(seriesLabels, hierarchy) : null;
 
     const sourceRows: CsvRow[] = bodyRows.map((row, rowIndex) => {
         const nextRow: CsvRow = {};
         detection.labelColumns.forEach(column => {
             const value = row[column];
-            nextRow[column] = typeof value === 'string' ? value.trim() : value ?? null;
+            nextRow[column] = seriesKeys && column === hierarchyLabelColumn
+                ? seriesKeys[rowIndex]
+                : typeof value === 'string' ? value.trim() : value ?? null;
         });
-        if (hierarchy && hierarchyLabelColumn) {
+        if (hierarchy && seriesKeys) {
             const entry = hierarchy[rowIndex];
             nextRow[PERIOD_WIDE_OUTPUT_COLUMNS.parent] = entry.parentIndex === null
                 ? null
-                : String(bodyRows[entry.parentIndex][hierarchyLabelColumn] ?? '').trim();
+                : seriesKeys[entry.parentIndex];
             nextRow[PERIOD_WIDE_OUTPUT_COLUMNS.depth] = entry.level;
             nextRow[PERIOD_WIDE_OUTPUT_COLUMNS.rowClass] = entry.rowClass;
         }
@@ -348,7 +420,7 @@ export const buildPeriodWideReshape = (data: CsvData | null): PeriodWideReshape 
         },
     ];
 
-    return { detection, sourceRows, operations, hasHierarchy: Boolean(hierarchy), hierarchy };
+    return { detection, sourceRows, operations, hasHierarchy: Boolean(hierarchy), hierarchy, seriesLabels };
 };
 
 /**
@@ -529,8 +601,10 @@ export const describePeriodWideSeriesMeasure = (reshape: PeriodWideReshape): Ser
     const series = sourceRows.map((row, index) => {
         const published = periodColumns.filter(column => parsePeriodCell(row[column]) !== null);
         const entry = hierarchy?.[index];
+        const label = reshape.seriesLabels?.[index];
         return {
             name: labels[index],
+            ...(label !== undefined && label !== labels[index] ? { label } : {}),
             parent: entry && entry.parentIndex !== null ? labels[entry.parentIndex] : null,
             rowClass: entry?.rowClass ?? 'fact',
             observations: published.length,

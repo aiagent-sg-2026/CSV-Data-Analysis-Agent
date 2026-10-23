@@ -86,6 +86,23 @@ const restrictedValues = (where: QueryWhereClause | undefined, column: string): 
 const findSeries = (semantics: SeriesMeasureSemantics, name: string) =>
     semantics.series.find(series => same(series.name, name)) ?? null;
 
+/** Series whose repeated source label is `label`; empty for an exact key or an unknown value. */
+export const findSeriesByRepeatedLabel = (semantics: SeriesMeasureSemantics, label: string) =>
+    findSeries(semantics, label) ? [] : semantics.series.filter(series => series.label !== undefined && same(series.label, label));
+
+/**
+ * Resolves filter values to series keys. A repeated source label (`Male`)
+ * stands for every series carrying it, so it never counts as one series.
+ */
+const resolveSeriesValues = (semantics: SeriesMeasureSemantics, values: string[] | null): string[] | null => {
+    if (values === null) return null;
+    const resolved = values.flatMap(value => {
+        const repeated = findSeriesByRepeatedLabel(semantics, value);
+        return repeated.length > 0 ? repeated.map(series => series.name) : [value];
+    });
+    return resolved.filter((value, index) => resolved.findIndex(other => same(other, value)) === index);
+};
+
 const ancestorsOf = (semantics: SeriesMeasureSemantics, name: string): string[] => {
     const ancestors: string[] = [];
     let current = findSeries(semantics, name)?.parent ?? null;
@@ -175,9 +192,12 @@ const assessRawSql = (sql: string, semantics: SeriesMeasureSemantics, title: str
     const column = (name: string) => `(?:"${escape(name)}"|\\b${escape(name)}\\b)`;
     const measureAggregate = new RegExp(`\\b(?:sum|avg|mean|median|min|max|quantile_cont|percentile_cont)\\s*\\([^)]*${column(semantics.measureColumn)}`, 'i');
     if (!measureAggregate.test(sql)) return PASS;
-    const singleSeries = new RegExp(`${column(semantics.seriesColumn)}\\s*=\\s*'(?:[^']|'')*'`, 'i');
+    const singleSeries = new RegExp(`${column(semantics.seriesColumn)}\\s*=\\s*'((?:[^']|'')*)'`, 'i').exec(sql);
     const groupedBySeries = new RegExp(`group\\s+by[^;]*${column(semantics.seriesColumn)}`, 'i');
-    if (singleSeries.test(sql) || groupedBySeries.test(sql)) {
+    // A repeated source label names several series, not one.
+    const namesOneSeries = singleSeries !== null
+        && findSeriesByRepeatedLabel(semantics, singleSeries[1].replace(/''/g, "'")).length === 0;
+    if (namesOneSeries || groupedBySeries.test(sql)) {
         // Raw SQL cannot be checked precisely, so a series-aware query is kept as a table.
         return semantics.additiveAcrossSeries ? PASS : verdict(semantics, title, 'table_only', 'mixed_unit_series_comparison');
     }
@@ -211,7 +231,8 @@ export const assessSeriesMeasurePlan = (
     }
     const seriesColumn = semantics.seriesColumn;
     const groupedBySeries = (query.groupBy ?? []).some(column => same(column, seriesColumn));
-    const querySeries = restrictedValues(query.where, seriesColumn);
+    const rawQuerySeries = restrictedValues(query.where, seriesColumn);
+    const querySeries = resolveSeriesValues(semantics, rawQuerySeries);
     const detailFiltered = filtersDetailRows(query.where, semantics);
     const aggregates = query.aggregates ?? [];
 
@@ -227,7 +248,7 @@ export const assessSeriesMeasurePlan = (
 
     const verdicts: SeriesMeasurePlanVerdict[] = aggregates.map(aggregate => {
         const isCount = COUNT_FUNCTIONS.has(aggregate.function);
-        const series = intersect(querySeries, restrictedValues(aggregate.where, seriesColumn));
+        const series = resolveSeriesValues(semantics, intersect(rawQuerySeries, restrictedValues(aggregate.where, seriesColumn)));
         if (series !== null && series.length === 1) return PASS;
         if (isCount) {
             return (query.groupBy ?? []).length > 0 ? verdict(semantics, plan.title, 'table_only', 'series_record_count') : PASS;
@@ -259,7 +280,7 @@ export const selectsSingleSeries = (
     semantics: SeriesMeasureSemantics | null | undefined,
 ): boolean => {
     if (!semantics || plan.query.rawSql) return false;
-    const series = restrictedValues(plan.query.where, semantics.seriesColumn);
+    const series = resolveSeriesValues(semantics, restrictedValues(plan.query.where, semantics.seriesColumn));
     return series !== null && series.length === 1;
 };
 
@@ -288,6 +309,10 @@ export const buildSeriesMeasureGuidance = (semantics: SeriesMeasureSemantics): s
         }
     }
     lines.push(`Record counts per "${s}" or "${p}" only show how many periods were published; do not use them as findings.`);
+    const qualified = semantics.series.find(series => series.label !== undefined);
+    if (qualified) {
+        lines.push(`Repeated labels are stored with their parent path (for example "${qualified.name}"); filter on the exact "${s}" value listed below, never on the bare label.`);
+    }
     const listed = semantics.series.slice(0, MAX_SERIES_IN_GUIDANCE).map(series =>
         `- ${series.name}${series.parent ? ` (part of ${series.parent})` : ''}${series.rowClass !== 'fact' ? ` [${series.rowClass}]` : ''}: ${series.observations} periods, latest ${series.latestPeriod ?? 'n/a'}`);
     const more = semantics.series.length > MAX_SERIES_IN_GUIDANCE ? [`- ... ${semantics.series.length - MAX_SERIES_IN_GUIDANCE} more`] : [];

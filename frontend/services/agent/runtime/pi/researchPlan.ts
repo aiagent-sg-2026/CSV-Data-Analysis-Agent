@@ -267,7 +267,10 @@ export const checkQuestionSeriesScope = (
         if (question.series) {
             const known = semantics.series.find(series => sameName(series.name, question.series!));
             if (!known) {
-                reject(`"${question.series}" is not a ${seriesColumn} value. Copy one exact ${seriesColumn} value, for example "${example}".`);
+                const repeated = semantics.series.filter(series => series.label !== undefined && sameName(series.label, question.series!));
+                reject(repeated.length > 0
+                    ? `"${question.series}" names ${repeated.length} different series. Copy one exact ${seriesColumn} value: ${repeated.map(series => `"${series.name}"`).join(', ')}.`
+                    : `"${question.series}" is not a ${seriesColumn} value. Copy one exact ${seriesColumn} value, for example "${example}".`);
                 continue;
             }
             kept.push({ ...question, series: known.name, filter: { column: seriesColumn, value: known.name } });
