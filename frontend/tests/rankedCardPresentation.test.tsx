@@ -234,7 +234,7 @@ describe('small-group leaders carry a visible caveat', () => {
         const companionTitles: string[] = [];
         const caveat = await measureLeadingGroupSampleSize(basicPayPlan, evidence.result.rows, async checkPlan => {
             companionTitles.push(checkPlan.title);
-            expect(checkPlan.query.aggregates).toEqual([{ function: 'count', as: 'sample_size_rows' }]);
+            expect(checkPlan.query.aggregates).toEqual([{ function: 'count', column: 'basic_monthly_median', as: 'sample_size_rows' }]);
             return runQuery(checkPlan);
         });
 

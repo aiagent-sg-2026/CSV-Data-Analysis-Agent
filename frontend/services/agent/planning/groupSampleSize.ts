@@ -14,8 +14,10 @@ import { isTimeDimension, isVolumeCheckCancellation, type TimeDimensionContext }
  * value is computed correctly, but a reader takes the leader as typical, so the
  * card carries a visible caveat and is not used as a trusted headline.
  *
- * The check uses only the per-group row counts of a read-only companion COUNT
- * query over the same population, never column names.
+ * The check uses only the per-group counts of a read-only companion COUNT
+ * query over the same population, never column names. It counts the rows with
+ * a reported value of the ranked measure, since a group of 40 rows with 38
+ * missing (`na`) values is a median of two.
  */
 
 /** Groups with fewer rows than this are always thin. */
@@ -67,12 +69,12 @@ export const buildSampleSizeCheckPlan = (
     return {
         title: `Sample size check for ${plan.title}`,
         queryMode: 'aggregate',
-        intentSummary: 'Count the source rows behind each compared group.',
+        intentSummary: 'Count the source rows with a reported value behind each compared group.',
         query: {
             select: [dimension, SAMPLE_SIZE_ROWS_ALIAS],
             ...(query.where ? { where: query.where } : {}),
             groupBy: [dimension],
-            aggregates: [{ function: 'count', as: SAMPLE_SIZE_ROWS_ALIAS }],
+            aggregates: [{ function: 'count', ...(ranked.column ? { column: ranked.column } : {}), as: SAMPLE_SIZE_ROWS_ALIAS }],
             orderBy: [{ column: SAMPLE_SIZE_ROWS_ALIAS, direction: 'desc' }],
             limit: MAX_SAMPLE_SIZE_CHECK_GROUPS,
         },

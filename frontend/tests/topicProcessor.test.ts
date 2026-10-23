@@ -1523,7 +1523,7 @@ describe('topicProcessor', { timeout: 15000 }, () => {
 
             expect(checkCall?.[0].query).toMatchObject({
                 groupBy: ['Storey'],
-                aggregates: [{ function: 'count', as: 'sample_size_rows' }],
+                aggregates: [{ function: 'count', column: 'Price', as: 'sample_size_rows' }],
             });
             expect(valueGate.reasonCodes).toContain('small_group_leader');
             expect(valueGate.sampleSizeCaveat.leaders).toEqual([{ label: '40 TO 42', rows: 2, rank: 1 }]);
