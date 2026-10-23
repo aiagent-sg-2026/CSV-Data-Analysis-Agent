@@ -10,6 +10,13 @@ describe('analysis card temporal presentation', () => {
         expect(formatAnalysisCellValue('Order Date', 1293753600)).toBe('31/12/2010');
     });
 
+    it('shows a bare year in a time column without a thousands separator', () => {
+        expect(formatAnalysisCellValue('Year', 2013)).toBe('2013');
+        expect(formatAnalysisCellValue('year', '2024')).toBe('2024');
+        expect(formatAnalysisCellValue('Year', 2013.5)).toBe('2,013.5');
+        expect(formatAnalysisCellValue('Units Sold', 2013)).toBe('2,013');
+    });
+
     it('preserves non-temporal numeric facts as numbers', () => {
         expect(formatAnalysisCellValue('TOTAL SALES', 1293753600000)).toBe('1,293,753,600,000');
     });
