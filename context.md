@@ -74,6 +74,20 @@
   - Full suite 439 files / 4,101 tests. Root published as 1.0.0-4e10f9176de9.
   - Real-AI runs per dataset are scheduled for 2026-10-23 02:00 UTC, after the demo quota resets.
   - Deployed as PR #36 (Pages, live 1.0.0-4e10f9176de9). On live: the 6-viewport audit is clean, all 8 fast datasets load with local processing only, and the large dataset sorts last.
+- **Real-AI run per demo dataset (2026-10-23, after quota reset, live build 1.0.0-4e10f9176de9)**:
+  - HDB sample: 125 s, 2 median cards (by storey range, by flat type). Numbers verified. The headline "40 TO 42 leads" rests on n=2.
+  - Graduate employment: 2 cards.
+    - "Typical Basic Monthly Pay by School" is correct, but its leaders have n=2-3.
+    - "Median Gross Mthly 25 Percentile by School" claims an ascending ranking but shows 8 schools tied at 3,000, while the true lowest are 2,050 / 2,200.
+  - Resident unemployment: 1 card.
+  - COE bidding, business formation, visitor arrivals and HDB median rent were stopped by the structure-review gate (`detail_series_coverage_rate`, `dominant_block_resolved`, `hierarchy_depth_retention_rate`...). For COE (a tidy long table) this looks like a false positive. Visitor arrivals also hit the 240 s budget.
+  - Rent intake misreads its first 2 data rows (numeric column holding `na`/`-`) as 2 extra header layers. This is the real reason for 9,505 vs 9,507 rows, not duplicate rows.
+  - The dialog shows a phantom summary row past end-of-file, internal reason codes, and a conflicting "cleaning stopped" banner.
+  - The transport run was interrupted by a container restart.
+  - Workers dispatched:
+    - N: intake/header/summary/reason-code/banner fixes;
+    - O: read-only root cause of the structure gate and an agentic reshape path;
+    - P: card ranking direction, small-n caveat, all-tied top-N.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
