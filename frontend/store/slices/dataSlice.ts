@@ -244,6 +244,16 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
                 set({ duckDbSessionStatus: nextStatus });
             }
             console.log(`[Perf:RefreshDuckDb] set(duckDbSessionStatus): ${Math.round(performance.now() - t4)}ms`);
+            if (binding?.engine === 'duckdb') {
+                // Safeguard before any card is built: compare the loaded numeric columns with
+                // the original text so a silently changed number can never be "Verified".
+                try {
+                    const { runNumericParseCheck } = await import('../../services/data/numericParseGuard');
+                    await runNumericParseCheck(owned as never, bindingTarget.dataset);
+                } catch (error) {
+                    console.warn('[RefreshDuckDb] numeric parse check unavailable.', error);
+                }
+            }
             console.log(`[Perf:RefreshDuckDb] total: ${Math.round(performance.now() - t0)}ms`);
 
             if (binding?.engine === 'duckdb') {

@@ -492,6 +492,38 @@ export interface AnalysisArtifactQueryEvidence {
     fallbackReason: string | null;
 }
 
+/** One numeric column whose two independent readings disagree. */
+export interface NumericParseFinding {
+    column: string;
+    /** What disagreed: the column total or its median. */
+    kind: 'sum' | 'median';
+    /** Sum of the column parsed from the original imported text. */
+    sourceSum: number | null;
+    /** Sum the query engine computes over the loaded column (what the cards use). */
+    loadedSum: number | null;
+    /** loadedSum / sourceSum; null when either side is missing or the source sum is 0. */
+    ratio: number | null;
+    sourceMedian: number | null;
+    loadedMedian: number | null;
+}
+
+/**
+ * Result of comparing every numeric column of the loaded dataset against the
+ * original imported text. A mismatch means a cleaning, canonicalization or SQL
+ * step changed the numbers, so cards that aggregate the column must not be
+ * shown as verified.
+ */
+export interface NumericParseCheck {
+    /** Semantic dataset version the check ran on; a check for another version is ignored. */
+    datasetVersion: string | null;
+    status: 'passed' | 'mismatch' | 'skipped';
+    checkedColumns: string[];
+    findings: NumericParseFinding[];
+    /** Why the check was skipped, in English for the technical details. */
+    note: string | null;
+    durationMs: number;
+}
+
 export interface AnalysisArtifactProvenance {
     schemaVersion: 1;
     datasetId: string | null;
@@ -510,6 +542,8 @@ export interface AnalysisArtifactProvenance {
      * Optional for backward compatibility with persisted schema-v1 artifacts.
      */
     queryEvidenceRequired?: boolean;
+    /** Set when a column this artifact aggregates failed the numeric parse reconciliation. */
+    numericParseMismatch?: { columns: string[]; findings: NumericParseFinding[] };
     evidenceRefs: AnalysisArtifactEvidenceRef[];
     createdAt: string;
 }
@@ -525,7 +559,8 @@ export type CardTrustReasonCode =
     | 'query_trace_missing'
     | 'quality_evaluation_missing'
     | 'quality_caveat'
-    | 'quality_weak';
+    | 'quality_weak'
+    | 'numeric_parse_mismatch';
 
 export interface CardTrustDecision {
     status: CardTrustStatus;

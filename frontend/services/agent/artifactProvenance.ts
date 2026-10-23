@@ -9,6 +9,7 @@ import type {
 } from '../../types';
 import { buildSemanticDatasetVersion } from './datasetSemantics';
 import { getPreferredAnalysisDataset } from './reportStructureState';
+import { findNumericParseMismatches } from '../data/numericParseFindings';
 
 type ProvenanceState = Pick<
     AppState,
@@ -16,7 +17,7 @@ type ProvenanceState = Pick<
     | 'csvData'
     | 'currentDatasetId'
     | 'dataPreparationPlan'
-> & Partial<Pick<AppState, 'datasetBundle'>>;
+> & Partial<Pick<AppState, 'datasetBundle' | 'numericParseCheck'>>;
 
 const uniqueRefs = (refs: AnalysisArtifactEvidenceRef[]): AnalysisArtifactEvidenceRef[] =>
     refs.filter((ref, index, entries) =>
@@ -66,7 +67,21 @@ export const buildAnalysisArtifactProvenance = (
     if (options.evidenceGateDecision === 'table_only') reasons.push('Evidence verification limited the artifact to table-only presentation.');
     if (options.evidenceGateDecision === 'reject') reasons.push('Evidence verification rejected the artifact for narrative use.');
 
-    const evidenceStatus = !datasetVersion || options.evidenceGateDecision === 'reject'
+    // Columns this artifact sums, averages or plots as values. When the loaded column
+    // does not reconcile with the original text the artifact cannot be verified.
+    const measureColumns = [
+        ...(queryTrace?.plan?.aggregates ?? []).flatMap(aggregate => aggregate.column ? [aggregate.column] : []),
+        ...(plan.valueColumn ? [plan.valueColumn] : []),
+        ...(plan.valueColumns ?? []),
+        ...(plan.xValueColumn ? [plan.xValueColumn] : []),
+        ...(plan.yValueColumn ? [plan.yValueColumn] : []),
+    ];
+    const numericParseFindings = findNumericParseMismatches(state.numericParseCheck, datasetVersion, measureColumns);
+    if (numericParseFindings.length > 0) {
+        reasons.push(`Numeric parse check failed for ${numericParseFindings.map(finding => finding.column).join(', ')}: the loaded values do not reconcile with the original text.`);
+    }
+
+    const evidenceStatus = !datasetVersion || options.evidenceGateDecision === 'reject' || numericParseFindings.length > 0
         ? 'hypothesis'
         : reasons.length > 0
             ? 'degraded'
@@ -124,6 +139,12 @@ export const buildAnalysisArtifactProvenance = (
             fallbackReason: queryTrace.fallbackReason ?? null,
         } : null,
         queryEvidenceRequired: Boolean(queryTrace),
+        ...(numericParseFindings.length > 0 ? {
+            numericParseMismatch: {
+                columns: Array.from(new Set(numericParseFindings.map(finding => finding.column))),
+                findings: numericParseFindings,
+            },
+        } : {}),
         evidenceRefs: uniqueRefs([
             ...(datasetVersion ? [{
                 kind: 'dataset_version' as const,

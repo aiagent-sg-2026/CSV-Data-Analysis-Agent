@@ -26,6 +26,8 @@ import { PERIOD_WIDE_OUTPUT_COLUMNS } from './reportShapePeriodWide';
 import { computeRowRoleSignals, type RowRoleSignalBundle } from './runtime/rowRoleSignals';
 import { recoverMisalignedSectionDimensions } from './sectionDimensionRecovery';
 import { withoutBodyNoise, type BodyRowFinding } from '../data/reportBodyRows';
+import { robustParseFloat } from '../data/dataProfiler';
+import { classifyNumberCell } from '../data/numberLocale';
 
 const UNNAMED_COLUMN_PATTERN = /^_?unnamed_column_/i;
 const DATE_LIKE_PATTERN = /^(?:\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})$/;
@@ -126,6 +128,12 @@ const parseNumericCandidate = (value: unknown): number | null => {
     }
     if (DATE_LIKE_PATTERN.test(normalized)) {
         return null;
+    }
+    // A cell only valid as a European number (161,30 or 1.234,56) keeps its decimal comma;
+    // the symbol strip below would read it as 16130 or 1.23456.
+    if (classifyNumberCell(normalized) === 'decimal_comma') {
+        const european = robustParseFloat(normalized);
+        if (european !== null) return european;
     }
     // Whole-string parse after stripping symbols, mirroring isNumericCandidate
     // in columnRoleClassifier: a prefix parse turned the month "2010-01" into

@@ -47,7 +47,11 @@ const buildDecimalCommaAwareExpression = (source: string) =>
 export const buildNumericExpression = (column: string) => {
     const textExpression = buildEmptyAwareExpression(column);
     const normalizedNegativeExpression = `CASE WHEN ${textExpression} LIKE '(%' AND ${textExpression} LIKE '%)' THEN CONCAT('-', SUBSTRING(${textExpression}, 2, LENGTH(${textExpression}) - 2)) ELSE ${textExpression} END`;
-    const decimalNormalizedExpression = buildDecimalCommaAwareExpression(normalizedNegativeExpression);
+    // The JS parser drops every space (including no-break spaces used as thousands
+    // separators: 1 234,56), so the SQL expression must too or the two readings of
+    // the same cell would disagree.
+    const spaceFreeExpression = `REPLACE(REPLACE(REPLACE(${normalizedNegativeExpression}, ' ', ''), '\u00a0', ''), '\u202f', '')`;
+    const decimalNormalizedExpression = buildDecimalCommaAwareExpression(spaceFreeExpression);
     const strippedExpression = `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(${decimalNormalizedExpression}, ',', ''), '$', ''), '€', ''), '£', ''), '¥', ''), '%', '')`;
     return `CASE WHEN ${buildMissingCellSqlCondition(textExpression)} THEN NULL ELSE TRY_CAST(NULLIF(${strippedExpression}, '') AS DOUBLE) END`;
 };
