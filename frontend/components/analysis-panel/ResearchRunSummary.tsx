@@ -3,6 +3,7 @@ import type { DataAnalysisSessionState } from '../../types';
 import { useAppStore } from '../../store/useAppStore';
 import { getTranslation } from '../../utils/localization';
 import { normalizeDisplayLabel } from '../../services/dashboard/executiveKpiUtils';
+import { tallyResearchQuestions } from '../../services/agent/runtime/dataResearchContract';
 
 const statusStyle: Record<string, string> = {
     running: 'bg-blue-100 text-blue-700',
@@ -20,10 +21,9 @@ export const ResearchRunSummary: React.FC<{
     const brief = session.researchBrief;
     if (!brief) return null;
 
-    const findings = session.researchFindings ?? [];
-    const supported = findings.filter(finding => finding.status === 'supported').length;
-    const hypotheses = findings.filter(finding => finding.status === 'hypothesis').length;
-    const rejected = findings.filter(finding => finding.status === 'rejected').length;
+    // The same tally feeds the results banner, so the strip and the banner agree.
+    const tally = tallyResearchQuestions(session);
+    const showPills = tally !== null && (tally.supported + tally.notSupported > 0 || session.status !== 'running');
 
     return (
         <section
@@ -64,28 +64,41 @@ export const ResearchRunSummary: React.FC<{
             {brief.questions.length > 0 && (
                 <ol className="mt-3 space-y-1.5 text-xs text-slate-700">
                     {brief.questions.slice(0, 4).map(question => (
-                        <li key={question.id} className="flex gap-2">
-                            <span className="font-semibold text-slate-400">{question.priority}</span>
-                            <span className="flex-1">{normalizeDisplayLabel(question.question, question.question)}</span>
-                            <span className="shrink-0 text-slate-500">
-                                {getTranslation(`research_finding_${question.status}`, language)}
-                            </span>
+                        <li key={question.id}>
+                            <div className="flex gap-2">
+                                <span className="font-semibold text-slate-400">{question.priority}</span>
+                                <span className="flex-1">{normalizeDisplayLabel(question.question, question.question)}</span>
+                                <span className="shrink-0 text-slate-500">
+                                    {getTranslation(`research_finding_${question.status}`, language)}
+                                </span>
+                            </div>
+                            {question.status === 'unsupported' && (
+                                <p className="mt-0.5 pl-5 text-[11px] text-slate-500">
+                                    {getTranslation('research_not_supported_reason', language)}
+                                </p>
+                            )}
                         </li>
                     ))}
                 </ol>
             )}
 
-            {(findings.length > 0 || session.status !== 'running') && (
-                <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3 text-xs">
-                    <span className="rounded-full bg-green-50 px-2 py-1 text-green-700">
-                        {getTranslation('research_supported_count', language, { count: supported })}
-                    </span>
-                    <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-800">
-                        {getTranslation('research_hypotheses_count', language, { count: hypotheses })}
-                    </span>
-                    <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
-                        {getTranslation('research_rejected_count', language, { count: rejected })}
-                    </span>
+            {showPills && (
+                <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3 text-xs empty:hidden">
+                    {tally.supported > 0 && (
+                        <span className="rounded-full bg-green-50 px-2 py-1 text-green-700">
+                            {getTranslation('research_supported_count', language, { count: tally.supported })}
+                        </span>
+                    )}
+                    {tally.unanswered > 0 && (
+                        <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-800">
+                            {getTranslation('research_unanswered_count', language, { count: tally.unanswered })}
+                        </span>
+                    )}
+                    {tally.notSupported > 0 && (
+                        <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
+                            {getTranslation('research_rejected_count', language, { count: tally.notSupported })}
+                        </span>
+                    )}
                 </div>
             )}
             {(brief.datasetVersionId || session.stopReason) && (

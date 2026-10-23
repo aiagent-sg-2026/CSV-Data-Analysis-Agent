@@ -3,6 +3,7 @@ import {
     buildDataResearchBrief,
     buildDataResearchFindings,
     syncDataResearchBrief,
+    tallyResearchQuestions,
 } from '../services/agent/runtime/dataResearchContract';
 import { createDataAnalysisSessionState } from '../services/agent/runtime/dataAnalysisSessionState';
 import type { DataAnalysisHypothesis } from '../types';
@@ -154,6 +155,42 @@ describe('data research contract', () => {
         expect(brief.clarification).toEqual({
             reason: 'No safe business grain was verified.',
             question: 'Which business grain or metric should the research run prioritize?',
+        });
+    });
+    describe('tallyResearchQuestions', () => {
+        const sessionWith = (statuses: Array<'pending' | 'investigating' | 'supported' | 'unsupported' | 'cancelled'>, status: 'running' | 'completed' = 'completed') => {
+            const base = createDataAnalysisSessionState({ sessionId: 'session-1', origin: 'auto_analysis' });
+            return {
+                ...base,
+                status,
+                researchBrief: {
+                    goal: 'Find drivers',
+                    datasetVersionId: null,
+                    questions: statuses.map((questionStatus, index) => ({
+                        id: `q-${index}`, hypothesisId: `h-${index}`, question: `Question ${index}`, priority: 1, status: questionStatus,
+                    })),
+                    stopConditions: [],
+                    clarification: null,
+                    createdAt: new Date('2026-07-25T00:00:00Z'),
+                },
+            };
+        };
+
+        it('counts the statuses the research strip lists, so strip and banner share one count', () => {
+            expect(tallyResearchQuestions(sessionWith(['supported', 'supported', 'supported', 'unsupported'])))
+                .toEqual({ total: 4, supported: 3, notSupported: 1, unanswered: 0 });
+        });
+
+        it('counts questions left open once the run is over, but not while it is still running', () => {
+            expect(tallyResearchQuestions(sessionWith(['supported', 'pending', 'investigating', 'cancelled'])))
+                .toEqual({ total: 4, supported: 1, notSupported: 0, unanswered: 3 });
+            expect(tallyResearchQuestions(sessionWith(['supported', 'pending', 'investigating'], 'running')))
+                .toEqual({ total: 3, supported: 1, notSupported: 0, unanswered: 0 });
+        });
+
+        it('has no tally without a brief or without questions', () => {
+            expect(tallyResearchQuestions(null)).toBeNull();
+            expect(tallyResearchQuestions(sessionWith([]))).toBeNull();
         });
     });
 });

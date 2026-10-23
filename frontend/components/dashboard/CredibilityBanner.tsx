@@ -8,6 +8,10 @@ export interface CredibilityBannerProps {
     caveatedCount: number;
     weakCount: number;
     hasRunCaveats?: boolean;
+    /** Research questions in the run; the banner states the gap when some could not be answered. */
+    questionCount?: number;
+    answeredQuestionCount?: number;
+    unsupportedQuestionCount?: number;
     language: string;
     /** Shown when the current view hides every card the hint asks the user to review. */
     reviewActionLabel?: string;
@@ -23,6 +27,8 @@ const TIER_CONFIG: Record<CredibilityVerdict, {
     iconColor: string;
     titleColor: string;
     hintColor: string;
+    /** The review action is the main control of the banner, so it is a filled button. */
+    button: string;
 }> = {
     trusted: {
         titleKey: 'credibility_ready',
@@ -33,6 +39,7 @@ const TIER_CONFIG: Record<CredibilityVerdict, {
         iconColor: 'text-emerald-600',
         titleColor: 'text-emerald-900',
         hintColor: 'text-emerald-700',
+        button: 'border-emerald-700 bg-emerald-700 text-white hover:bg-emerald-800',
     },
     caveated: {
         titleKey: 'credibility_review',
@@ -43,6 +50,7 @@ const TIER_CONFIG: Record<CredibilityVerdict, {
         iconColor: 'text-amber-600',
         titleColor: 'text-amber-900',
         hintColor: 'text-amber-700',
+        button: 'border-amber-700 bg-amber-700 text-white hover:bg-amber-800',
     },
     weak: {
         titleKey: 'credibility_insufficient',
@@ -53,6 +61,7 @@ const TIER_CONFIG: Record<CredibilityVerdict, {
         iconColor: 'text-red-600',
         titleColor: 'text-red-900',
         hintColor: 'text-red-700',
+        button: 'border-red-700 bg-red-700 text-white hover:bg-red-800',
     },
 };
 
@@ -80,30 +89,56 @@ export const CredibilityBanner: React.FC<CredibilityBannerProps> = ({
     caveatedCount,
     weakCount,
     hasRunCaveats = false,
+    questionCount = 0,
+    answeredQuestionCount = 0,
+    unsupportedQuestionCount = 0,
     language,
     reviewActionLabel,
     onReviewAction,
 }) => {
-    const effectiveVerdict = overallVerdict === 'trusted' && hasRunCaveats
+    // Green means nothing is missing. A question the data could not answer is missing,
+    // so the banner states the gap instead of saying every card passed.
+    const hasUnsupportedQuestions = unsupportedQuestionCount > 0 && questionCount > 0;
+    const isPartialAnswer = overallVerdict === 'trusted' && hasUnsupportedQuestions;
+    const effectiveVerdict = overallVerdict === 'trusted' && (hasRunCaveats || isPartialAnswer)
         ? 'caveated'
         : overallVerdict;
     const config = TIER_CONFIG[effectiveVerdict];
-    const title = getTranslation(
-        overallVerdict === 'trusted' && hasRunCaveats
-            ? 'credibility_ready_with_caveats'
-            : config.titleKey,
-        language,
-    );
     const reviewCount = caveatedCount + weakCount;
-    const hintKey = overallVerdict === 'trusted' && hasRunCaveats
-        ? 'credibility_ready_with_caveats_hint'
-        : overallVerdict === 'caveated' && trustedCount === 0
-            ? 'credibility_review_hint_no_verified'
-            : config.hintKey;
-    const hint = getTranslation(hintKey, language, {
+    const title = isPartialAnswer
+        ? getTranslation(questionCount === 1 ? 'credibility_partial_title_one' : 'credibility_partial_title', language, {
+            answered: String(answeredQuestionCount),
+            total: String(questionCount),
+        })
+        : getTranslation(
+            overallVerdict === 'trusted' && hasRunCaveats
+                ? 'credibility_ready_with_caveats'
+                : config.titleKey,
+            language,
+        );
+    const hintKey = isPartialAnswer
+        ? (unsupportedQuestionCount === 1 ? 'credibility_partial_hint_one' : 'credibility_partial_hint_many')
+        : overallVerdict === 'trusted' && hasRunCaveats
+            ? 'credibility_ready_with_caveats_hint'
+            : overallVerdict === 'caveated' && trustedCount === 0
+                ? 'credibility_review_hint_no_verified'
+                : config.hintKey;
+    const baseHint = getTranslation(hintKey, language, {
         trusted: String(trustedCount),
         review: String(reviewCount),
+        unsupported: String(unsupportedQuestionCount),
     });
+    const hint = isPartialAnswer && hasRunCaveats
+        ? `${baseHint} ${getTranslation('credibility_partial_caveats_suffix', language)}`
+        : baseHint;
+    // Cards needing review already change the hint; the gap is named next to it.
+    const gapNote = hasUnsupportedQuestions && !isPartialAnswer
+        ? getTranslation(
+            unsupportedQuestionCount === 1 ? 'credibility_unsupported_extra_one' : 'credibility_unsupported_extra_many',
+            language,
+            { count: String(unsupportedQuestionCount) },
+        )
+        : null;
 
     const Icon = effectiveVerdict === 'trusted' ? CheckIcon
         : effectiveVerdict === 'caveated' ? InfoIcon
@@ -122,11 +157,16 @@ export const CredibilityBanner: React.FC<CredibilityBannerProps> = ({
                     <p className={`mt-1 text-xs leading-relaxed ${config.hintColor}`}>
                         {hint}
                     </p>
+                    {gapNote && (
+                        <p className={`mt-1 text-xs font-medium leading-relaxed ${config.hintColor}`}>
+                            {gapNote}
+                        </p>
+                    )}
                     {reviewActionLabel && onReviewAction && (
                         <button
                             type="button"
                             onClick={onReviewAction}
-                            className={`mt-3 inline-flex min-h-[44px] items-center rounded-lg border ${config.border} bg-white px-3 text-sm font-medium ${config.titleColor} shadow-sm transition-colors hover:bg-slate-50 md:min-h-[36px]`}
+                            className={`mt-3 inline-flex min-h-[44px] items-center rounded-lg border px-4 text-sm font-semibold shadow-sm transition-colors md:min-h-[36px] ${config.button}`}
                         >
                             {reviewActionLabel}
                         </button>

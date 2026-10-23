@@ -26,10 +26,12 @@
  * | Catch block — generic fallback for unknown failures | userErrorMessage.ts |
  */
 import { AppLanguage, Settings } from '../types';
+import { reviewTrustTranslations } from './localizationReviewTrust';
 
 type Language = AppLanguage | 'Spanish' | 'French';
 
 const translations: Record<string, Partial<Record<Language, string>> & { English: string }> = {
+    ...reviewTrustTranslations,
     'header_analysis_actions': {
         'English': 'Analysis actions',
         'Mandarin': '分析操作',

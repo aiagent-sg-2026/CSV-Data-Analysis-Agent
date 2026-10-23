@@ -135,7 +135,7 @@ const ExecutiveKpiRowComponent: React.FC<ExecutiveKpiRowProps> = ({ title, subti
                                 <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">{kpi.label}</p>
                             </div>
                             <p className="mt-2 text-[11px] font-medium text-slate-600">
-                                {kpi.scope.label}
+                                {kpi.scope.coverageText ?? kpi.scope.label}
                                 {kpi.scope.filterSummary ? ` · ${kpi.scope.filterSummary}` : ''}
                             </p>
 

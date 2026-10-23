@@ -67,6 +67,35 @@ export const syncDataResearchBrief = (
     };
 };
 
+export interface ResearchQuestionTally {
+    total: number;
+    supported: number;
+    /** Questions the data could not answer; their row reads "Not supported". */
+    notSupported: number;
+    /** Questions still without an answer once the run is over (pending, checking or cancelled). */
+    unanswered: number;
+}
+
+/**
+ * The one count of research questions by outcome. The Research Run strip and the
+ * results banner both read it, so they cannot disagree. It counts the question
+ * statuses the strip lists, not the internal finding statuses.
+ */
+export const tallyResearchQuestions = (
+    session: Pick<DataAnalysisSessionState, 'status' | 'researchBrief'> | null | undefined,
+): ResearchQuestionTally | null => {
+    const questions = session?.researchBrief?.questions ?? [];
+    if (!session || questions.length === 0) return null;
+    const tally: ResearchQuestionTally = { total: questions.length, supported: 0, notSupported: 0, unanswered: 0 };
+    const finished = session.status !== 'running' && session.status !== 'queued';
+    for (const question of questions) {
+        if (question.status === 'supported') tally.supported += 1;
+        else if (question.status === 'unsupported') tally.notSupported += 1;
+        else if (finished) tally.unanswered += 1;
+    }
+    return tally;
+};
+
 export const buildDataResearchFindings = (
     session: DataAnalysisSessionState,
 ): DataResearchFinding[] => {

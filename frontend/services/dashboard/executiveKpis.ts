@@ -84,6 +84,51 @@ const getScopedMetricRows = (
     return visibleRows.slice(0, topN);
 };
 
+/** States the denominator of a top-N scope so the KPI numbers and the shares beside them read against the same base. */
+const buildScopeCoverageText = ({
+    scope,
+    card,
+    metricRows,
+    allMetricRows,
+    coverage,
+    isCutOffRanking,
+    pluralGroupLabel,
+    profiles,
+    language,
+}: {
+    scope: ExecutiveKpi['scope'];
+    card: AnalysisCardData;
+    metricRows: Array<{ value: number }>;
+    allMetricRows: Array<{ value: number }>;
+    coverage: AnalysisCardData['groupCoverage'];
+    isCutOffRanking: boolean;
+    pluralGroupLabel: string;
+    profiles: ColumnProfile[];
+    language?: Settings['language'];
+}): string | undefined => {
+    if (scope.kind !== 'top_n') return undefined;
+    const groupTotal = isCutOffRanking ? coverage?.groupCount ?? null : allMetricRows.length;
+    if (groupTotal === null || groupTotal <= metricRows.length) return undefined;
+    const lead = getTranslation(
+        card.plan.rankDirection === 'asc' ? 'executive_kpi_scope_coverage_lowest' : 'executive_kpi_scope_coverage_top',
+        language,
+        { shown: metricRows.length.toLocaleString(), count: groupTotal.toLocaleString(), groups: pluralGroupLabel },
+    );
+    if (!isAdditiveAggregation(card.plan.aggregation)) return lead;
+    const overall = isCutOffRanking
+        ? coverage?.overallTotal ?? null
+        : allMetricRows.reduce((sum, entry) => sum + entry.value, 0);
+    if (overall === null) return lead;
+    const shown = metricRows.reduce((sum, entry) => sum + entry.value, 0);
+    const measured = card.plan.aggregation === 'count'
+        ? getTranslation('executive_kpi_scope_coverage_rows', language, { value: shown.toLocaleString(), total: overall.toLocaleString() })
+        : getTranslation('executive_kpi_scope_coverage_value', language, {
+            value: formatMetricValue(shown, card.plan.valueColumn, profiles),
+            total: formatMetricValue(overall, card.plan.valueColumn, profiles),
+        });
+    return `${lead}: ${measured}`;
+};
+
 const buildInteractiveKpi = ({
     id,
     label,
@@ -293,13 +338,25 @@ export const buildExecutiveKpis = ({
         && !(primaryCard.filter?.column && primaryCard.filter.values.length > 0),
     );
     const overallTotal = isCutOffRanking ? coverage?.overallTotal ?? null : null;
-    const scope = buildCardScope(
+    const baseScope = buildCardScope(
         primaryCard,
         datasetRowCount,
         pluralGroupLabel,
         language,
         isCutOffRanking && overallTotal === null ? metricRows.length : undefined,
     );
+    const coverageText = buildScopeCoverageText({
+        scope: baseScope,
+        card: primaryCard,
+        metricRows,
+        allMetricRows,
+        coverage,
+        isCutOffRanking,
+        pluralGroupLabel,
+        profiles: safeProfiles,
+        language,
+    });
+    const scope = coverageText ? { ...baseScope, coverageText } : baseScope;
     const topEntry = metricRows[0];
     const topGroupColumn = primaryIr.groupByColumn ?? primaryCard.plan.groupByColumn;
     const rawTopLabel = getRowValue(topEntry.row, topGroupColumn);

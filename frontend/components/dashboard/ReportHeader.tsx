@@ -3,6 +3,7 @@ import type { ReportContextResolution, ResolvedReportContext } from '../../types
 import { getTranslation } from '../../utils/localization';
 import type { Settings } from '../../types';
 import { isSchemaDerivedReportTitle, isUsableReportTitle } from '../../services/agent/reportContext';
+import { describeSetAsideTables } from '../../utils/setAsideTables';
 
 type ReportHeaderProps = {
     reportContextResolution: ReportContextResolution | null;
@@ -13,6 +14,8 @@ type ReportHeaderProps = {
     summaryRowCount: number;
     /** Column names of the dataset, used to avoid showing them as if they were a title. */
     columnNames?: readonly string[];
+    /** Row counts of other tables stacked in the file that were set aside, in file order. */
+    setAsideRowCounts?: readonly number[];
     language: Settings['language'];
 };
 
@@ -89,6 +92,7 @@ const ReportHeaderComponent: React.FC<ReportHeaderProps> = ({
     headerDepth,
     summaryRowCount,
     columnNames = [],
+    setAsideRowCounts = [],
     language,
 }) => {
     const generatedAtRef = useRef<string>(
@@ -141,6 +145,12 @@ const ReportHeaderComponent: React.FC<ReportHeaderProps> = ({
                         {getTranslation('report_header_meta_rows', language, { count: preparedRowCount.toLocaleString() })}
                         {fileName && differs(fileName, displayTitle) && <> · {fileName}</>}
                     </p>
+                    {/* The rows above are only the first table; say so wherever the row count is shown. */}
+                    {setAsideRowCounts.length > 0 && (
+                        <p className="mt-0.5 text-xs font-medium text-amber-800">
+                            {describeSetAsideTables(setAsideRowCounts, language)}
+                        </p>
+                    )}
                     {/* Badges only for states that matter (the page is already "AI Analysis") */}
                     <div className="mt-2 flex flex-wrap items-center gap-2 empty:hidden">
                         {showAiGuessBanner && (

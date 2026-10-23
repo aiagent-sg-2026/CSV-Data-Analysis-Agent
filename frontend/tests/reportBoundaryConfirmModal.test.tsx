@@ -191,7 +191,7 @@ describe('ReportBoundaryConfirmModal guided repair', () => {
         render(<ReportBoundaryConfirmModal />);
 
         const dialog = screen.getByRole('dialog', { name: 'Review and repair data structure' });
-        const details = dialog.querySelector('details');
+        const details = within(dialog).getByText('Technical details').closest('details');
         expect(details).not.toBeNull();
         const visibleText = (dialog.textContent ?? '').replace(details!.textContent ?? '', '');
         for (const code of codes) {

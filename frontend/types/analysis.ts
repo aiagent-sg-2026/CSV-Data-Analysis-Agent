@@ -544,6 +544,12 @@ export interface AnalysisArtifactProvenance {
     queryEvidenceRequired?: boolean;
     /** Set when a column this artifact aggregates failed the numeric parse reconciliation. */
     numericParseMismatch?: { columns: string[]; findings: NumericParseFinding[] };
+    /**
+     * How a narrative (final summary) was written. Absent on cards and on summaries saved
+     * before this was recorded. `ai_summary` is the AI text that passed the evidence checks;
+     * the other two are text the app read from the verified cards itself.
+     */
+    narrativeSource?: 'ai_summary' | 'evidence_fallback' | 'deterministic';
     evidenceRefs: AnalysisArtifactEvidenceRef[];
     createdAt: string;
 }
