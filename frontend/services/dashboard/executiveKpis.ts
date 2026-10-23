@@ -28,6 +28,7 @@ import { resolveCardTrustDecision } from '../agent/cardTrustDecision';
 import { getTranslation } from '../../utils/localization';
 import { isStructuralMetadataColumn } from '../agent/structuralMetadata';
 import { isAdditiveAggregation } from '../../utils/analysisCardPresentation';
+import { formatTemporalDisplayValue, resolvePeriodGrain } from '../../utils/temporalDisplay';
 
 export type { ExecutiveKpi } from './executiveKpiTypes';
 
@@ -269,10 +270,16 @@ export const buildExecutiveKpis = ({
     const datasetRowCount = csvData ? getCsvDataRowCount(csvData) : null;
     const scope = buildCardScope(primaryCard, datasetRowCount, pluralGroupLabel, language);
     const topEntry = metricRows[0];
-    const rawTopLabel = getRowValue(topEntry.row, primaryIr.groupByColumn ?? primaryCard.plan.groupByColumn);
-    const topLabelValue = rawTopLabel != null && String(rawTopLabel).trim() !== ''
-        ? String(rawTopLabel).trim()
+    const topGroupColumn = primaryIr.groupByColumn ?? primaryCard.plan.groupByColumn;
+    const rawTopLabel = getRowValue(topEntry.row, topGroupColumn);
+    // A melted table stores a period as its first day; the KPI names it at its grain ("2025").
+    const periodContext = primaryCard.plan.periodSeries
+        ?? (seriesMeasure ? { periodColumn: seriesMeasure.periodColumn, periodGrain: seriesMeasure.periodGrain } : null);
+    const topPeriodLabel = resolvePeriodGrain(topGroupColumn, periodContext) && rawTopLabel != null
+        ? formatTemporalDisplayValue(topGroupColumn, rawTopLabel, periodContext)
         : null;
+    const topLabelValue = topPeriodLabel
+        ?? (rawTopLabel != null && String(rawTopLabel).trim() !== '' ? String(rawTopLabel).trim() : null);
     const lowestFirst = primaryCard.plan.rankDirection === 'asc';
     const leadLabel = lowestFirst
         ? getTranslation('executive_kpi_lowest_group_label', language, { group: groupLabel })

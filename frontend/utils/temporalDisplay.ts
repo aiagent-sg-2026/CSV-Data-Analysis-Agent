@@ -1,5 +1,6 @@
-import type { CsvCellValue } from '../types';
+import type { AnalysisPlanPeriodSeries, CsvCellValue, CsvRow, PeriodGrain } from '../types';
 import { isSequentialDimensionName } from './ordinalSortOrder';
+import { parsePeriodHeaderLabel } from '../services/agent/reportShapePeriodWide';
 
 const EPOCH_SECONDS_MIN = 1_000_000_000;
 const EPOCH_SECONDS_MAX = 99_999_999_999;
@@ -105,10 +106,83 @@ const parseDateText = (value: string): Date | null => {
 export const isTemporalDisplayColumn = (columnName: string | null | undefined): boolean =>
     isSequentialDimensionName(columnName);
 
+/** The period column and grain a value is displayed with; only the melted table's period column has one. */
+export type PeriodDisplayContext = Pick<AnalysisPlanPeriodSeries, 'periodColumn' | 'periodGrain'>;
+
+const sameColumn = (left: string, right: string) => left.trim().toLowerCase() === right.trim().toLowerCase();
+
+/** The grain of `columnName` when it is the period column of `period`, otherwise null. */
+export const resolvePeriodGrain = (
+    columnName: string | null | undefined,
+    period: PeriodDisplayContext | null | undefined,
+): PeriodGrain | null => (
+    period && columnName && sameColumn(columnName, period.periodColumn) ? period.periodGrain : null
+);
+
+/**
+ * Timestamp of a period value given as its stored first day (2025-01-01), a
+ * DuckDB DATE, or a label this module already formatted (2025, Aug 2026,
+ * 2024 Q1), so formatting and sorting stay idempotent on display rows.
+ */
+const parsePeriodTimestamp = (value: unknown): number | null => {
+    if (value instanceof Date) {
+        return isFiniteDate(value) ? value.getTime() : null;
+    }
+    if (typeof value === 'number') {
+        if (Number.isInteger(value) && value >= 1000 && value <= 9999) {
+            return Date.UTC(value, 0, 1);
+        }
+        return parseEpochNumber(value)?.getTime() ?? null;
+    }
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const label = parsePeriodHeaderLabel(value);
+    if (label) {
+        return parseDateText(label.start)?.getTime() ?? null;
+    }
+    // Locale-dependent `new Date(text)` parsing is avoided: a local-midnight
+    // "Aug 2026" in UTC+8 reads as July in UTC.
+    return /[a-z]/i.test(value) ? null : parseDateText(value)?.getTime() ?? null;
+};
+
+const MONTH_ABBREVIATIONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const formatPeriodTimestamp = (timestamp: number, grain: PeriodGrain): string => {
+    const date = new Date(timestamp);
+    const year = date.getUTCFullYear();
+    if (grain === 'year') return String(year);
+    if (grain === 'quarter') return `${year} Q${Math.floor(date.getUTCMonth() / 3) + 1}`;
+    return `${MONTH_ABBREVIATIONS[date.getUTCMonth()]} ${year}`;
+};
+
+/** A period value at its grain: `2025`, `2024 Q1` or `Aug 2026`; null when it is not a period. */
+export const formatPeriodDisplayValue = (value: unknown, grain: PeriodGrain): string | null => {
+    const timestamp = parsePeriodTimestamp(value);
+    return timestamp === null ? null : formatPeriodTimestamp(timestamp, grain);
+};
+
+/** Rows with the period column shown at its grain, for chart labels and prompt samples. */
+export const formatPeriodRowsForDisplay = (
+    rows: CsvRow[],
+    period: PeriodDisplayContext | null | undefined,
+): CsvRow[] => {
+    if (!period) return rows;
+    return rows.map(row => {
+        const column = Object.keys(row).find(key => sameColumn(key, period.periodColumn));
+        const formatted = column ? formatPeriodDisplayValue(row[column], period.periodGrain) : null;
+        return column && formatted !== null ? { ...row, [column]: formatted } : row;
+    });
+};
+
 export const getTemporalSortTimestamp = (
     value: unknown,
     columnName?: string | null,
+    period?: PeriodDisplayContext | null,
 ): number | null => {
+    if (resolvePeriodGrain(columnName, period)) {
+        return parsePeriodTimestamp(value);
+    }
     if (columnName && !isTemporalDisplayColumn(columnName)) {
         return null;
     }
@@ -133,7 +207,12 @@ const pad = (value: number): string => String(value).padStart(2, '0');
 export const formatTemporalDisplayValue = (
     columnName: string | null | undefined,
     value: CsvCellValue,
+    period?: PeriodDisplayContext | null,
 ): string | null => {
+    const grain = resolvePeriodGrain(columnName, period);
+    if (grain) {
+        return formatPeriodDisplayValue(value, grain);
+    }
     const timestamp = getTemporalSortTimestamp(value, columnName);
     if (timestamp === null) {
         return null;

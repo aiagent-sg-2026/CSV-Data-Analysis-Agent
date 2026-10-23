@@ -1,4 +1,3 @@
-import { Output, jsonSchema } from 'ai';
 import type {
     ColumnProfile,
     CsvRow,
@@ -7,13 +6,13 @@ import type {
 } from '../../types';
 import { validateSandboxProposal } from '../sandbox/sandboxPolicy';
 import { createProviderModel } from './providerConfig';
-import { prepareSchemaForProvider } from './googleSchemaAdapter';
+import { createStructuredOutput } from './structuredOutput';
 import { streamGenerateText } from './streamGenerateText';
 import { withTransientRetry } from './transientRetry';
 
 const SANDBOX_GENERATION_TIMEOUT_MS = 60_000;
 
-const sandboxProposalSchema = {
+export const sandboxProposalSchema = {
     type: 'object',
     properties: {
         language: { type: 'string', enum: ['javascript', 'python'] },
@@ -168,9 +167,7 @@ export const generateSandboxTransformationProposal = async (input: {
                     { role: 'user', content: buildPrompt(input) },
                 ],
                 abortSignal: controller.signal,
-                output: Output.object({
-                    schema: jsonSchema(prepareSchemaForProvider(sandboxProposalSchema, input.settings.provider)),
-                }),
+                output: createStructuredOutput(sandboxProposalSchema, input.settings.provider),
             }),
             {
                 settings: input.settings,

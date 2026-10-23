@@ -1,7 +1,6 @@
 import { buildEvidenceSkillGuidance } from '../skills/evidencePromptSkills';
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from '../../ai/streamGenerateText';
-import { prepareSchemaForProvider } from '../../ai/googleSchemaAdapter';
+import { createStructuredOutput } from '../../ai/structuredOutput';
 import {
     isAggregationType,
     type AggregationType,
@@ -493,7 +492,7 @@ export const generateAnalysisTopics = async (
                             },
                         ],
                         abortSignal,
-                        output: Output.object({ schema: jsonSchema(prepareSchemaForProvider(createAnalysisTopicsSchema(minTopics, maxTopics), settings.provider) as Parameters<typeof jsonSchema>[0]) }),
+                        output: createStructuredOutput(createAnalysisTopicsSchema(minTopics, maxTopics), settings.provider),
                         activityTimeoutMs: effectiveTimeout,
                     }),
                     { settings, primaryModelId: modelId, label: 'planGenerator.topics', abortSignal },
@@ -671,7 +670,7 @@ export const generateEvidenceQueryPlanWithRetry = async (
                                 },
                             ],
                             abortSignal,
-                            output: Output.object({ schema: jsonSchema(prepareSchemaForProvider(createSqlEvidenceQueryPlanOutputSchema(allColumnNames), settings.provider) as Parameters<typeof jsonSchema>[0]) }),
+                            output: createStructuredOutput(createSqlEvidenceQueryPlanOutputSchema(allColumnNames), settings.provider),
                             activityTimeoutMs: effectiveTimeout,
                         }),
                         { settings, primaryModelId: modelId, label: 'planGenerator.plan', abortSignal },

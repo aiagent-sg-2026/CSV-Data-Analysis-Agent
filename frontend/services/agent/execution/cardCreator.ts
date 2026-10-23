@@ -13,6 +13,9 @@ import { isStructuralMetadataColumn } from '../structuralMetadata';
 import { isTimeLikeDimensionColumn } from '../analysisColumnRoles';
 import { buildAnalysisArtifactProvenance } from '../artifactProvenance';
 import { buildCardSemanticFingerprint } from '../cardSemanticFingerprint';
+import { resolveSeriesMeasure } from '../planning/seriesMeasureGuard';
+import { buildPlanPeriodSeries } from './cardSeriesScope';
+import { formatTemporalDisplayValue, type PeriodDisplayContext } from '../../../utils/temporalDisplay';
 
 type StoreApi = {
     getState: () => AppStore;
@@ -45,6 +48,7 @@ const buildFallbackSummary = (
     displayValueColumn: string,
     aggregatedData: CsvRow[],
     language: LocalizedText['language'],
+    period?: PeriodDisplayContext | null,
 ): LocalizedText => {
     const formatValue = (v: unknown): string => {
         if (v == null) return getTranslation('card_value_no_data', language);
@@ -55,7 +59,7 @@ const buildFallbackSummary = (
     const preview = aggregatedData
         .slice(0, 3)
         .map((row) => {
-            const label = row[rawGroupBy] ?? 'Unknown';
+            const label = formatTemporalDisplayValue(rawGroupBy, row[rawGroupBy] ?? null, period) ?? row[rawGroupBy] ?? 'Unknown';
             const value = row[rawValueColumn];
             return `- ${String(label)}: ${formatValue(value)}`;
         })
@@ -106,6 +110,10 @@ export const createNewCard = async (
         plan = upgradeResult.plan;
     }
     plan = resolveCardPresentationPlan({ plan, evidenceValueGate: annotations?.evidenceValueGate });
+    const periodSeries = buildPlanPeriodSeries(plan, resolveSeriesMeasure(getState()), annotations?.queryTrace?.plan);
+    if (periodSeries) {
+        plan = { ...plan, periodSeries };
+    }
     const provenance = annotations?.provenance ?? buildAnalysisArtifactProvenance(plan, getState(), {
         queryTrace: annotations?.queryTrace,
         sourceStepIds: annotations?.sourceStepIds,
@@ -180,6 +188,7 @@ export const createNewCard = async (
         displayIr.displayMetricLabel || plan.valueColumn || plan.yValueColumn || 'the selected metric',
         aggregatedData,
         language,
+        plan.periodSeries,
     );
     console.log(`${LOG_PREFIX} Generated summary for "${displayIr.displayTitle}"`);
 

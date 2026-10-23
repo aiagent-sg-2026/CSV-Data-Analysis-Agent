@@ -1,10 +1,9 @@
 
 import { Settings, AnalysisPlan, CsvRow, NextStepResponse } from '../../types';
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from './streamGenerateText';
 import { robustlyParseJsonObject } from '../../utils/jsonParser';
 import { nextStepSchema } from './schemas/agentSchemas';
-import { prepareSchemaForProvider } from './googleSchemaAdapter';
+import { createStructuredOutput } from './structuredOutput';
 import { createNextStepPrompt, nextStepSystemPrompt } from '../prompts/nextStepPrompts';
 import { createProviderModel } from './providerConfig';
 import {
@@ -62,7 +61,7 @@ export const generateNextStep = async (
                                 { role: 'system', content: managed.systemText },
                                 { role: 'user', content: promptContent },
                             ],
-                            output: Output.object({ schema: jsonSchema(prepareSchemaForProvider(nextStepSchema, settings.provider) as Parameters<typeof jsonSchema>[0]) }),
+                            output: createStructuredOutput(nextStepSchema, settings.provider),
                         }),
                         { settings, primaryModelId: modelId, label: 'stepGenerator' },
                     );

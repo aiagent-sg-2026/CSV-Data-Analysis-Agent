@@ -1,9 +1,8 @@
 import { ColumnProfile, Settings, CsvRow, AnalysisGoalCandidate, AppState } from '../../types';
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from './streamGenerateText';
 import { robustlyParseJsonObject } from '../../utils/jsonParser';
 import { analysisGoalCandidateSchema } from './schemas/agentSchemas';
-import { prepareSchemaForProvider } from './googleSchemaAdapter';
+import { createStructuredOutput } from './structuredOutput';
 import { createGoalCandidatesPrompt, goalGeneratorSystemPrompt } from '../prompts/goalPrompts';
 import { createProviderModel, isProviderConfigured } from './providerConfig';
 import {
@@ -89,7 +88,7 @@ export const generateAnalysisGoalCandidates = async (
                             { role: 'system', content: managed.systemText },
                             { role: 'user', content: promptContent },
                         ],
-                        output: Output.object({ schema: jsonSchema(prepareSchemaForProvider(analysisGoalCandidateSchema, settings.provider) as Parameters<typeof jsonSchema>[0]) }),
+                        output: createStructuredOutput(analysisGoalCandidateSchema, settings.provider),
                     }),
                     { settings, primaryModelId: modelId, label: 'goalGenerator' },
                 );

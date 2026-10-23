@@ -1,4 +1,3 @@
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from './streamGenerateText';
 import type {
     ReportBoundary,
@@ -12,7 +11,7 @@ import type {
 } from '../../types';
 import { createProviderModel, isProviderConfigured } from './providerConfig';
 import { withTransientRetry } from './transientRetry';
-import { prepareSchemaForProvider } from './googleSchemaAdapter';
+import { createStructuredOutput } from './structuredOutput';
 import { reportStructureProposalSchema } from './schemas/reportStructureProposalSchema';
 import {
     createContextSection,
@@ -309,9 +308,7 @@ export const detectReportStructureProposalWithAi = async (params: {
                                 }),
                             },
                         ],
-                        output: Output.object({
-                            schema: jsonSchema(prepareSchemaForProvider(reportStructureProposalSchema, params.settings.provider)),
-                        }),
+                        output: createStructuredOutput(reportStructureProposalSchema, params.settings.provider),
                     }),
                     { settings: params.settings, primaryModelId: modelId, label: 'reportStructureProposal' },
                 );

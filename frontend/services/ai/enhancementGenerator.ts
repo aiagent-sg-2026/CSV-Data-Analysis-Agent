@@ -1,5 +1,4 @@
 import { CardContext, Settings } from '../../types';
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from './streamGenerateText';
 import type { ModelMessage } from 'ai';
 import { createProviderModel, isProviderConfigured } from './providerConfig';
@@ -7,7 +6,7 @@ import { withTransientRetry } from './transientRetry';
 import { createCardEnhancementPrompt, enhancementSystemPrompt } from '../prompts/enhancementPrompts';
 import { cardEnhancementSuggestionsSchema } from './schemas/agentSchemas';
 import { robustlyParseJsonObject } from '../../utils/jsonParser';
-import { prepareSchemaForProvider } from './googleSchemaAdapter';
+import { createStructuredOutput } from './structuredOutput';
 
 export interface AiCardEnhancementSuggestion {
     id?: string;
@@ -55,7 +54,7 @@ export const generateCardEnhancementSuggestions = async (
             (fb) => streamGenerateText({
                 model: fb ?? model,
                 messages,
-                output: Output.object({ schema: jsonSchema(prepareSchemaForProvider(cardEnhancementSuggestionsSchema, settings.provider) as Parameters<typeof jsonSchema>[0]) }),
+                output: createStructuredOutput(cardEnhancementSuggestionsSchema, settings.provider),
             }),
             { settings, primaryModelId: modelId, label: 'enhancementGenerator' },
         );

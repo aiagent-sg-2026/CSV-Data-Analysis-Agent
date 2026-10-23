@@ -4,6 +4,7 @@ import type {
     DisplayAnalysisNarrativeInput,
 } from '../../types';
 import { buildDisplayAnalysisIrList } from './displayAnalysisIr';
+import { formatPeriodRowsForDisplay } from '../../utils/temporalDisplay';
 
 const sortByNarrativePriority = (left: DisplayAnalysisNarrativeInput, right: DisplayAnalysisNarrativeInput) => {
     const trustRank = {
@@ -56,7 +57,7 @@ export const buildNarrativeAnalysisIrInputList = (
                 selectionScore: 0,
                 selectionReasons: ['legacy_card_context'],
                 summary: card.summary.text,
-                aggregatedDataSample: card.aggregatedData.slice(0, maxRows),
+                aggregatedDataSample: formatPeriodRowsForDisplay(card.aggregatedData.slice(0, maxRows), card.plan.periodSeries),
                 aggregatedRowCount: card.aggregatedData.length,
                 isFallback: Boolean(card.plan.isFallback),
             };
@@ -76,7 +77,8 @@ export const buildNarrativeAnalysisIrInputList = (
             selectionScore: ir.selectionScore,
             selectionReasons: ir.selectionReasons,
             summary: card.summary.text,
-            aggregatedDataSample: ir.aggregatedData.slice(0, maxRows),
+            // Periods reach the narrative at their grain ("2025"), as the card shows them.
+            aggregatedDataSample: formatPeriodRowsForDisplay(ir.aggregatedData.slice(0, maxRows), card.plan.periodSeries),
             aggregatedRowCount: ir.aggregatedData.length,
             isFallback: ir.isFallback,
         };

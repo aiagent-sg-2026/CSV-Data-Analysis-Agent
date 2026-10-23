@@ -131,6 +131,26 @@
     - Transport, **P0**: SUM(Value) across series with different units ("Total ridership 11.2M", marked Verified), and a summary line "total ridership was 67" (67 is rail length in km). Worker U is fixing this: series additivity at intake, and a gate that requires a per-series analysis.
     - Business formation: 3 cards; the top-4 medians are verified (Wholesale 777, Professional Services 615, Retail 405, Finance 323). "Max Value by Period" is generic and low-value.
     - Visitor arrivals: 4 cards; total by market verified (Indonesia 42,399,967, China 36,552,383, ...).
+  - Then integrated:
+    - V: a NULL aggregate shows as "No data".
+    - U: series additivity at intake, plus `seriesMeasureGuard.ts`.
+    - W: the Default gateway rejects schemas with objects nested deeper than 4 levels (`DEMO_SCHEMA_UNSUPPORTED`) and also rejects `anyOf`. The evidence-plan output schema is flattened (`aggregateFilters`), and series named in words resolve.
+    - X, fixes for the independent review:
+      - P1: plain wide tables are additive unless the numbers contradict it;
+      - P1: a repeated child label gets a unique key (`Citizens > Male`);
+      - P2: markers count as missing only in numeric columns;
+      - P2: `'-` reads as 0;
+      - P2: the sample size counts values, not rows;
+      - P2: the guard also covers chat and skill cards.
+  - Transport after these fixes: a Verified "Average Daily Ridership - MRT" trend over 36 years (3,490 in 2025, verified), with no cross-series total.
+  - Full gate: 459 files / 4,283 tests; `test:publish` 4/4; bundle budget and `stage:pages` (107 files) pass.
+  - **Deployed as PR #37 (merge 9efc4d3), live 1.0.0-25aa3ed81291.** Live no-AI audit:
+    - 6 viewports clean;
+    - all 8 fast datasets load: rent 9,507, COE 1,990, business 7,056 = 16×441, visitors 13,888, transport 396.
+  - No live real-AI rerun, to save the shared quota (about 330 requests used today). The candidate runs used the same build under the live origin.
+  - Next round in progress:
+    - Y: sweep every structured-output schema for gateway compatibility (`anyOf`, depth), and stop time-series plans from truncating periods.
+    - Z: period display by grain (`2025`, `Aug 2026`); single-series card titles; an empty final summary under a "Verified evidence" badge.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.

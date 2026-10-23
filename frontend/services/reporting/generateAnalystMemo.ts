@@ -1,6 +1,5 @@
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from '../ai/streamGenerateText';
-import { prepareSchemaForProvider } from '../ai/googleSchemaAdapter';
+import { createStructuredOutput } from '../ai/structuredOutput';
 import type { ModelMessage } from 'ai';
 import type {
     AnalystConfidence,
@@ -288,7 +287,7 @@ export const generateAnalystMemoWithDiagnostics = async (
             (fb) => streamGenerateText({
                 model: fb ?? model,
                 messages,
-                output: Output.object({ schema: jsonSchema(prepareSchemaForProvider(analystMemoSchema, settings.provider) as Parameters<typeof jsonSchema>[0]) }),
+                output: createStructuredOutput(analystMemoSchema, settings.provider),
             }),
             { settings, primaryModelId: modelId, label: 'analystMemoGenerator', abortSignal },
         );

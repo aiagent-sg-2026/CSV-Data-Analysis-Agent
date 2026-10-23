@@ -6,12 +6,14 @@
  */
 
 import type {
+    ColumnProfile,
     QueryAggregateClause,
     QueryPlan,
     SqlAnalysisPlan,
     SqlEvidenceQueryPlan,
 } from '../../../types';
 import { normalizeString } from './semanticTextMatching';
+import { isTimeLikeDimensionColumn } from '../analysisColumnRoles';
 
 // Same key as EVIDENCE_AGGREGATE_FILTERS_KEY in services/ai/schemas/analysisSchemas.ts;
 // kept local so plan validation does not load the provider schema module.
@@ -166,6 +168,38 @@ export const normalizeEvidenceQuery = (plan: SqlEvidenceQueryPlan): QueryPlan =>
     }
 
     return normalizedQuery;
+};
+
+/** The query engine's row ceiling; the stepped planner uses it for temporal group-bys too. */
+export const TIME_SERIES_EVIDENCE_LIMIT = 500;
+
+const isTemporalColumn = (name: string, columns: ColumnProfile[]) => {
+    const profile = columns.find(column => column.name.toLowerCase() === name.toLowerCase());
+    return profile?.type === 'date' || profile?.type === 'time' || isTimeLikeDimensionColumn(name);
+};
+
+/**
+ * A time series ordered oldest-first has no meaningful "top N": a model-chosen
+ * LIMIT below the period count (for example 31 for 36 periods) silently drops
+ * the latest periods. Raise it to the engine ceiling instead of keeping only a
+ * recent window, so the result stays the complete series in time order and the
+ * card needs no truncation handling. A newest-first temporal order or a
+ * value-ranked order is an explicit window or ranking and keeps its limit.
+ */
+export const widenTimeSeriesEvidenceLimit = (plan: SqlEvidenceQueryPlan, columns: ColumnProfile[]): boolean => {
+    const groupBy = plan.query.groupBy ?? [];
+    if (plan.queryMode !== 'aggregate' || groupBy.length === 0) return false;
+    const [firstOrder] = plan.query.orderBy ?? [];
+    const orderColumn = typeof firstOrder?.column === 'string' ? firstOrder.column : '';
+    const timeSeriesShape = plan.preferredResultShape === 'time_series';
+    const orderedOldestFirst = firstOrder
+        ? firstOrder.direction !== 'desc'
+            && groupBy.some(column => column.toLowerCase() === orderColumn.toLowerCase())
+            && (timeSeriesShape || isTemporalColumn(orderColumn, columns))
+        : timeSeriesShape || groupBy.some(column => isTemporalColumn(column, columns));
+    if (!orderedOldestFirst || (plan.query.limit ?? 0) >= TIME_SERIES_EVIDENCE_LIMIT) return false;
+    plan.query.limit = TIME_SERIES_EVIDENCE_LIMIT;
+    return true;
 };
 
 /**

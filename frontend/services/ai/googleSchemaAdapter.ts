@@ -11,12 +11,28 @@ const inferEnumType = (values: unknown[]): 'string' | 'number' | 'boolean' | nul
     return null;
 };
 
-const mergeObjectAlternatives = (alternatives: Record<string, unknown>[]): Record<string, unknown> => {
+/**
+ * Merges the properties of object alternatives (a discriminated union) into one
+ * object. A key that every variant pins to its own enum value (such as an
+ * operation's `type`) keeps the union of those values; otherwise the merged
+ * object could only ever name the last variant.
+ */
+const mergeObjectAlternatives = (
+    alternatives: Record<string, unknown>[],
+    sanitizeProperty: (value: unknown) => unknown,
+): Record<string, unknown> => {
     const properties: Record<string, unknown> = {};
     alternatives.forEach(alternative => {
         const rawProperties = isRecord(alternative.properties) ? alternative.properties : {};
         Object.entries(rawProperties).forEach(([key, value]) => {
-            properties[key] = sanitizeGoogleSchemaNode(value);
+            const next = sanitizeProperty(value);
+            const previous = properties[key];
+            if (isRecord(previous) && isRecord(next) && Array.isArray(previous.enum) && Array.isArray(next.enum)
+                && previous.type === next.type) {
+                properties[key] = { ...next, enum: [...new Set([...previous.enum, ...next.enum])] };
+                return;
+            }
+            properties[key] = next;
         });
     });
     return {
@@ -45,7 +61,7 @@ const sanitizeGoogleSchemaNode = (node: unknown): Record<string, unknown> => {
             candidate.type === 'object' || isRecord(candidate.properties),
         );
         if (objectAlternatives.length > 0) {
-            return mergeObjectAlternatives(objectAlternatives);
+            return mergeObjectAlternatives(objectAlternatives, sanitizeGoogleSchemaNode);
         }
         const arrayAlternative = sanitizedAlternatives.find(candidate => candidate.type === 'array');
         if (arrayAlternative) {
@@ -180,6 +196,111 @@ const sanitizeOpenAiSchemaNode = (node: unknown): unknown => {
     }
 
     return result;
+};
+
+const COMBINATORS = ['anyOf', 'oneOf', 'allOf'] as const;
+
+/**
+ * Property names renamed on the wire for the Default demo gateway. `type` is a
+ * JSON Schema keyword; it was renamed while diagnosing HTTP 400
+ * DEMO_SCHEMA_UNSUPPORTED "JSON Schema property names are invalid", and every
+ * schema verified against the live gateway (2026-10-23) sent `kind`, so the
+ * rename stays until `type` itself is shown to be accepted. The parsed output
+ * is renamed back (restoreGatewayPropertyNames), so callers keep the canonical keys.
+ */
+export const GATEWAY_PROPERTY_ALIASES: Readonly<Record<string, string>> = {
+    type: 'kind',
+};
+
+/**
+ * The Default demo gateway answers HTTP 400 "JSON Schema field 'anyOf' is not
+ * supported" for any combinator in `text.format.schema`. Value-level unions
+ * collapse the way the Google adapter already collapses them, so both
+ * providers return the same shapes: object variants merge into one object,
+ * otherwise the array alternative wins (a scalar-or-list value becomes a list),
+ * then the string alternative. Combinators on an object node are left for the
+ * OpenAI pass, which drops the "required at least one of" form.
+ * A schema whose union cannot collapse without losing meaning needs its own
+ * gateway variant instead (see defaultGatewayDataPreparationSchema).
+ */
+const collapseCombinatorsForGateway = (node: unknown): unknown => {
+    if (!isRecord(node)) return node;
+    const result: Record<string, unknown> = { ...node };
+    if (isRecord(node.properties)) {
+        result.properties = Object.fromEntries(
+            Object.entries(node.properties).map(([key, value]) => [key, collapseCombinatorsForGateway(value)]),
+        );
+    }
+    if (isRecord(node.items)) {
+        result.items = collapseCombinatorsForGateway(node.items);
+    }
+    const combinator = COMBINATORS.find(key => Array.isArray(node[key]));
+    if (!combinator) return result;
+    const alternatives = (node[combinator] as unknown[]).map(collapseCombinatorsForGateway).filter(isRecord);
+    if (result.type === 'object' || isRecord(result.properties)) {
+        result[combinator] = alternatives;
+        return result;
+    }
+    const objectAlternatives = alternatives.filter(candidate => candidate.type === 'object' || isRecord(candidate.properties));
+    const chosen = objectAlternatives.length > 0
+        ? mergeObjectAlternatives(objectAlternatives, value => value)
+        : alternatives.find(candidate => candidate.type === 'array')
+            ?? alternatives.find(candidate => candidate.type === 'string')
+            ?? alternatives[0]
+            ?? { type: 'string' };
+    return { ...chosen, ...(typeof node.description === 'string' ? { description: node.description } : {}) };
+};
+
+const renamePropertiesForGateway = (node: unknown): unknown => {
+    if (!isRecord(node)) return node;
+    const result: Record<string, unknown> = { ...node };
+    if (isRecord(node.properties)) {
+        const keys = Object.keys(node.properties);
+        result.properties = Object.fromEntries(Object.entries(node.properties).map(([key, value]) => {
+            const alias = GATEWAY_PROPERTY_ALIASES[key];
+            if (alias && keys.includes(alias)) {
+                throw new Error(`Cannot rename schema property "${key}" to "${alias}" for the demo gateway: the object already has "${alias}".`);
+            }
+            return [alias ?? key, renamePropertiesForGateway(value)];
+        }));
+        if (Array.isArray(node.required)) {
+            result.required = node.required.map(key => (typeof key === 'string' ? GATEWAY_PROPERTY_ALIASES[key] ?? key : key));
+        }
+    }
+    if (isRecord(node.items)) {
+        result.items = renamePropertiesForGateway(node.items);
+    }
+    return result;
+};
+
+/** Walks the parsed output alongside the pre-rename schema and restores renamed keys. */
+const restoreGatewayPropertyNames = (value: unknown, node: unknown): unknown => {
+    if (!isRecord(node)) return value;
+    if (Array.isArray(value)) {
+        return isRecord(node.items) ? value.map(item => restoreGatewayPropertyNames(item, node.items)) : value;
+    }
+    if (!isRecord(value) || !isRecord(node.properties)) return value;
+    const properties = node.properties;
+    const restored: Record<string, unknown> = {};
+    Object.entries(value).forEach(([wireKey, child]) => {
+        const original = Object.keys(properties).find(key => (GATEWAY_PROPERTY_ALIASES[key] ?? key) === wireKey) ?? wireKey;
+        restored[original] = restoreGatewayPropertyNames(child, properties[original]);
+    });
+    return restored;
+};
+
+/**
+ * Prepares a structured-output (`text.format`) schema for the Default demo
+ * gateway: combinators collapse, aliased property names are renamed, then the
+ * OpenAI strict-mode rules apply. `restore` maps a parsed output back to the
+ * canonical property names. Tool parameter schemas keep prepareSchemaForProvider.
+ */
+export const prepareGatewayStructuredOutputSchema = <T extends Record<string, unknown>>(schema: T) => {
+    const collapsed = collapseCombinatorsForGateway(cloneSchema(schema));
+    return {
+        schema: sanitizeOpenAiSchemaNode(renamePropertiesForGateway(collapsed)) as Record<string, unknown>,
+        restore: (value: unknown) => restoreGatewayPropertyNames(value, collapsed),
+    };
 };
 
 export const prepareSchemaForProvider = <T extends Record<string, unknown>>(

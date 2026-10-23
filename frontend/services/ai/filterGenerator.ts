@@ -1,9 +1,8 @@
 import { ColumnProfile, CsvRow, Settings, AiFilterResponse } from '../../types';
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from './streamGenerateText';
 import { filterFunctionSchema } from './schemas/dataSchemas';
 import { createFilterFunctionPrompt, filterGeneratorSystemPrompt } from '../prompts/dataPrompts';
-import { prepareSchemaForProvider } from './googleSchemaAdapter';
+import { createStructuredOutput } from './structuredOutput';
 import { createProviderModel } from './providerConfig';
 import {
     ContextTelemetryTarget,
@@ -59,7 +58,7 @@ export const generateFilterFunction = async (
                                 { role: 'system', content: managed.systemText },
                                 { role: 'user', content: promptContent },
                             ],
-                            output: Output.object({ schema: jsonSchema(prepareSchemaForProvider(filterFunctionSchema, settings.provider) as Parameters<typeof jsonSchema>[0]) }),
+                            output: createStructuredOutput(filterFunctionSchema, settings.provider),
                             abortSignal,
                         }),
                         { settings, primaryModelId: modelId, label: 'filterGenerator', abortSignal },

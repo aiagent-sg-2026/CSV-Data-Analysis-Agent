@@ -1,4 +1,3 @@
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from './streamGenerateText';
 import type {
     ColumnProfile,
@@ -10,7 +9,7 @@ import type {
 } from '../../types';
 import { createProviderModel, isProviderConfigured } from './providerConfig';
 import { withTransientRetry } from './transientRetry';
-import { prepareSchemaForProvider } from './googleSchemaAdapter';
+import { createStructuredOutput } from './structuredOutput';
 import { datasetSemanticAnnotationSchema } from './schemas/dataSchemas';
 import {
     type ContextTelemetryTarget,
@@ -191,9 +190,7 @@ export const annotateDatasetSemantics = async ({
                             { role: 'system', content: managed.systemText },
                             { role: 'user', content: createDatasetSemanticAnnotationPrompt(managed.userText) },
                         ],
-                        output: Output.object({
-                            schema: jsonSchema(prepareSchemaForProvider(datasetSemanticAnnotationSchema, settings.provider)),
-                        }),
+                        output: createStructuredOutput(datasetSemanticAnnotationSchema, settings.provider),
                     }),
                     { settings, primaryModelId: modelId, label: 'datasetSemanticAnnotator' },
                 );

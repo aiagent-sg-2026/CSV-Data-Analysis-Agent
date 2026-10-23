@@ -1,6 +1,5 @@
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from '../ai/streamGenerateText';
-import { prepareSchemaForProvider } from '../ai/googleSchemaAdapter';
+import { createStructuredOutput } from '../ai/structuredOutput';
 import type {
     EvidenceHarnessContext,
     EvidenceSampleSizeCaveat,
@@ -706,9 +705,7 @@ const callAiEvidenceEvaluation = async (
                         { role: 'system', content: 'You are an expert data analyst evaluating SQL query evidence quality. Return one JSON object.' },
                         { role: 'user', content: prompt },
                     ],
-                    output: Output.object({
-                        schema: jsonSchema(prepareSchemaForProvider(createEvidenceEvaluationSchema(), settings.provider) as Parameters<typeof jsonSchema>[0]),
-                    }),
+                    output: createStructuredOutput(createEvidenceEvaluationSchema(), settings.provider),
                     abortSignal: controller.signal,
                 }),
                 { settings, primaryModelId: modelId, label: 'evidenceValueGate', abortSignal: controller.signal },

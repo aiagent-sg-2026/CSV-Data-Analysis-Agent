@@ -1,7 +1,7 @@
 import { compactIfLarge } from './compactNumber';
 import type { AnalysisPlan, CsvCellValue, CsvRow } from '../types';
 import { buildColumnDisplayLabels, resolvePlanGroupLabel, resolvePlanMetricLabel } from '../services/dashboard/businessLabelResolver';
-import { formatTemporalDisplayValue, isTemporalDisplayColumn } from './temporalDisplay';
+import { formatTemporalDisplayValue, isTemporalDisplayColumn, type PeriodDisplayContext } from './temporalDisplay';
 
 const UNKNOWN_LABEL = 'Unknown';
 const OTHERS_LABEL = 'Others';
@@ -93,8 +93,9 @@ export const formatAnalysisCellValue = (
     columnName: string,
     value: CsvCellValue,
     maximumFractionDigits = 2,
+    period?: PeriodDisplayContext | null,
 ): string => {
-    const temporalDisplayValue = formatTemporalDisplayValue(columnName, value);
+    const temporalDisplayValue = formatTemporalDisplayValue(columnName, value, period);
     if (temporalDisplayValue) {
         return temporalDisplayValue;
     }
@@ -115,7 +116,7 @@ export const getNumericColumns = (rows: CsvRow[], headers: string[]): string[] =
 
 export const getAnalysisColumnLabels = (
     headers: string[],
-    plan?: Pick<AnalysisPlan, 'title' | 'description' | 'groupByColumn' | 'valueColumn'>,
+    plan?: Pick<AnalysisPlan, 'title' | 'description' | 'groupByColumn' | 'valueColumn' | 'aggregation' | 'periodSeries'>,
 ): Record<string, string> => {
     const fallbackLabels = buildColumnDisplayLabels(headers, plan ? [plan] : []);
 

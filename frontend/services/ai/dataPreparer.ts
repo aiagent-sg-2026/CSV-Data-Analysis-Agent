@@ -1,10 +1,9 @@
 import type { ColumnProfile, Settings, DataPreparationPlan, CsvRow, CsvData, DataPreparationRuntimeContext, DataPreparationPlanGenerationOptions } from '../../types';
-import { Output, jsonSchema } from 'ai';
 import { streamGenerateText } from './streamGenerateText';
 import { getDataPreparationProviderSchema } from './schemas/dataSchemas';
 import { createDataPreparationPrompt, dataPreparationSystemPrompt } from '../prompts/dataPrompts';
 import { createProviderModel } from './providerConfig';
-import { prepareSchemaForProvider } from './googleSchemaAdapter';
+import { createStructuredOutput } from './structuredOutput';
 import { withTransientRetry } from './transientRetry';
 import {
     ContextTelemetryTarget,
@@ -14,6 +13,7 @@ import {
     reportContextDiagnostics,
 } from './contextManager';
 import { applyDataOperations, normalizeDataPreparationPlan } from '../agent/execution/dataOperationRunner';
+import { liftGatewayDataPreparationOutput } from './dataPreparationGatewayOutput';
 import { detectReportShape, isWideReportShape } from '../agent/reportShapeDetector';
 import { buildReshapeHypotheses } from '../agent/reportShapeHypothesis';
 import { isRepeatedAttributeBundleTable } from '../agent/repeatedBundleTableDetector';
@@ -87,7 +87,10 @@ export const generateDataPreparationPlan = async (
         ? buildReshapeHypotheses(sourceShapeProfile, sourceData)[0] ?? null
         : null;
     const useCompactWideTableSchema = settings.provider === 'google' && schemaContext.wideProfile.isWide;
-    const responseSchema = getDataPreparationProviderSchema({ compactWideTable: useCompactWideTableSchema });
+    const responseSchema = getDataPreparationProviderSchema({
+        compactWideTable: useCompactWideTableSchema,
+        defaultGateway: settings.provider === 'default',
+    });
     const hierarchyPreservationRequired = sampleContext.hasHierarchySignal
         || sourceShapeProfile?.primaryKind === 'hierarchical_statement'
         || (sourceShapeProfile?.primaryKind === 'mixed_report' && Boolean(sourcePrimaryHypothesis?.hierarchyDepthColumn))
@@ -210,9 +213,7 @@ export const generateDataPreparationPlan = async (
                                 { role: 'user', content: promptContent },
                             ],
                             abortSignal,
-                            output: Output.object({
-                                schema: jsonSchema(prepareSchemaForProvider(responseSchema, settings.provider)),
-                            }),
+                            output: createStructuredOutput(responseSchema, settings.provider),
                         }),
                         { settings, primaryModelId: modelId, label: 'dataPreparer', abortSignal },
                     );
@@ -225,7 +226,9 @@ export const generateDataPreparationPlan = async (
                 { attempt: i + 1, strictMode },
             );
 
-            const plan = normalizeDataPreparationPlan(result.output as DataPreparationPlan);
+            const plan = normalizeDataPreparationPlan(
+                settings.provider === 'default' ? liftGatewayDataPreparationOutput(result.output) : result.output as DataPreparationPlan,
+            );
             if (!plan) {
                 throw new Error('AI returned an invalid data preparation plan.');
             }

@@ -137,6 +137,18 @@ export const streamGenerateText = async (
             if (finishReasonResult.status === 'rejected') {
                 throw resolveStreamFailure(finishReasonResult.reason, streamedError, streamOptions.abortSignal);
             }
+            // An error event after the response started (an upstream failure
+            // or rate limit reported inside the stream) settles `text` as ''
+            // with finishReason 'error'. Returning that as a normal answer
+            // would hide the failure from retry logic and callers.
+            if (
+                finishReasonResult.value === 'error'
+                && !textResult.value.trim()
+                && streamedError instanceof Error
+                && !streamOptions.abortSignal?.aborted
+            ) {
+                throw streamedError;
+            }
 
             // stream.output only resolves when Output.object({ schema }) was
             // passed. A rejected output sibling is non-fatal for text callers.

@@ -1,4 +1,4 @@
-import type { AnalysisPlan } from '../../types';
+import type { AnalysisPlan, PeriodGrain } from '../../types';
 import { pluralizeLabel, toDisplayLabel } from './executiveKpiUtils';
 import { isHelperLikeGroupHint } from './businessLabelHeuristics';
 
@@ -168,7 +168,40 @@ const extractTitleHints = (title: string | undefined) => {
     return {};
 };
 
-type DisplayPlanSource = Pick<AnalysisPlan, 'title' | 'description' | 'groupByColumn' | 'valueColumn' | 'artifactMetadata'>;
+type DisplayPlanSource = Pick<AnalysisPlan, 'title' | 'description' | 'groupByColumn' | 'valueColumn' | 'artifactMetadata' | 'aggregation' | 'periodSeries'>;
+
+const PERIOD_GRAIN_LABELS: Record<PeriodGrain, string> = { year: 'Year', quarter: 'Quarter', month: 'Month' };
+
+const groupsByPeriod = (plan: DisplayPlanSource): boolean => Boolean(
+    plan.periodSeries
+    && plan.groupByColumn
+    && normalizeKey(plan.groupByColumn) === normalizeKey(plan.periodSeries.periodColumn),
+);
+
+/**
+ * On a melted period table the value column means whatever the selected series
+ * measures, so a card reading one series per period is labelled by that series
+ * ("Average Daily Ridership - MRT"), never by the generic "Avg Value". Each
+ * period holds one value of the series, so the aggregate does not change it;
+ * counts and other groupings keep their own labels.
+ */
+const resolveSeriesMetricLabel = (plan: DisplayPlanSource): string | null => {
+    const series = plan.periodSeries?.seriesName?.trim();
+    if (!series || !plan.valueColumn) return null;
+    if (plan.aggregation === 'count' || plan.aggregation === 'count_distinct') return null;
+    if (plan.groupByColumn && !groupsByPeriod(plan)) return null;
+    return series;
+};
+
+const titleTokens = (value: string): string[] =>
+    value.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean).map(token => token.replace(/s$/, ''));
+
+/** True when every word of the series label appears in the title, in any order. */
+const titleNamesSeries = (title: string, series: string): boolean => {
+    const available = new Set(titleTokens(title));
+    const required = titleTokens(series);
+    return required.length > 0 && required.every(token => available.has(token));
+};
 
 const extractCrossTabHints = (description: string | undefined) => {
     const sanitizedDescription = sanitizePhrase(description);
@@ -229,6 +262,9 @@ const replaceWholeWord = (text: string, search: string | undefined, replacement:
 };
 
 export const resolvePlanGroupLabel = (plan: DisplayPlanSource): string => {
+    if (groupsByPeriod(plan)) {
+        return PERIOD_GRAIN_LABELS[plan.periodSeries!.periodGrain];
+    }
     const fallback = getFallbackDisplayLabel(plan.groupByColumn, 'Group');
     if (!plan.groupByColumn || !INTERNAL_GROUP_COLUMNS.has(normalizeKey(plan.groupByColumn))) {
         return fallback;
@@ -247,6 +283,8 @@ export const resolvePlanGroupLabel = (plan: DisplayPlanSource): string => {
 
 export const resolvePlanMetricLabel = (plan: DisplayPlanSource): string | null => {
     if (!plan.valueColumn) return null;
+    const seriesLabel = resolveSeriesMetricLabel(plan);
+    if (seriesLabel) return seriesLabel;
 
     const fallback = getFallbackDisplayLabel(plan.valueColumn, 'Metric');
     if (!INTERNAL_METRIC_COLUMNS.has(normalizeKey(plan.valueColumn))) {
@@ -270,6 +308,12 @@ export const resolveDisplayPlanTitle = (
     const metricLabel = resolvePlanMetricLabel(plan);
     const groupLabel = resolvePlanGroupLabel(plan);
     const columnLabel = getPlanHints(plan).columnLabel;
+    const seriesLabel = resolveSeriesMetricLabel(plan);
+    if (seriesLabel) {
+        // A specific AI title that already names the series is kept as written.
+        if (titleNamesSeries(title, seriesLabel)) return title;
+        return plan.groupByColumn ? `${seriesLabel} by ${groupLabel.toLowerCase()}` : seriesLabel;
+    }
     const topMatch = title.match(TOP_BY_PATTERN);
 
     if (topMatch && metricLabel) {

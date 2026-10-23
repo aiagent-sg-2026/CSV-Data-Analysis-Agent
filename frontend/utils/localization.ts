@@ -578,6 +578,36 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Japanese': '- 元のトピック計画が失敗したため、{count} 枚のフォールバックカードはこの叙述から除外されました。',
         'French': '- {count} carte(s) de repli ont été exclues de cette narration, car leurs plans thématiques d’origine ont échoué.',
     },
+    'evidence_summary_title': {
+        'English': '### Overall insights',
+        'Mandarin': '### 整体洞察',
+        'Malay': '### Pandangan keseluruhan',
+        'Japanese': '### 全体的な洞察',
+    },
+    'evidence_summary_trend_fact': {
+        'English': '{metric} was {latest} in {latestPeriod}, compared with {first} in {firstPeriod}.',
+        'Mandarin': '{metric}在 {latestPeriod} 为 {latest}，在 {firstPeriod} 为 {first}。',
+        'Malay': '{metric} ialah {latest} pada {latestPeriod}, berbanding {first} pada {firstPeriod}.',
+        'Japanese': '{metric}は {latestPeriod} に {latest}、{firstPeriod} に {first} でした。',
+    },
+    'evidence_summary_top_fact': {
+        'English': '{group} has the highest {metric} at {value}.',
+        'Mandarin': '{group} 的{metric}最高，为 {value}。',
+        'Malay': '{group} mempunyai {metric} tertinggi, iaitu {value}.',
+        'Japanese': '{group} の{metric}が最も高く、{value} です。',
+    },
+    'evidence_summary_lowest_fact': {
+        'English': '{group} has the lowest {metric} at {value}.',
+        'Mandarin': '{group} 的{metric}最低，为 {value}。',
+        'Malay': '{group} mempunyai {metric} terendah, iaitu {value}.',
+        'Japanese': '{group} の{metric}が最も低く、{value} です。',
+    },
+    'evidence_summary_note': {
+        'English': 'The AI summary could not be generated, so these points are read directly from {count} evidence card(s).',
+        'Mandarin': 'AI 摘要未能生成，以上要点直接取自 {count} 张证据卡片。',
+        'Malay': 'Ringkasan AI tidak dapat dijana, jadi perkara ini dibaca terus daripada {count} kad bukti.',
+        'Japanese': 'AI 要約を生成できなかったため、上記は {count} 枚のエビデンスカードから直接読み取った内容です。',
+    },
     'fallback_card_title': {
         'English': '### Simplified Insight',
         'Mandarin': '### 简化洞察',

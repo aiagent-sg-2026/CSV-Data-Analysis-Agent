@@ -26,6 +26,7 @@ import { formatReportContextForPrompt, resolveEffectiveReportContext } from '../
 import { emitSilentFailure } from '../agent/monitoring/silentFailureTracker';
 import type { AnyStoreWithTelemetry } from '../agent/monitoring/silentFailureTracker';
 import { resolveSeriesMeasure } from '../agent/planning/seriesMeasureGuard';
+import { SUMMARY_PLACEHOLDER_TEXTS } from '../../utils/summaryPlaceholders';
 
 /**
  * Wraps a telemetry target (which may be a full AppStore) as the minimal
@@ -65,7 +66,7 @@ export const generateSummary = async (
     if (!isProviderConfigured(settings)) {
         return {
             language: settings.language,
-            text: 'AI Summaries are disabled. No API Key provided.',
+            text: SUMMARY_PLACEHOLDER_TEXTS.disabled,
         };
     }
 
@@ -112,7 +113,7 @@ export const generateSummary = async (
 
         return {
             language: settings.language,
-            text: result.text || 'No summary generated.',
+            text: result.text || SUMMARY_PLACEHOLDER_TEXTS.emptyCard,
         };
     } catch (error) {
         console.error("Error generating summary:", error);
@@ -192,7 +193,7 @@ export const generateCoreAnalysisSummary = async (
 
         return {
             language: settings.language,
-            text: result.text || 'No summary generated.',
+            text: result.text || SUMMARY_PLACEHOLDER_TEXTS.emptyCard,
         };
     } catch (error) {
         console.error("Error generating core analysis summary:", error);
@@ -216,7 +217,7 @@ export const generateFinalSummary = async (
     if (!isProviderConfigured(settings)) {
         return {
             language: settings.language,
-            text: 'AI Summaries are disabled. No API Key provided.',
+            text: SUMMARY_PLACEHOLDER_TEXTS.disabled,
         };
     }
 
@@ -265,7 +266,7 @@ export const generateFinalSummary = async (
 
         return {
             language: settings.language,
-            text: result.text || 'No final summary generated.',
+            text: result.text || SUMMARY_PLACEHOLDER_TEXTS.emptyFinal,
         };
     } catch (error) {
         console.error("Error generating final summary:", error);
@@ -276,7 +277,7 @@ export const generateFinalSummary = async (
         });
         return {
             language: settings.language,
-            text: 'Failed to generate the final AI summary.',
+            text: SUMMARY_PLACEHOLDER_TEXTS.failedFinal,
         };
     }
 }
