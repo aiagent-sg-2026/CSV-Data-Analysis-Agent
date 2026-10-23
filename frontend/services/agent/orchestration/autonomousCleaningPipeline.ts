@@ -52,6 +52,7 @@ import {
     evaluateCleaningStrategyEligibility,
 } from './cleaningStrategyRecovery';
 import { emitFailure, attemptGracefulDegradation } from './cleaningPipelineTermination';
+import { replaceInternalCodesWithPlainText } from '../../../utils/localization';
 import { getPreferredAnalysisDataset } from '../reportStructureState';
 import { trySandboxCleaningFallback } from './sandboxCleaningFallback';
 
@@ -223,7 +224,7 @@ export const orchestrateAutonomousAiCleaning = async (
                     ...prev.chatHistory,
                     createChatMessage({
                         sender: 'ai',
-                        text: translateCleaning(prev.settings.language, 'autonomous_cleaning_failed_rollback', { message: finalFailureMessage }),
+                        text: translateCleaning(prev.settings.language, 'autonomous_cleaning_failed_rollback', { message: replaceInternalCodesWithPlainText(finalFailureMessage, prev.settings.language) }),
                         timestamp: new Date(),
                         type: 'ai_cleaning_failure',
                         isError: true,
@@ -495,7 +496,8 @@ export const orchestrateAutonomousAiCleaning = async (
                     failureSignalKey: verification.signalKey,
                 });
                 if (previousArtifact && !previousArtifact.verificationPassed && buildIterationFailureSignature(previousArtifact) === currentSignature) {
-                    lastError = new Error(`Cleaning loop stalled without reducing residual noise or changing verification outcome (${verification.signalKey ?? 'unknown_signal'}).`);
+                    // The failing check stays in the iteration artifact (`failureSignalKey`); the error text is shown to users.
+                    lastError = new Error('Cleaning loop stalled without reducing residual noise or changing the verification outcome.');
                     break;
                 }
                 logCleaningLoopStage(loopRound, 'round_total', roundStartedAt, 'stable_verify_failed');
@@ -728,7 +730,7 @@ export const orchestrateAutonomousAiCleaning = async (
                     technicalDetail: failureSummary,
                 }));
                 latestState.addProgress?.(
-                    translateCleaning(latestState.settings.language, 'autonomous_cleaning_rollback_progress', { message: failureSummary }),
+                    translateCleaning(latestState.settings.language, 'autonomous_cleaning_rollback_progress', { message: replaceInternalCodesWithPlainText(failureSummary, latestState.settings.language) }),
                     'error',
                     latestState.settings.complexModel,
                 );
@@ -884,7 +886,7 @@ export const orchestrateAutonomousAiCleaning = async (
                     failureSignalKey: verification.signalKey,
                 });
                 if (previousArtifact && !previousArtifact.verificationPassed && buildIterationFailureSignature(previousArtifact) === currentSignature) {
-                    lastError = new Error(`Cleaning loop stalled without changing verification outcome (${verification.signalKey ?? 'unknown_signal'}).`);
+                    lastError = new Error('Cleaning loop stalled without changing the verification outcome.');
                     break;
                 }
                 if (isStructuralVerificationSignal(verification.signalKey)) {
@@ -963,7 +965,7 @@ export const orchestrateAutonomousAiCleaning = async (
                                 }),
                             }));
                             latestState.addProgress?.(
-                                translateCleaning(latestState.settings.language, 'autonomous_cleaning_rollback_progress', { message: lastError.message }),
+                                translateCleaning(latestState.settings.language, 'autonomous_cleaning_rollback_progress', { message: replaceInternalCodesWithPlainText(lastError.message, latestState.settings.language) }),
                                 'error',
                                 latestState.settings.complexModel,
                             );
@@ -1050,7 +1052,7 @@ export const orchestrateAutonomousAiCleaning = async (
                 throw lastError;
             }
             getState().addProgress?.(
-                translateCleaning(getState().settings.language, 'autonomous_cleaning_attempt_failed', { message: lastError.message }),
+                translateCleaning(getState().settings.language, 'autonomous_cleaning_attempt_failed', { message: replaceInternalCodesWithPlainText(lastError.message, getState().settings.language) }),
                 'error',
                 getState().settings.complexModel,
             );

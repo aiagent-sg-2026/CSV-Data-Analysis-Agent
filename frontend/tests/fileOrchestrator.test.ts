@@ -12,7 +12,9 @@ const {
     resolveReportStructureArtifactsWithProposalMock,
     saveOriginalDataMock,
     hasDeclinedCloudAiConsentMock,
+    replayDatasetBundleProgramsMock,
 } = vi.hoisted(() => ({
+    replayDatasetBundleProgramsMock: vi.fn(),
     hasDeclinedCloudAiConsentMock: vi.fn(() => false),
     processAndCleanFileMock: vi.fn(),
     orchestrateAutonomousAiCleaningMock: vi.fn(),
@@ -22,6 +24,12 @@ const {
     resolveReportStructureArtifactsWithProposalMock: vi.fn(),
     saveOriginalDataMock: vi.fn(),
 }));
+
+vi.mock('../services/data/datasetBundleReplay', async importOriginal => {
+    const actual = await importOriginal<typeof import('../services/data/datasetBundleReplay')>();
+    replayDatasetBundleProgramsMock.mockImplementation(actual.replayDatasetBundlePrograms);
+    return { ...actual, replayDatasetBundlePrograms: replayDatasetBundleProgramsMock };
+});
 
 vi.mock('../services/privacy/cloudAiConsent', async importOriginal => ({
     ...await importOriginal<typeof import('../services/privacy/cloudAiConsent')>(),
@@ -550,5 +558,42 @@ describe('orchestrateFileUpload post-import pipeline timing', () => {
         expect(state.agentEvents.some(event =>
             event.step === 'structure_confirmation_required',
         )).toBe(false);
+    });
+    it('does not show replay reason codes when a saved lineage cannot be reproduced', async () => {
+        const { store } = createStore();
+        const { createSingleTableDatasetBundle } = await import('../services/data/datasetBundle');
+        const bundle = createSingleTableDatasetBundle({
+            datasetId: 'dataset-1',
+            sourceFingerprint: 'fingerprint-1',
+            file: { name: 'fr_fin_pl_prj.csv', size: 1, lastModified: 1 },
+            data: importReadyData,
+        });
+        processAndCleanFileMock.mockImplementation(() => (async function* () {
+            return { ...createProcessGeneratorResult(), datasetBundle: bundle };
+        })());
+        replayDatasetBundleProgramsMock.mockReturnValueOnce({
+            status: 'fresh_import_required',
+            data: importReadyData,
+            committedTransformationIds: [],
+            reasonCodes: ['transformation_input_version_mismatch', 'program_not_committed'],
+        });
+
+        const generator = (await import('../services/agent/orchestration/fileOrchestrator')).orchestrateFileUpload(
+            { name: 'fr_fin_pl_prj.csv', size: 1 } as File,
+            store,
+            { restoreBundle: bundle },
+        );
+        const progress: string[] = [];
+        let next = await generator.next();
+        while (!next.done) {
+            const update = next.value as { type: string; message?: string; payload?: Record<string, unknown> };
+            if (update.type === 'state') store.setState(update.payload as never);
+            if (update.type === 'progress' && update.message) progress.push(update.message);
+            next = await generator.next();
+        }
+
+        const replayNotice = progress.find(message => /lineage could not be reproduced/i.test(message));
+        expect(replayNotice).toBeDefined();
+        expect(replayNotice).not.toMatch(/[a-z]+_[a-z]+/);
     });
 });

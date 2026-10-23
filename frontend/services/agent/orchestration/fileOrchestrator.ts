@@ -404,7 +404,8 @@ export async function* orchestrateFileUpload(
             yield {
                 type: 'progress',
                 messageType: 'warning',
-                message: `The saved transformation lineage could not be reproduced (${replay.reasonCodes.join(', ')}). The original CSV was imported unchanged and a fresh governed analysis will run.`,
+                // The replay reason codes stay in the agent event detail below; this line is shown to users.
+                message: 'The saved transformation lineage could not be reproduced. The original CSV was imported unchanged and a fresh governed analysis will run.',
             };
             emitAgentEvent(store, {
                 phase: 'file',

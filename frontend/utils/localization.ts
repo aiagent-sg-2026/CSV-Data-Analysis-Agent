@@ -4658,6 +4658,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Japanese': 'データチェックに合格しなかったため、自動分析は一時停止しています。{reason}',
         'Malay': 'Analisis automatik dijeda kerana satu semakan data tidak lulus. {reason}',
     },
+    'internal_code_generic': {
+        'English': 'an internal check',
+        'Mandarin': '一项内部检查',
+        'Japanese': '内部チェック',
+        'Malay': 'satu semakan dalaman',
+    },
     'structure_review_reason_unknown': {
         'English': 'The data structure did not pass an automatic check.',
         'Mandarin': '数据结构未通过一项自动检查。',
@@ -5569,6 +5575,36 @@ export const getStructureReviewReasonText = (code: string, language: string = 'E
     return translations[key]
         ? getTranslation(key, language)
         : getTranslation('structure_review_reason_unknown', language);
+};
+
+// Cleaning and verification codes that are not structure-review reasons but can still end up in error text.
+const OTHER_INTERNAL_CODES = [
+    'semantic_intent_failed',
+    'deterministic_recovery_failed',
+    'deterministic_shaping_failed',
+    'numeric_reconciliation_failed',
+    'llm_budget_exhausted',
+    'sandbox_verification_failed',
+] as const;
+const INTERNAL_CODE_SET = new Set<string>([...STRUCTURE_REVIEW_REASON_CODES, ...OTHER_INTERNAL_CODES]);
+
+/**
+ * Safety net for error text that is assembled from technical parts before it
+ * reaches a progress message or chat bubble: verification detail fragments are
+ * dropped, known check codes become their plain explanation and a leading
+ * `code:` prefix is removed. Unknown snake_case words (column names) are kept.
+ */
+export const replaceInternalCodesWithPlainText = (text: string, language: string = 'English'): string => {
+    const plainOf = (code: string) => INTERNAL_CODE_SET.has(code)
+        ? (translations[`structure_review_reason_${code}`] ? getStructureReviewReasonText(code, language) : getTranslation('internal_code_generic', language))
+        : null;
+    return text
+        .replace(/;?\s*expected_label_layers=\d+;\s*actual_label_layers=\d+/g, '')
+        .replace(/\bsignal=([a-z0-9_]+);?/g, (match, code: string) => plainOf(code) ?? match)
+        .replace(/^\s*[a-z]+(?:_[a-z]+)+:\s*/, prefix => INTERNAL_CODE_SET.has(prefix.replace(/:\s*$/, '').trim()) ? '' : prefix)
+        .replace(/\b[a-z]+(?:_[a-z]+)+\b/g, code => plainOf(code) ?? code)
+        .replace(/\s{2,}/g, ' ')
+        .trim();
 };
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
