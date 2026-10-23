@@ -116,13 +116,12 @@ beforeAll(async () => {
 });
 
 describe('human structure confirmation on the ERP outstanding-orders report', () => {
-    it('blocks automatic analysis for review before the user confirms, without a raw code in the message', () => {
-        expect(blocked.pipelineOutcome).toMatchObject({ status: 'needs_structure_review', canAutoAnalyze: false });
-        // Which checks fire depends on the intake rules; whatever they are, none may appear in the message.
-        const reasons = blocked.reportStructureResolution?.blockingReasons ?? [];
-        expect(reasons.length).toBeGreaterThan(0);
-        for (const reason of reasons) expect(blocked.pipelineOutcome?.message).not.toContain(reason);
-        expect(blocked.pipelineOutcome?.message).not.toMatch(SNAKE_CASE_CODE);
+    it('needs no review on the first pass once body noise and folded header layers are handled, and shows no raw code', () => {
+        // Before the intake fixes this report stopped at structure review (page-break rows, subtotals and a
+        // two-row header). The confirm tests below still start from this resolution's own boundary, so they
+        // cover the stale-failed-cleaning-run path whether or not a review was needed.
+        expect(blocked.pipelineOutcome).toMatchObject({ status: 'ready', canAutoAnalyze: true });
+        expect(blocked.pipelineOutcome?.message ?? '').not.toMatch(SNAKE_CASE_CODE);
     });
 
     it('starts the analysis after the user confirms, even though the blocked attempt left the cleaning run failed', async () => {
