@@ -680,9 +680,19 @@ export const generateEvidenceQueryPlanWithRetry = async (
 
             // Fold the flat aggregateFilters list into aggregates[].where before
             // semantic defaults may rename the aliases it refers to.
-            const rawPlan = liftEvidencePlanAggregateFilters(result.output !== undefined
-                ? result.output
-                : robustlyParseJsonObject(result.text));
+            let parsedPlan: SqlEvidenceQueryPlan;
+            if (result.output !== undefined) {
+                parsedPlan = result.output as SqlEvidenceQueryPlan;
+            } else {
+                try {
+                    parsedPlan = robustlyParseJsonObject(result.text);
+                } catch {
+                    lastError = 'The AI returned an empty or incomplete response';
+                    lastFailureCategory = 'unknown';
+                    continue;
+                }
+            }
+            const rawPlan = liftEvidencePlanAggregateFilters(parsedPlan);
             console.debug(`${LOG_PREFIX} Raw evidence plan from AI for "${topic}":`, rawPlan);
 
             const semanticDefaultsApplied = applyEvidenceQuerySemanticDefaults({

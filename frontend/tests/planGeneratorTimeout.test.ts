@@ -541,23 +541,90 @@ describe('generateEvidenceQueryPlanWithRetry — timeout guard (P0)', () => {
         vi.restoreAllMocks();
     });
 
-    it('retries after a per-attempt timeout and returns plan on second attempt', async () => {
-        const validPlanOutput = {
-            title: 'Revenue by Department',
-            queryMode: 'aggregate',
-            intentSummary: 'SUM(Revenue) grouped by Department',
-            preferredResultShape: 'ranked_aggregate',
-            query: {
-                select: ['Department', 'total_revenue'],
-                groupBy: ['Department'],
-                aggregates: [{ function: 'sum', column: 'Revenue', as: 'total_revenue' }],
-                orderBy: [{ column: 'total_revenue', direction: 'desc' }],
-                limit: 10,
-            },
-        };
+    const validPlanOutput = {
+        title: 'Revenue by Department',
+        queryMode: 'aggregate',
+        intentSummary: 'SUM(Revenue) grouped by Department',
+        preferredResultShape: 'ranked_aggregate',
+        query: {
+            select: ['Department', 'total_revenue'],
+            groupBy: ['Department'],
+            aggregates: [{ function: 'sum', column: 'Revenue', as: 'total_revenue' }],
+            orderBy: [{ column: 'total_revenue', direction: 'desc' }],
+            limit: 10,
+        },
+    };
+    const invokeEvidencePlanner = (options?: { abortSignal?: AbortSignal }) =>
+        generateEvidenceQueryPlanWithRetry(
+            'Revenue by Department',
+            makeColumns(),
+            makeSettings(),
+            undefined, undefined, undefined,
+            makeDatasetContext(),
+            [],
+            undefined, undefined,
+            undefined,
+            { timeoutMs: 50, ...options },
+        );
 
-        // First attempt: throws ProviderTimeoutError → sets lastError → continues
-        // Second attempt: resolves with valid plan
+    it('retries empty response text and returns the valid second plan', async () => {
+        robustlyParseJsonObjectMock.mockImplementation((text: string) => JSON.parse(text));
+        runWithOverflowCompactionMock
+            .mockResolvedValueOnce({ output: undefined, text: '  \n' })
+            .mockResolvedValueOnce({ output: undefined, text: JSON.stringify(validPlanOutput) });
+
+        const plan = await invokeEvidencePlanner();
+
+        expect(plan.title).toBe('Revenue by Department');
+        expect(runWithOverflowCompactionMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('exhausts the bounded attempts for empty text with a SqlAutoAnalysisError', async () => {
+        robustlyParseJsonObjectMock.mockImplementation((text: string) => JSON.parse(text));
+        runWithOverflowCompactionMock.mockResolvedValue({ output: undefined, text: '' });
+
+        await expect(invokeEvidencePlanner()).rejects.toMatchObject({
+            name: 'SqlAutoAnalysisError',
+            message: expect.stringContaining('empty or incomplete response'),
+        });
+        expect(runWithOverflowCompactionMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('retries truncated JSON response text', async () => {
+        robustlyParseJsonObjectMock.mockImplementation((text: string) => JSON.parse(text));
+        runWithOverflowCompactionMock
+            .mockResolvedValueOnce({ output: undefined, text: '{"title":"Revenue by' })
+            .mockResolvedValueOnce({ output: undefined, text: JSON.stringify(validPlanOutput) });
+
+        const plan = await invokeEvidencePlanner();
+
+        expect(plan.title).toBe('Revenue by Department');
+        expect(runWithOverflowCompactionMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not retry an aborted evidence-plan call', async () => {
+        const controller = new AbortController();
+        const abortError = new DOMException('The operation was aborted', 'AbortError');
+        controller.abort(abortError);
+        runWithOverflowCompactionMock.mockRejectedValue(abortError);
+
+        await expect(invokeEvidencePlanner({ abortSignal: controller.signal })).rejects.toBe(abortError);
+        expect(runWithOverflowCompactionMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns a valid first response without retrying', async () => {
+        runWithOverflowCompactionMock.mockResolvedValueOnce({
+            output: validPlanOutput,
+            text: '',
+        });
+
+        const plan = await invokeEvidencePlanner();
+
+        expect(plan.title).toBe('Revenue by Department');
+        expect(runWithOverflowCompactionMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries after a per-attempt timeout and returns plan on second attempt', async () => {
         const { ProviderTimeoutError } = await import('../services/ai/providerActivityGuards');
         runWithOverflowCompactionMock
             .mockRejectedValueOnce(new ProviderTimeoutError(50))
@@ -575,11 +642,8 @@ describe('generateEvidenceQueryPlanWithRetry — timeout guard (P0)', () => {
             { timeoutMs: 50 },
         );
 
-        // Plan must be returned from the second attempt
         expect(plan.title).toBe('Revenue by Department');
         expect(plan.queryMode).toBe('aggregate');
-
-        // runWithOverflowCompaction must have been called at least twice
         expect(runWithOverflowCompactionMock).toHaveBeenCalledTimes(2);
     });
 
