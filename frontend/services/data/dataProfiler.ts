@@ -1,5 +1,8 @@
 import { CsvRow, ColumnProfile, ColumnRole } from '../../types';
 import { collectOrderedColumnNames } from './columnRegistry';
+// The same marker list that DuckDB aggregation treats as NULL, so a column the
+// profiler calls numerical is aggregated with exactly these cells skipped.
+import { isMissingCellValue } from '../duckdb/dimensionNormalization';
 
 export const robustParseFloat = (value: any): number | null => {
     if (value === null || value === undefined) return null;
@@ -64,25 +67,33 @@ export const profileData = (data: CsvRow[]): { profiles: ColumnProfile[], issues
         let isNumerical = true;
         const values = data.map(row => row[header]);
         let numericCount = 0;
-        
+        let missingCount = 0;
+
+        // Blank cells and missing markers (`na`, `-`, `N.A.`) are missing, not
+        // text: one suppressed median must not turn a measure into a category.
         for (const value of values) {
-            const parsedNum = robustParseFloat(value);
-            if (value !== null && String(value).trim() !== '') {
-                if (parsedNum === null) {
-                    isNumerical = false;
-                    break;
-                }
-                numericCount++;
+            if (isMissingCellValue(value)) {
+                missingCount++;
+                continue;
             }
+            if (!isNumerical) continue;
+            if (robustParseFloat(value) === null) {
+                isNumerical = false;
+                continue;
+            }
+            numericCount++;
         }
-        
-        const missingPercentage = (values.filter(v => v === null || String(v).trim() === '').length / data.length);
+
+        const missingPercentage = missingCount / data.length;
         if (missingPercentage > MISSING_VALUE_THRESHOLD) {
             issues.push(`Column '${header}' has a high percentage of missing values (${(missingPercentage * 100).toFixed(0)}%).`);
         }
 
         if (isNumerical && numericCount > 0) {
-            const numericValues = values.map(robustParseFloat).filter((v): v is number => v !== null);
+            const numericValues = values
+                .filter(v => !isMissingCellValue(v))
+                .map(robustParseFloat)
+                .filter((v): v is number => v !== null);
             // Detect comma-formatted thousands separators (e.g. "1,234.56") so downstream
             // SQL can be warned to strip commas before CAST.
             const COMMA_THOUSANDS_PATTERN = /\d{1,3}(,\d{3})+/;
@@ -124,11 +135,15 @@ export const profileData = (data: CsvRow[]): { profiles: ColumnProfile[], issues
 };
 
 /**
- * Last-resort lightweight profiler used when both the web worker and the
- * full main-thread `profileData` are unavailable or throw.
+ * Lightweight profiler. It is the fallback when the web worker and the full
+ * main-thread `profileData` are unavailable or throw, and it also profiles the
+ * canonical analysis dataset (`resolveAnalysisDatasetProfiles`), so its column
+ * types decide which columns the analysis can aggregate as measures.
  *
  * Design constraints:
- *  - Samples at most `maxRows` rows via stratified head/middle/tail split
+ *  - Infers types from at most `maxRows` rows via stratified head/middle/tail split
+ *  - Counts missing cells (blank or a missing marker) over every row, because
+ *    the percentage is reported to the model and the user as a dataset fact
  *  - Uses simple Number() conversion (not robustParseFloat) — fewer failure modes
  *  - Never throws on any input
  *  - Returns a compatible { profiles, issues } shape
@@ -186,7 +201,7 @@ export const profileDataLightweight = (
             for (const row of sample) {
                 const val = row[header];
                 const str = val === null || val === undefined ? '' : String(val).trim();
-                if (str === '') {
+                if (isMissingCellValue(str)) {
                     nullCount += 1;
                 } else {
                     seen.add(str);
@@ -207,7 +222,14 @@ export const profileDataLightweight = (
             const isNumeric = nonNullCount > 0 && numericCount / nonNullCount > 0.8;
             const hasFormattedNumbers = isNumeric && commaFormattedCount > 0;
             const hasApostrophePrefixedNumbers = isNumeric && apostrophePrefixedCount > 0;
-            const missingPercentage = (nullCount / sample.length) * 100;
+            let missingCount = nullCount;
+            if (sample !== data) {
+                missingCount = 0;
+                for (const row of data) {
+                    if (isMissingCellValue(row[header])) missingCount += 1;
+                }
+            }
+            const missingPercentage = (missingCount / data.length) * 100;
 
             return {
                 name: header,

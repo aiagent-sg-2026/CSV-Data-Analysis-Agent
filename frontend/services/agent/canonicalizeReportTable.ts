@@ -123,13 +123,17 @@ const parseNumericCandidate = (value: unknown): number | null => {
     if (DATE_LIKE_PATTERN.test(normalized)) {
         return null;
     }
+    // Whole-string parse after stripping symbols, mirroring isNumericCandidate
+    // in columnRoleClassifier: a prefix parse turned the month "2010-01" into
+    // the number 2010. A trailing minus ("1,234.56-") still marks a negative.
     const numeric = normalized
         .replace(/[^0-9.\-]/g, '')
-        .trim();
+        .trim()
+        .replace(/^(\d[\d.]*)-$/, '-$1');
     if (!numeric || numeric === '-' || numeric === '.' || numeric === '-.') {
         return null;
     }
-    const parsed = Number.parseFloat(numeric);
+    const parsed = Number(numeric);
     return Number.isFinite(parsed) ? parsed : null;
 };
 
