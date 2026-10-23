@@ -93,6 +93,19 @@
     - N: intake/header/summary/reason-code/banner fixes;
     - O: read-only root cause of the structure gate and an agentic reshape path;
     - P: card ranking direction, small-n caveat, all-tied top-N.
+- **Round 5 integration (2026-10-23, branch `claude/funny-lovelace-beqo7n`)**:
+  - Worker P integrated: ranked cards keep the query direction (asc/desc), and a "small group leader" / "tied leading values" caveat shows on thin or tied leaders.
+  - Worker N integrated (5 commits):
+    - Rows whose measure is `na`/`-` no longer become header layers, so rent keeps all 9,507 rows.
+    - CSV dialect: when the 200-line sample has no quotes, it now defaults to `"` quoting. COE row 1580 (`"1,438"`) and 108 other rows were split into extra columns before this fix.
+    - A clean single-header parse skips the in-body header scan.
+    - No phantom summary row past end-of-file.
+    - 28 structure-review reasons are explained in plain language (4 languages), with the codes moved under "Technical details".
+    - The cleaning banner is hidden while structure review is pending.
+  - No-AI intake: rent and COE now reach `ready` with no structure review. Visitor arrivals, transport ridership and business formation are SingStat wide tables (`DataSeries` plus one column per period, with indented child rows) and still need structure review.
+  - In progress:
+    - Worker R: `na`/`N.A.`/`-` become NULL, not 0, in numeric aggregation ("School of Law = 0" on the live card).
+    - Worker S: recognise the SingStat wide shape through the existing wide-reshape/unpivot path, without double-counting subtotals, plus visitor intake speed.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
