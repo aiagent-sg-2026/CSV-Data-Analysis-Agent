@@ -123,6 +123,9 @@ export const REASON_CODE_LABELS: Record<string, string> = {
     volume_driven_aggregate: 'Ranking mostly follows row counts',
     volume_driven_sum: 'Sum ranking mostly follows row counts',
     volume_driven_total: 'Stated total; ranking follows row counts',
+    small_group_leader: 'Leading group rests on very few rows',
+    small_sample_leader: 'Leading group rests on very few rows',
+    tied_leading_values: 'Shown groups share one value',
 };
 
 export const humanizeReasonCode = (code: string): string =>

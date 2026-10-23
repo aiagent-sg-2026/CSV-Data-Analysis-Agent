@@ -351,6 +351,18 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'French': '{group} principal',
         'Malay': '{group} teratas',
     },
+    'executive_kpi_lowest_group_label': {
+        'English': 'Lowest {group}',
+        'Mandarin': '最低{group}',
+        'Japanese': '最下位{group}',
+        'Malay': '{group} terendah',
+    },
+    'executive_kpi_lowest_group_detail': {
+        'English': '{group} has the lowest value in this view.',
+        'Mandarin': '{group} 在此视图中数值最低。',
+        'Japanese': '{group} がこのビューで最も低い値です。',
+        'Malay': '{group} mempunyai nilai terendah dalam paparan ini.',
+    },
     'executive_kpi_group_count_label': {
         'English': '{groups}',
         'Mandarin': '{groups}',
@@ -2002,6 +2014,42 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Paparan {count} teratas',
         'Japanese': '上位 {count} 件ビュー',
     },
+    'analysis_card_scope_bottom_n': {
+        'English': 'Lowest {count} view',
+        'Mandarin': '最低 {count} 项视图',
+        'Malay': 'Paparan {count} terendah',
+        'Japanese': '下位 {count} 件ビュー',
+    },
+    'analysis_card_caveat_small_group': {
+        'English': '{label} (rank {rank}) is based on only {rows} rows.',
+        'Mandarin': '{label}（排名 {rank}）仅基于 {rows} 行数据。',
+        'Malay': '{label} (kedudukan {rank}) hanya berdasarkan {rows} baris.',
+        'Japanese': '{label}（{rank} 位）は {rows} 行のみに基づいています。',
+    },
+    'analysis_card_caveat_small_group_median': {
+        'English': 'The median group has {median} rows, so these values may not be typical.',
+        'Mandarin': '分组行数中位数为 {median}，这些数值可能不具代表性。',
+        'Malay': 'Kumpulan median mempunyai {median} baris, jadi nilai ini mungkin tidak tipikal.',
+        'Japanese': 'グループの行数の中央値は {median} 行のため、これらの値は典型的でない可能性があります。',
+    },
+    'analysis_card_caveat_small_group_title': {
+        'English': 'Small sample:',
+        'Mandarin': '样本过少：',
+        'Malay': 'Sampel kecil:',
+        'Japanese': '少数サンプル:',
+    },
+    'analysis_card_caveat_tied_window': {
+        'English': 'All {count} shown groups share the same value ({value}); {tied} of {total} groups have it, so this view does not rank them.',
+        'Mandarin': '显示的 {count} 个分组数值相同（{value}）；共 {total} 个分组中有 {tied} 个为该值，因此此视图无法区分排名。',
+        'Malay': 'Kesemua {count} kumpulan yang dipaparkan berkongsi nilai yang sama ({value}); {tied} daripada {total} kumpulan mempunyainya, jadi paparan ini tidak menyusun kedudukan mereka.',
+        'Japanese': '表示中の {count} グループはすべて同じ値（{value}）です。{total} グループ中 {tied} グループが同値のため、このビューでは順位を付けられません。',
+    },
+    'analysis_card_caveat_tied_window_title': {
+        'English': 'Tied values:',
+        'Mandarin': '数值并列：',
+        'Malay': 'Nilai seri:',
+        'Japanese': '同値:',
+    },
     'analysis_card_scope_filter': {
         'English': 'Filter: {column} = {values}',
         'Mandarin': '筛选：{column} = {values}',
@@ -3360,6 +3408,8 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'verdict_reason_dimension_quality_warning': { 'English': 'Dimension quality concern', 'Mandarin': '维度质量问题', 'Japanese': 'ディメンション品質懸念', 'Malay': 'Kebimbangan tentang kualiti dimensi' },
     'verdict_reason_metric_quality_warning': { 'English': 'Metric quality concern', 'Mandarin': '指标质量问题', 'Japanese': 'メトリック品質懸念', 'Malay': 'Kebimbangan tentang kualiti metrik' },
     'verdict_reason_volume_driven_aggregate': { 'English': 'Ranking mostly follows row counts', 'Mandarin': '排名主要反映各组行数', 'Japanese': '順位は主に行数を反映', 'Malay': 'Kedudukan kebanyakannya mengikut bilangan baris' },
+    'verdict_reason_small_sample_leader': { 'English': 'Leading group rests on very few rows', 'Mandarin': '领先分组仅基于极少行', 'Japanese': '上位グループの行数が非常に少ない', 'Malay': 'Kumpulan teratas berdasarkan sangat sedikit baris' },
+    'verdict_reason_tied_leading_values': { 'English': 'Shown groups share one value', 'Mandarin': '显示的分组数值完全相同', 'Japanese': '表示中のグループが同じ値', 'Malay': 'Kumpulan yang dipaparkan berkongsi satu nilai' },
     'verdict_reason_unclassified_share_warning': { 'English': 'High unclassified data share', 'Mandarin': '未分类数据占比过高', 'Japanese': '未分類データの割合が高い', 'Malay': 'Bahagian data yang tidak dikelaskan tinggi' },
 
     // --- Card expand/collapse ---
@@ -3818,6 +3868,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'card_controls_show_label': { 'English': 'Show', 'Mandarin': '显示', 'Japanese': '表示', 'Malay': 'Tunjukkan' },
     'card_controls_all': { 'English': 'All', 'Mandarin': '全部', 'Japanese': 'すべて', 'Malay': 'Semua' },
     'card_controls_top_n': { 'English': 'Top {n}', 'Mandarin': '前 {n}', 'Japanese': 'トップ {n}', 'Malay': '{n} teratas' },
+    'card_controls_bottom_n': { 'English': 'Lowest {n}', 'Mandarin': '最低 {n}', 'Japanese': '下位 {n}', 'Malay': '{n} terendah' },
     'card_controls_hide_others': { 'English': 'Hide "Others"', 'Mandarin': '隐藏"其他"', 'Japanese': '「その他」を非表示', 'Malay': 'Sembunyikan "Lain-lain"' },
     'card_others': { 'English': 'Others', 'Mandarin': '其他', 'Japanese': 'その他', 'Malay': 'Lain-lain' },
     'card_controls_show_columns': { 'English': 'Show columns', 'Mandarin': '显示列', 'Japanese': '列を表示', 'Malay': 'Tunjukkan lajur' },

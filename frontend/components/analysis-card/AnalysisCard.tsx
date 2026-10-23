@@ -12,6 +12,7 @@ import { AnalysisCardSummary } from './AnalysisCardSummary';
 import { AnalysisCardControls } from './AnalysisCardControls';
 import { AnalysisCardDataTables } from './AnalysisCardDataTables';
 import { PivotStackedLegend } from './PivotStackedLegend';
+import { AnalysisCardCaveats } from './AnalysisCardCaveats';
 import { ChartType } from '../../types';
 import { getAvailableChartTypes } from '../../utils/chartTypeUtils';
 import { getLocalizedText } from '../../utils/localizedText';
@@ -66,6 +67,7 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
     const {
         cardData: storedCardData, tableDataForDisplay, chartDataForDisplay, stackedChartColumnState, dataForLegend, totalValue,
         displayedTotalValue, totalRowCount, displayedRowCount, chartHiddenZeroValueRowCount, tableZeroValueRowCount, summary, valueKey, groupByKey, tableSort,
+        rankDirection, tiedLeadingWindow,
     } = useAnalysisCardData(cardId);
     // Legacy saved cards may carry only the verdict, without its presentation projection.
     const cardData = useMemo(() => {
@@ -121,7 +123,7 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
     const exportMetadata = useMemo<AnalysisExportMetadata>(() => {
         const scopeParts: string[] = [];
         if (cardData?.topN) {
-            scopeParts.push(`Top ${cardData.topN}`);
+            scopeParts.push(`${rankDirection === 'asc' ? 'Lowest' : 'Top'} ${cardData.topN}`);
         }
         if (cardData?.filter?.column && cardData.filter.values.length > 0) {
             scopeParts.push(`${cardData.filter.column} = ${cardData.filter.values.join(', ')}`);
@@ -146,7 +148,7 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
             totalRows: totalRowCount,
             completeness: !cardData?.provenance ? 'unverified' : scopeParts.length || tableDataForDisplay.length < totalRowCount ? 'visible_subset' : 'full_card',
         };
-    }, [cardData, cardId, totalRowCount, tableDataForDisplay.length, hasAdditiveMeasure, trustDecision.status, hideChartByDefault]);
+    }, [cardData, cardId, totalRowCount, tableDataForDisplay.length, hasAdditiveMeasure, trustDecision.status, hideChartByDefault, rankDirection]);
 
     // Panel-level expand/collapse override
     useEffect(() => {
@@ -434,6 +436,12 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
                 showActions={showExplorationControls}
             />
 
+            <AnalysisCardCaveats
+                sampleSizeCaveat={cardData.evidenceValueGate?.sampleSizeCaveat}
+                tiedLeadingWindow={tiedLeadingWindow}
+                language={language}
+            />
+
             {!isCardExpanded && (
                 <CompactCardSummary
                     displayedTotalValue={displayedTotalValue}
@@ -528,6 +536,7 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
                 displayedMetricLabel={displayMetricLabel}
                 displayedGroupLabel={displayGroupLabel}
                 topN={topN}
+                rankDirection={rankDirection}
                 hideOthers={hasAdditiveMeasure && hideOthers}
                 hiddenLabelCount={cardData.hiddenLabels?.length ?? 0}
                 filter={filter}

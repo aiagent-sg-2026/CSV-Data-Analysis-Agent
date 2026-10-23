@@ -46,12 +46,17 @@ const getSortedMetricRows = (card: AnalysisCardData): Array<{ row: CsvRow; value
                 ? filter.values.includes(candidate)
                 : false;
         })
-        .map(row => ({
-            row,
-            value: toNumericValue(getRowValue(row, valueKey)) ?? 0,
-        }))
+        .map(row => {
+            const numeric = toNumericValue(getRowValue(row, valueKey));
+            return { row, value: numeric ?? 0, missing: numeric === null };
+        })
         .filter(entry => Number.isFinite(entry.value))
-        .sort((left, right) => right.value - left.value);
+        // Keep the card's ranking direction: an ascending card leads with its
+        // lowest group, and a group without a value never leads it as a zero.
+        .sort((left, right) => (card.plan.rankDirection === 'asc'
+            ? Number(left.missing) - Number(right.missing) || left.value - right.value
+            : right.value - left.value))
+        .map(({ row, value }) => ({ row, value }));
 };
 
 const getEffectiveTopN = (card: AnalysisCardData): number | null => {
@@ -126,9 +131,9 @@ const buildCardScope = (
         return {
             kind: 'top_n',
             sourceCardId: card.id,
-            label: language === 'Mandarin'
-                ? `前 ${explicitTopN} 个${pluralGroupLabel}`
-                : `Top ${explicitTopN} ${pluralGroupLabel}`,
+            label: card.plan.rankDirection === 'asc'
+                ? (language === 'Mandarin' ? `最低 ${explicitTopN} 个${pluralGroupLabel}` : `Lowest ${explicitTopN} ${pluralGroupLabel}`)
+                : (language === 'Mandarin' ? `前 ${explicitTopN} 个${pluralGroupLabel}` : `Top ${explicitTopN} ${pluralGroupLabel}`),
             topN: explicitTopN,
             rowCount: rowCount ?? undefined,
             ...(filters.length > 0 ? { filterSummary: filters.join(' · ') } : {}),
@@ -264,13 +269,19 @@ export const buildExecutiveKpis = ({
     const topLabelValue = rawTopLabel != null && String(rawTopLabel).trim() !== ''
         ? String(rawTopLabel).trim()
         : null;
+    const lowestFirst = primaryCard.plan.rankDirection === 'asc';
+    const leadLabel = lowestFirst
+        ? getTranslation('executive_kpi_lowest_group_label', language, { group: groupLabel })
+        : buildTopGroupKpiLabel(groupLabel, language);
     if (!isAdditiveAggregation(primaryCard.plan.aggregation)) {
         return [
             buildInteractiveKpi({
                 id: 'top-group',
-                label: buildTopGroupKpiLabel(groupLabel, language),
+                label: leadLabel,
                 value: formatMetricValue(topEntry.value, primaryCard.plan.valueColumn, safeProfiles),
-                detail: buildTopGroupKpiDetail({ topLabelValue, shareValue: null, metricLabel, language }),
+                detail: lowestFirst && topLabelValue
+                    ? getTranslation('executive_kpi_lowest_group_detail', language, { group: topLabelValue })
+                    : buildTopGroupKpiDetail({ topLabelValue, shareValue: null, metricLabel, language }),
                 tone: 'primary',
                 hierarchy: 'primary',
                 sourceCardId: primaryCard.id,
@@ -324,7 +335,7 @@ export const buildExecutiveKpis = ({
         },
         buildInteractiveKpi({
             id: 'top-group',
-            label: buildTopGroupKpiLabel(groupLabel, language),
+            label: leadLabel,
             value: formatMetricValue(topEntry.value, primaryCard.plan.valueColumn, safeProfiles),
             detail: buildTopGroupKpiDetail({
                 topLabelValue,
@@ -357,7 +368,8 @@ export const buildExecutiveKpis = ({
         : null;
     if (inactiveKpi) {
         kpis.push(inactiveKpi);
-    } else if (metricRows.length > 1 && totalValue !== 0) {
+    } else if (metricRows.length > 1 && totalValue !== 0 && !lowestFirst) {
+        // Concentration describes the largest groups, so a lowest-first card omits it.
         const concentrationSize = Math.min(3, metricRows.length);
         const concentrationTotal = metricRows.slice(0, concentrationSize).reduce((sum, entry) => sum + entry.value, 0);
         kpis.push(buildInteractiveKpi({

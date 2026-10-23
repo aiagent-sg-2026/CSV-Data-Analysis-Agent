@@ -9,6 +9,7 @@ import type {
     EvidenceLoopState,
     EvidenceValueGateResult,
     RuntimeSemanticUnderstanding,
+    SqlEvidenceQueryPlan,
 } from '../../../types';
 import { emitAgentEvent } from '../monitoring/agentMonitor';
 import {
@@ -31,6 +32,7 @@ import { MAX_EXECUTION_ATTEMPTS, RETRYABLE_EXECUTION_CODES, SOFT_SKIP_CODES, get
 import { buildLearningHintsFromHistory } from './topicLearningHints';
 import { isRuntimeAbortError, throwIfAborted } from '../runtime/runtimeAbort';
 import { describeVolumeDependence, measureEvidenceVolumeDependence } from './volumeDrivenSum';
+import { measureLeadingGroupSampleSize } from './groupSampleSize';
 
 type StoreApi = {
     getState: () => AppStore;
@@ -641,16 +643,26 @@ export const processSingleTopic = async (
                 const aiEvaluation = null;
                 // A grouped SUM is compared with the groups' row counts over the same population.
                 // Time dimensions and time-series plans are exempt: a total per period is a legitimate trend.
-                const volumeMeasurement = await measureEvidenceVolumeDependence(evidencePlan, checkPlan => executeEvidenceQuery(checkPlan, store, binding, {
+                const runCompanionQuery = (checkPlan: SqlEvidenceQueryPlan) => executeEvidenceQuery(checkPlan, store, binding, {
                     topic,
                     dataset: data,
                     suppressQueryStateUpdates: true,
                     abortSignal: options?.abortSignal,
-                }), {
+                });
+                const companionContext = {
                     profiles: getState().columnProfiles,
                     timeGrains: semanticUnderstanding.timeGrains,
                     signal: options?.abortSignal,
-                });
+                };
+                const volumeMeasurement = await measureEvidenceVolumeDependence(evidencePlan, runCompanionQuery, companionContext);
+                // A ranking led by a group with very few rows is caveated; the
+                // read-only COUNT companion uses the same population as the evidence.
+                const sampleSizeCaveat = await measureLeadingGroupSampleSize(
+                    evidencePlan,
+                    evidenceExecution.result.rows,
+                    runCompanionQuery,
+                    companionContext,
+                );
                 const valueGate = evaluateEvidenceValue({
                     semanticUnderstanding,
                     evidencePlan,
@@ -663,6 +675,7 @@ export const processSingleTopic = async (
                         totalIntentConfirmed: options?.totalIntent === true,
                         description: describeVolumeDependence(volumeMeasurement),
                     } : null,
+                    sampleSizeCaveat,
                 });
                 console.log(_elapsed(`value_gate=${valueGate.decision}`));
                 // PERF-307: Yield after value gate — break the chain between

@@ -14,12 +14,20 @@ export const parseNumericValue = (value: unknown): number => {
     return Number.isFinite(parsed) ? parsed : 0;
 };
 
-export const applyTopNWithOthers = (data: CsvRow[], groupByKey: string, valueKey: string, topN: number): CsvRow[] => {
+export const applyTopNWithOthers = (
+    data: CsvRow[],
+    groupByKey: string,
+    valueKey: string,
+    topN: number,
+    direction: 'asc' | 'desc' = 'desc',
+): CsvRow[] => {
     if (data.length <= topN) {
         return data;
     }
 
-    const sortedData = [...data].sort((a, b) => parseNumericValue(b[valueKey]) - parseNumericValue(a[valueKey]));
+    // An ascending ranking keeps its lowest groups and folds the rest into "Others".
+    const sign = direction === 'asc' ? -1 : 1;
+    const sortedData = [...data].sort((a, b) => (parseNumericValue(b[valueKey]) - parseNumericValue(a[valueKey])) * sign);
 
     const topData = sortedData.slice(0, topN);
     const otherData = sortedData.slice(topN);

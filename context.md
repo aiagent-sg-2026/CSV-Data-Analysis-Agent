@@ -1,6 +1,11 @@
 ## Current Work Context
 
 - **Goal**: Maintain the React browser app and its checked-in GitHub Pages build. The main assistant and initial analysis run through Pi Harness and the governed app tools.
+- **Worker change (2026-10-23, ranked-card fidelity; root not republished)**:
+  - Found in a live gpt-5.4-mini run on `sg-graduate-employment.csv`: the card "lowest median 25th-percentile pay by school" was ordered ascending with LIMIT 20. `useAnalysisCardData` then re-sorted non-additive rows largest-first and kept 8, so the chart showed eight schools tied at 3,000 under "Top 8 view".
+  - Fix: the card plan now carries `rankDirection` from the query's leading `orderBy` on the measure. The hook, `applyTopNWithOthers`, the scope labels and the executive KPI all follow it.
+  - Small-n leaders: a COUNT companion query adds the value-gate code `small_group_leader` with a visible card caveat, and the card is caveated (`small_sample_leader`). An all-tied top-N window gets the code `tied_leading_values` and a note.
+  - Tests: `tests/rankedCardPresentation.test.tsx` runs the real query and card path on the demo CSV, plus new cases in the topicProcessor, executiveKpis and analysisCardSummary tests.
 - **Current issue**: The 2026-10-22 e2e run found four problems. (1) Time spent waiting on the cloud-AI consent dialog counted toward the 30 s provider idle timeout. (2) A non-timeout topic-planning error (live gateway HTTP 413) left the analysis with empty topics. (3) On phones the header buttons covered the "AI Analysis" title. (4) In local-only mode the next step pointed to evidence review.
 - **Current change (manager round, branch `claude/funny-lovelace-beqo7n`)**:
   - A per-model consent/connectivity preflight runs before the idle timer starts in `streamGenerateText` and the intent classifier. The middleware still enforces consent.

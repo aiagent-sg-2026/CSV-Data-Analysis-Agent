@@ -1,5 +1,7 @@
 import type { AnalysisCardData, AnalysisQualityGovernanceResult, ColumnProfile, CsvRow } from '../../types';
 import { buildDisplayAnalysisIr } from '../dashboard/displayAnalysisIr';
+import { isAdditiveAggregation } from '../../utils/analysisCardPresentation';
+import { detectTiedLeadingWindow, isRankedMeasureView, rankRowsByValue, resolveCardValueKey } from '../../utils/rankedPresentation';
 
 export type AutoAnalysisEvaluationReasonCode =
     | 'helper_exposure'
@@ -14,7 +16,9 @@ export type AutoAnalysisEvaluationReasonCode =
     | 'dimension_quality_warning'
     | 'metric_quality_warning'
     | 'unclassified_share_warning'
-    | 'volume_driven_aggregate';
+    | 'volume_driven_aggregate'
+    | 'small_sample_leader'
+    | 'tied_leading_values';
 
 export type AutoAnalysisCardVerdict = 'trusted' | 'caveated' | 'weak';
 
@@ -114,6 +118,19 @@ const formatPreFilterContract = (card: AnalysisCardData): string | null => {
         .join(';');
 };
 
+/**
+ * A ranked window whose shown groups all share one value (e.g. a "Top 8" of
+ * eight 3,000s) does not rank anything, so the card is caveated as
+ * low-information instead of reading as a confident ranking.
+ */
+const findTiedLeadingWindow = (card: AnalysisCardData) => {
+    const groupByKey = card.plan.groupByColumn ?? '';
+    const topN = card.plan.disableTopNControls || card.plan.chartType === 'scatter' ? null : card.topN;
+    if (!groupByKey || !topN || !isRankedMeasureView(card.plan, groupByKey, isAdditiveAggregation)) return null;
+    const valueKey = resolveCardValueKey(card.plan, card.aggregatedData);
+    return detectTiedLeadingWindow(rankRowsByValue(card.aggregatedData, valueKey, card.plan.rankDirection), valueKey, topN);
+};
+
 const AGGREGATION_QUALITY_WARNING_FLAGS = new Set([
     'fallback_view',
     'fragmented_groups',
@@ -192,6 +209,18 @@ export const evaluateAutoAnalysisCards = (
             if (card.evidenceValueGate?.reasonCodes?.includes('volume_driven_sum')) {
                 reasonCodes.push('volume_driven_aggregate');
                 detailParts.push('volumeDrivenSum=true');
+            }
+            // A leader computed from very few rows stays visible with its
+            // caveat but must not lead the trusted headline.
+            const smallLeaders = card.evidenceValueGate?.sampleSizeCaveat?.leaders ?? [];
+            if (card.evidenceValueGate?.reasonCodes?.includes('small_group_leader') && smallLeaders.length > 0) {
+                reasonCodes.push('small_sample_leader');
+                detailParts.push(`smallSampleLeaders=${smallLeaders.map(leader => `${leader.label}:${leader.rows}`).join(', ')}`);
+            }
+            const tiedWindow = findTiedLeadingWindow(card);
+            if (tiedWindow) {
+                reasonCodes.push('tied_leading_values');
+                detailParts.push(`tiedLeadingValues=${tiedWindow.count}x${tiedWindow.value} (${tiedWindow.tiedGroupCount} of ${tiedWindow.totalGroupCount} groups share it)`);
             }
 
             if (ir.helperExposureLevel !== 'none') {

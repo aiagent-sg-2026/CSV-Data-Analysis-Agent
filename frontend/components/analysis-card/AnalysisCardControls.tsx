@@ -59,6 +59,8 @@ const AnalysisCardControlsComponent: React.FC<AnalysisCardControlsProps> = ({
 }) => {
     const language = useAppStore(state => state.settings.language);
     const t = (key: string, params?: Record<string, string | number>) => getTranslation(key, language, params);
+    // An ascending ranking keeps its lowest groups, so the window is labelled as such.
+    const windowLabelKey = plan.rankDirection === 'asc' ? 'card_controls_bottom_n' : 'card_controls_top_n';
 
     return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-card border border-slate-200 bg-slate-50/80 px-3 py-2" data-export-exclude>
@@ -99,11 +101,11 @@ const AnalysisCardControlsComponent: React.FC<AnalysisCardControlsProps> = ({
                         aria-label={t('card_controls_visible_categories')}
                     >
                         <option value="all">{t('card_controls_all')}</option>
-                        <option value="5">{t('card_controls_top_n', { n: 5 })}</option>
-                        <option value="8">{t('card_controls_top_n', { n: 8 })}</option>
-                        <option value="10">{t('card_controls_top_n', { n: 10 })}</option>
-                        <option value="15">{t('card_controls_top_n', { n: 15 })}</option>
-                        <option value="20">{t('card_controls_top_n', { n: 20 })}</option>
+                        <option value="5">{t(windowLabelKey, { n: 5 })}</option>
+                        <option value="8">{t(windowLabelKey, { n: 8 })}</option>
+                        <option value="10">{t(windowLabelKey, { n: 10 })}</option>
+                        <option value="15">{t(windowLabelKey, { n: 15 })}</option>
+                        <option value="20">{t(windowLabelKey, { n: 20 })}</option>
                     </select>
                     {topN && isAdditiveAggregation(plan.aggregation) && (
                         <div className="flex items-center">

@@ -147,6 +147,12 @@ export interface AnalysisPlan {
     artifactMetadata?: AnalysisArtifactMetadata;
     defaultDataVisible?: boolean;
     disableTopNControls?: boolean;
+    /**
+     * Direction in which the evidence query ranked the measure. 'asc' keeps the
+     * lowest groups first in the chart, the top-N window and the KPI headline.
+     * Absent means the historical largest-first ranking.
+     */
+    rankDirection?: 'asc' | 'desc';
 }
 
 export interface SqlAnalysisBindings {
@@ -315,7 +321,25 @@ export type EvidenceValueGateReasonCode =
     /** A SUM ranking that mirrors the groups' row counts, without a stated total-volume intent. */
     | 'volume_driven_sum'
     /** The same volume-driven ranking where the question explicitly asked for a total; informational only. */
-    | 'volume_driven_total';
+    | 'volume_driven_total'
+    /** A leading group of the ranking rests on very few source rows; a caveat, not a rejection. */
+    | 'small_group_leader';
+
+/** A leading group whose value is computed from very few source rows. */
+export interface EvidenceSmallGroupLeader {
+    label: string;
+    rows: number;
+    /** 1-based position in the card's ranking direction. */
+    rank: number;
+}
+
+export interface EvidenceSampleSizeCaveat {
+    leaders: EvidenceSmallGroupLeader[];
+    /** Median source rows per compared group. */
+    medianGroupRows: number;
+    /** Groups with fewer rows than this are flagged. */
+    minAdequateRows: number;
+}
 
 export interface EvidenceValueGateResult {
     decision: EvidenceValueGateDecision;
@@ -326,6 +350,8 @@ export interface EvidenceValueGateResult {
     semanticRisk: 'low' | 'medium' | 'high';
     /** Audit trail of which signal degraded the decision (e.g. 'blocked_dimension→table_only'). */
     degradationPath?: string;
+    /** Present when leading groups rest on very few rows; the card shows it as a visible caveat. */
+    sampleSizeCaveat?: EvidenceSampleSizeCaveat;
 }
 
 export interface EvidenceHarnessContext {
@@ -535,7 +561,9 @@ export type AutoAnalysisEvaluationReasonCode =
     | 'dimension_quality_warning'
     | 'metric_quality_warning'
     | 'unclassified_share_warning'
-    | 'volume_driven_aggregate';
+    | 'volume_driven_aggregate'
+    | 'small_sample_leader'
+    | 'tied_leading_values';
 
 export type AnalysisQualitySeverity = 'info' | 'warning' | 'critical';
 export type AnalysisDimensionQualityAction = 'allow' | 'avoid' | 'block';

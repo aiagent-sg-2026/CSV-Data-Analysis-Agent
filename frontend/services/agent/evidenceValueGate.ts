@@ -3,6 +3,7 @@ import { streamGenerateText } from '../ai/streamGenerateText';
 import { prepareSchemaForProvider } from '../ai/googleSchemaAdapter';
 import type {
     EvidenceHarnessContext,
+    EvidenceSampleSizeCaveat,
     EvidenceValueGateReasonCode,
     PivotMatrixConfig,
     RuntimeSemanticUnderstanding,
@@ -18,6 +19,7 @@ import { buildEvidenceEvaluationPrompt } from '../prompts/analysisPrompts';
 import { robustlyParseJsonObject } from '../../utils/jsonParser';
 import { isTechnicalHelperDimensionColumn } from './analysisColumnRoles';
 import type { VolumeDependence } from './planning/volumeDrivenSum';
+import { describeSmallGroupLeaders } from './planning/groupSampleSize';
 
 const LOG_PREFIX = '[EvidenceValueGate]';
 const AI_EVAL_TIMEOUT_MS = 8000;
@@ -805,6 +807,22 @@ const resolveVolumeReason = (
 
 const appendNote = (detail: string, note: string | null): string => (note ? `${detail} — ${note}` : detail);
 
+/**
+ * Thin leading groups are a caveat, not a rejection: the numbers are correct
+ * and the presentation decision is unchanged, but the card must say so and is
+ * not used as a trusted headline.
+ */
+const resolveSampleSizeReason = (
+    sampleSizeCaveat: EvidenceSampleSizeCaveat | null | undefined,
+): { reasonCodes: EvidenceValueGateReasonCode[]; note: string | null; caveat: EvidenceSampleSizeCaveat | null } => {
+    if (!sampleSizeCaveat?.leaders.length) return { reasonCodes: [], note: null, caveat: null };
+    return {
+        reasonCodes: ['small_group_leader'],
+        note: describeSmallGroupLeaders(sampleSizeCaveat),
+        caveat: sampleSizeCaveat,
+    };
+};
+
 // --- Public API ---
 
 export const evaluateEvidenceValue = (params: {
@@ -815,6 +833,7 @@ export const evaluateEvidenceValue = (params: {
     aiEvaluation?: AiEvidenceEvaluation | null;
     harnessContext?: EvidenceHarnessContext | null;
     volumeDependence?: EvidenceVolumeDependence | null;
+    sampleSizeCaveat?: EvidenceSampleSizeCaveat | null;
 }): EvidenceValueGateResult => {
     const {
         semanticUnderstanding,
@@ -825,6 +844,9 @@ export const evaluateEvidenceValue = (params: {
         harnessContext,
     } = params;
     const volumeReason = resolveVolumeReason(params.volumeDependence);
+    const sampleSizeReason = resolveSampleSizeReason(params.sampleSizeCaveat);
+    const caveatNote = [volumeReason.note, sampleSizeReason.note].filter(Boolean).join(' ') || null;
+    const sampleSizeField = sampleSizeReason.caveat ? { sampleSizeCaveat: sampleSizeReason.caveat } : {};
     const querySignature = buildEvidenceSignature(evidencePlan);
     const semanticSignature = buildSemanticSignature(evidencePlan, evidenceSummary, semanticUnderstanding);
 
@@ -888,6 +910,7 @@ export const evaluateEvidenceValue = (params: {
             ...harnessReasonCodes,
             ...aiReasonCodes,
             ...volumeReason.reasonCodes,
+            ...sampleSizeReason.reasonCodes,
         ];
         const uniqueReasonCodes = [...new Set(allReasonCodes)];
 
@@ -932,11 +955,12 @@ export const evaluateEvidenceValue = (params: {
         return {
             decision,
             reasonCodes: uniqueReasonCodes,
-            detail: appendNote(aiEvaluation.reasoning || buildDetail(uniqueReasonCodes), volumeReason.note),
+            detail: appendNote(aiEvaluation.reasoning || buildDetail(uniqueReasonCodes), caveatNote),
             querySignature,
             semanticSignature,
             semanticRisk,
             degradationPath: degradationSteps.length > 0 ? degradationSteps.join(' + ') : undefined,
+            ...sampleSizeField,
         };
     }
 
@@ -952,6 +976,7 @@ export const evaluateEvidenceValue = (params: {
         ...harnessReasonCodes,
         ...deterministicQuality.reasonCodes,
         ...volumeReason.reasonCodes,
+        ...sampleSizeReason.reasonCodes,
     ];
     // Deduplicate reason codes from harness (may overlap with deterministic quality)
     const uniqueReasonCodes = [...new Set(allReasonCodes)];
@@ -973,11 +998,12 @@ export const evaluateEvidenceValue = (params: {
     return {
         decision,
         reasonCodes: uniqueReasonCodes,
-        detail: appendNote(buildDetail(uniqueReasonCodes), volumeReason.note),
+        detail: appendNote(buildDetail(uniqueReasonCodes), caveatNote),
         querySignature,
         semanticSignature,
         semanticRisk,
         degradationPath: degradationSteps.length > 0 ? degradationSteps.join(' + ') : undefined,
+        ...sampleSizeField,
     };
 };
 
