@@ -243,7 +243,8 @@ describe('sampleStratified', () => {
         // Head-only sampling (first 300 rows) would classify the column as numerical.
         // Stratified sampling includes tail rows so it correctly classifies as categorical.
         const numericRows = Array.from({ length: 900 }, (_, i) => ({ Amount: String(i * 100) }));
-        const textRows = Array.from({ length: 100 }, () => ({ Amount: 'N/A' }));
+        // Real text, not a missing marker: markers such as 'N/A' count as missing.
+        const textRows = Array.from({ length: 100 }, () => ({ Amount: 'pending review' }));
         const allRows = [...numericRows, ...textRows];
 
         // Head-only: first 300 rows — all numeric → numerical classification
@@ -251,7 +252,7 @@ describe('sampleStratified', () => {
         const { profiles: headProfiles } = profileDataLightweight(headOnlySample);
         expect(headProfiles[0].type).toBe('numerical');
 
-        // Stratified: includes tail rows with 'N/A' — mixed → categorical
+        // Stratified: includes tail rows with text — mixed → categorical
         const { profiles: stratProfiles } = profileDataLightweight(allRows, 300);
         // Tail rows contain text values — stratified sample should detect this
         expect(stratProfiles[0].type).toBe('categorical');
