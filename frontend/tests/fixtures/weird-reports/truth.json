@@ -1,0 +1,58 @@
+{
+ "f1": {
+  "rows": 359,
+  "grand_total": 7143852.87,
+  "per_customer": {
+   "ACME TRADING SDN BHD": 340514.95,
+   "BRIGHT ELECTRONICS PTE LTD": 384220.04,
+   "CITY HARDWARE ENTERPRISE": 410475.78,
+   "DELTA LOGISTICS BHD": 474800.53,
+   "EVERGREEN SUPPLIES": 295030.81,
+   "FUJI PRECISION LTD": 315174.65,
+   "GOLDEN BRIDGE TRADING": 240958.16,
+   "HARBOUR TECH SDN BHD": 334031.94,
+   "IRONWORKS ASIA PTE": 403586.78,
+   "JADE MANUFACTURING": 399150.38,
+   "KITE SYSTEMS BHD": 291399.92,
+   "LOTUS INDUSTRIES": 408942.55,
+   "MERIDIAN PARTS CO": 482867.45,
+   "NOVA CIRCUITS PTE LTD": 210606.03,
+   "ORIENT MACHINERY": 222899.42,
+   "PACIFIC COMPONENTS": 301130.23,
+   "QUANTUM DEVICES BHD": 396380.21,
+   "RIVERSIDE ENGINEERING": 517201.12,
+   "SUMMIT CONTROLS": 400725.86,
+   "TITAN FASTENERS": 313756.06
+  }
+ },
+ "f2": {
+  "leaf_rows": 212,
+  "grand_total": 5343672.0
+ },
+ "f3": {
+  "sales": 456016.54,
+  "credit": 39886.78,
+  "paid": 445334.18,
+  "rows": [
+   192,
+   84,
+   108
+  ]
+ },
+ "f4": {
+  "rows": 480,
+  "total": 26840971.67
+ },
+ "f5": {
+  "rows": 384,
+  "total_balance": 2735286.0
+ },
+ "f6": {
+  "rows": 240,
+  "total": 15267891.0
+ },
+ "f7": {
+  "rows": 420,
+  "total_value": 156951497.67
+ }
+}

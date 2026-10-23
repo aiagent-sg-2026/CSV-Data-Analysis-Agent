@@ -1,0 +1,602 @@
+﻿Auftrag;Datum;Kunde;Beschreibung;Menge;Preis;Betrag;
+A00001;22.11.2026;Müller & Söhne GmbH;Standard part;116;161,30;18.710,80;
+A00002;27.01.2027;서울전자;Standard part;135;432,03;58.324,05;
+A00003;16-Nov-26;株式会社東京精密;"Part ""X-2""; reinforced";236;35,93;8.479,48;
+A00004;2026-10-16;株式会社東京精密;Standard part;400;372,88;149.152,00;
+A00005;29-Aug-26;上海科技有限公司;"Spare; kit";103;37,57;3.869,71;
+A00006;2026-08-20;株式会社東京精密;Standard part;461;46,36;21.371,96;
+A00007;17-Jul-26;Müller & Söhne GmbH;"Spare; kit";450;230,73;103.828,50;
+A00008;2026-05-26;Müller & Söhne GmbH;"Multi-line
+note: handle with care";75;176,39;13.229,25;
+A00009;24-Jan-26;서울전자;"Spare; kit";376;43,71;16.434,96;
+A00010;06.03.2026;上海科技有限公司;"Multi-line
+note: handle with care";271;138,69;37.584,99;
+A00011;18.03.2026;Müller & Söhne GmbH;Standard part;147;53,83;7.913,01;
+A00012;2026-06-25;上海科技有限公司;"Spare; kit";22;297,59;6.546,98;
+A00013;06.12.2026;Ångström AB;"Part ""X-2""; reinforced";411;316,09;129.912,99;
+A00014;23-Aug-26;上海科技有限公司;Standard part;325;357,44;116.168,00;
+A00015;28.06.2026;Ångström AB;Standard part;342;70,35;24.059,70;
+A00016;25.09.2026;Société Générale Pièces;Standard part;316;65,83;20.802,28;
+A00017;22.08.2026;Müller & Söhne GmbH;"Part ""X-2""; reinforced";199;422,07;83.991,93;
+A00018;05-Aug-26;Ångström AB;Standard part;377;418,47;157.763,19;
+A00019;07.03.2026;Müller & Söhne GmbH;Standard part;106;347,21;36.804,26;
+A00020;21.05.2026;Ångström AB;"Part ""X-2""; reinforced";219;274,50;60.115,50;
+A00021;27.12.2026;上海科技有限公司;"Spare; kit";190;364,71;69.294,90;
+A00022;09-Oct-26;Ångström AB;"Spare; kit";302;151,35;45.707,70;
+A00023;2026-01-27;株式会社東京精密;"Part ""X-2""; reinforced";391;442,33;172.951,03;
+A00024;29-Oct-26;Ångström AB;"Multi-line
+note: handle with care";178;284,56;50.651,68;
+A00025;2026-03-22;株式会社東京精密;"Multi-line
+note: handle with care";414;298,90;123.744,60;
+A00026;21-Mar-26;Ångström AB;Standard part;379;10,96;4.153,84;
+A00027;14.08.2026;서울전자;"Multi-line
+note: handle with care";312;15,08;4.704,96;
+A00028;17.03.2026;上海科技有限公司;"Part ""X-2""; reinforced";434;266,94;115.851,96;
+A00029;01-Mar-26;Ångström AB;"Multi-line
+note: handle with care";19;415,05;7.885,95;
+A00030;2026-10-24;Müller & Söhne GmbH;"Multi-line
+note: handle with care";455;70,90;32.259,50;
+A00031;15-Jan-27;서울전자;"Spare; kit";419;395,74;165.815,06;
+A00032;2026-09-03;Société Générale Pièces;"Part ""X-2""; reinforced";99;310,54;30.743,46;
+A00033;12-May-26;Müller & Söhne GmbH;"Multi-line
+note: handle with care";477;8,85;4.221,45;
+A00034;17.10.2026;Müller & Söhne GmbH;Standard part;9;389,91;3.509,19;
+A00035;20-Jul-26;서울전자;Standard part;358;178,45;63.885,10;
+A00036;20.02.2026;서울전자;Standard part;32;110,63;3.540,16;
+A00037;2026-02-15;Société Générale Pièces;"Part ""X-2""; reinforced";289;23,50;6.791,50;
+A00038;06.03.2026;株式会社東京精密;"Spare; kit";253;262,40;66.387,20;
+A00039;14.08.2026;서울전자;"Multi-line
+note: handle with care";391;36,79;14.384,89;
+A00040;2026-09-12;Société Générale Pièces;"Spare; kit";86;81,38;6.998,68;
+A00041;11.07.2026;Société Générale Pièces;"Multi-line
+note: handle with care";147;125,61;18.464,67;
+A00042;11.02.2026;上海科技有限公司;"Multi-line
+note: handle with care";470;135,04;63.468,80;
+A00043;17-Apr-26;上海科技有限公司;"Spare; kit";42;51,59;2.166,78;
+A00044;2026-09-05;Société Générale Pièces;"Spare; kit";70;338,88;23.721,60;
+A00045;2026-02-24;Ångström AB;"Part ""X-2""; reinforced";22;390,74;8.596,28;
+A00046;03-Mar-26;Société Générale Pièces;"Multi-line
+note: handle with care";414;94,98;39.321,72;
+A00047;2026-10-11;Müller & Söhne GmbH;"Part ""X-2""; reinforced";256;105,42;26.987,52;
+A00048;2026-07-24;株式会社東京精密;"Multi-line
+note: handle with care";455;369,20;167.986,00;
+A00049;2026-06-14;Müller & Söhne GmbH;Standard part;322;270,55;87.117,10;
+A00050;14-Dec-26;上海科技有限公司;"Part ""X-2""; reinforced";188;331,72;62.363,36;
+A00051;2026-09-22;Ångström AB;"Spare; kit";359;406,03;145.764,77;
+A00052;2027-02-05;서울전자;"Spare; kit";313;38,33;11.997,29;
+A00053;31-Aug-26;上海科技有限公司;"Part ""X-2""; reinforced";423;146,66;62.037,18;
+A00054;2027-01-14;Müller & Söhne GmbH;Standard part;450;412,05;185.422,50;
+A00055;01-Nov-26;株式会社東京精密;Standard part;230;184,53;42.441,90;
+A00056;2026-01-26;Ångström AB;"Spare; kit";475;3,78;1.795,50;
+A00057;19-May-26;Müller & Söhne GmbH;"Multi-line
+note: handle with care";59;186,61;11.009,99;
+A00058;2026-09-09;서울전자;"Spare; kit";487;319,73;155.708,51;
+A00059;23-May-26;Müller & Söhne GmbH;"Part ""X-2""; reinforced";45;14,76;664,20;
+A00060;24-Apr-26;Müller & Söhne GmbH;Standard part;239;409,23;97.805,97;
+A00061;30.05.2026;上海科技有限公司;"Part ""X-2""; reinforced";211;59,56;12.567,16;
+A00062;2026-04-24;株式会社東京精密;Standard part;342;307,76;105.253,92;
+A00063;06-Jun-26;Müller & Söhne GmbH;Standard part;442;425,08;187.885,36;
+A00064;22.04.2026;Ångström AB;Standard part;473;348,86;165.010,78;
+A00065;09.09.2026;Müller & Söhne GmbH;"Part ""X-2""; reinforced";337;4,18;1.408,66;
+A00066;2026-06-16;株式会社東京精密;"Part ""X-2""; reinforced";241;213,28;51.400,48;
+A00067;19.03.2026;上海科技有限公司;"Multi-line
+note: handle with care";170;63,23;10.749,10;
+A00068;27-Oct-26;Ångström AB;Standard part;490;392,36;192.256,40;
+A00069;14-Apr-26;Ångström AB;Standard part;92;119,86;11.027,12;
+A00070;10.09.2026;Société Générale Pièces;"Part ""X-2""; reinforced";393;115,31;45.316,83;
+A00071;2026-11-12;Ångström AB;"Part ""X-2""; reinforced";158;186,61;29.484,38;
+A00072;2026-11-18;上海科技有限公司;"Spare; kit";171;61,08;10.444,68;
+A00073;2026-11-04;Müller & Söhne GmbH;"Spare; kit";478;104,65;50.022,70;
+A00074;29-Oct-26;Müller & Söhne GmbH;"Part ""X-2""; reinforced";345;155,29;53.575,05;
+A00075;16.09.2026;上海科技有限公司;"Spare; kit";224;63,48;14.219,52;
+A00076;2027-01-30;Ångström AB;"Multi-line
+note: handle with care";244;268,66;65.553,04;
+A00077;30-Nov-26;株式会社東京精密;Standard part;357;186,08;66.430,56;
+A00078;2026-03-27;Ångström AB;"Multi-line
+note: handle with care";139;178,94;24.872,66;
+A00079;2027-01-22;Société Générale Pièces;"Multi-line
+note: handle with care";357;64,20;22.919,40;
+A00080;2026-02-19;서울전자;"Part ""X-2""; reinforced";71;351,24;24.938,04;
+A00081;14-Feb-26;서울전자;"Multi-line
+note: handle with care";377;3,51;1.323,27;
+A00082;08.11.2026;株式会社東京精密;"Spare; kit";82;143,84;11.794,88;
+A00083;29.07.2026;Société Générale Pièces;"Multi-line
+note: handle with care";475;114,08;54.188,00;
+A00084;2026-04-29;Société Générale Pièces;"Multi-line
+note: handle with care";229;234,47;53.693,63;
+A00085;26.02.2026;Ångström AB;"Part ""X-2""; reinforced";182;89,55;16.298,10;
+A00086;21-Aug-26;Société Générale Pièces;Standard part;41;25,12;1.029,92;
+A00087;22-Nov-26;株式会社東京精密;Standard part;350;312,76;109.466,00;
+A00088;2026-12-18;Société Générale Pièces;"Part ""X-2""; reinforced";331;256,40;84.868,40;
+A00089;01.12.2026;株式会社東京精密;"Spare; kit";110;57,67;6.343,70;
+A00090;13-Jun-26;Société Générale Pièces;"Part ""X-2""; reinforced";88;90,37;7.952,56;
+A00091;20.01.2027;Müller & Söhne GmbH;"Part ""X-2""; reinforced";243;349,65;84.964,95;
+A00092;06.08.2026;Société Générale Pièces;"Multi-line
+note: handle with care";479;279,14;133.708,06;
+A00093;08.08.2026;서울전자;"Multi-line
+note: handle with care";38;235,95;8.966,10;
+A00094;04-Apr-26;株式会社東京精密;Standard part;265;416,58;110.393,70;
+A00095;04.10.2026;株式会社東京精密;Standard part;281;204,33;57.416,73;
+A00096;26.11.2026;서울전자;"Spare; kit";472;19,42;9.166,24;
+A00097;22.08.2026;서울전자;"Multi-line
+note: handle with care";124;157,25;19.499,00;
+A00098;03-Nov-26;Müller & Söhne GmbH;"Multi-line
+note: handle with care";16;413,31;6.612,96;
+A00099;2026-03-18;Société Générale Pièces;"Part ""X-2""; reinforced";324;17,75;5.751,00;
+A00100;2027-01-20;株式会社東京精密;"Multi-line
+note: handle with care";14;354,25;4.959,50;
+A00101;09.05.2026;서울전자;"Spare; kit";126;231,77;29.203,02;
+A00102;01-Feb-26;株式会社東京精密;"Spare; kit";385;445,74;171.609,90;
+A00103;2026-01-25;서울전자;"Multi-line
+note: handle with care";387;395,98;153.244,26;
+A00104;2026-03-11;上海科技有限公司;"Multi-line
+note: handle with care";454;297,75;135.178,50;
+A00105;2026-06-17;株式会社東京精密;"Part ""X-2""; reinforced";237;312,51;74.064,87;
+A00106;18-Nov-26;Société Générale Pièces;"Part ""X-2""; reinforced";79;277,11;21.891,69;
+A00107;22.04.2026;Société Générale Pièces;Standard part;358;304,67;109.071,86;
+A00108;17-Jan-26;서울전자;"Spare; kit";54;143,20;7.732,80;
+A00109;27.09.2026;Société Générale Pièces;"Part ""X-2""; reinforced";262;27,15;7.113,30;
+A00110;2026-05-15;上海科技有限公司;"Multi-line
+note: handle with care";124;381,21;47.270,04;
+A00111;30-Sep-26;Ångström AB;"Multi-line
+note: handle with care";189;197,21;37.272,69;
+A00112;23.03.2026;Société Générale Pièces;"Part ""X-2""; reinforced";56;119,63;6.699,28;
+A00113;06.10.2026;Société Générale Pièces;"Part ""X-2""; reinforced";57;350,26;19.964,82;
+A00114;2026-05-06;Ångström AB;"Multi-line
+note: handle with care";247;383,68;94.768,96;
+A00115;2026-07-09;서울전자;"Part ""X-2""; reinforced";457;2,69;1.229,33;
+A00116;24.10.2026;Müller & Söhne GmbH;"Multi-line
+note: handle with care";391;396,78;155.140,98;
+A00117;2026-11-12;Société Générale Pièces;Standard part;267;380,63;101.628,21;
+A00118;24-May-26;株式会社東京精密;"Part ""X-2""; reinforced";494;90,68;44.795,92;
+A00119;30-Apr-26;Müller & Söhne GmbH;"Part ""X-2""; reinforced";494;257,25;127.081,50;
+A00120;11-Jul-26;Müller & Söhne GmbH;Standard part;339;418,52;141.878,28;
+A00121;2026-08-20;株式会社東京精密;Standard part;462;224,08;103.524,96;
+A00122;25-Nov-26;Müller & Söhne GmbH;"Spare; kit";50;94,31;4.715,50;
+A00123;09-Oct-26;株式会社東京精密;"Spare; kit";131;24,89;3.260,59;
+A00124;2026-09-14;Société Générale Pièces;"Spare; kit";228;15,38;3.506,64;
+A00125;16-Nov-26;上海科技有限公司;Standard part;180;45,92;8.265,60;
+A00126;04.10.2026;Société Générale Pièces;Standard part;208;72,33;15.044,64;
+A00127;2026-03-24;Société Générale Pièces;"Part ""X-2""; reinforced";277;120,09;33.264,93;
+A00128;05.04.2026;上海科技有限公司;Standard part;251;260,70;65.435,70;
+A00129;2026-11-17;株式会社東京精密;"Multi-line
+note: handle with care";132;181,02;23.894,64;
+A00130;09.09.2026;株式会社東京精密;"Multi-line
+note: handle with care";132;200,28;26.436,96;
+A00131;07-Sep-26;서울전자;"Spare; kit";428;426,55;182.563,40;
+A00132;01.01.2027;上海科技有限公司;Standard part;431;420,65;181.300,15;
+A00133;15-Nov-26;Ångström AB;"Multi-line
+note: handle with care";441;140,80;62.092,80;
+A00134;23.06.2026;Müller & Söhne GmbH;Standard part;32;421,59;13.490,88;
+A00135;21-Nov-26;Müller & Söhne GmbH;"Part ""X-2""; reinforced";129;341,90;44.105,10;
+A00136;05-Sep-26;株式会社東京精密;Standard part;275;253,49;69.709,75;
+A00137;30.04.2026;株式会社東京精密;Standard part;138;151,84;20.953,92;
+A00138;19.10.2026;Société Générale Pièces;Standard part;345;188,28;64.956,60;
+A00139;16.08.2026;株式会社東京精密;"Spare; kit";294;191,24;56.224,56;
+A00140;13.08.2026;上海科技有限公司;"Spare; kit";488;233,41;113.904,08;
+A00141;2026-12-13;上海科技有限公司;"Multi-line
+note: handle with care";210;390,14;81.929,40;
+A00142;2026-12-03;서울전자;Standard part;453;311,13;140.941,89;
+A00143;17-May-26;서울전자;Standard part;79;45,62;3.603,98;
+A00144;13-May-26;株式会社東京精密;"Multi-line
+note: handle with care";401;73,79;29.589,79;
+A00145;02.05.2026;Société Générale Pièces;Standard part;332;32,79;10.886,28;
+A00146;2026-04-09;株式会社東京精密;Standard part;368;384,48;141.488,64;
+A00147;27.08.2026;Ångström AB;"Part ""X-2""; reinforced";414;301,03;124.626,42;
+A00148;2026-04-30;上海科技有限公司;"Spare; kit";498;282,49;140.680,02;
+A00149;23.02.2026;Müller & Söhne GmbH;"Multi-line
+note: handle with care";380;344,64;130.963,20;
+A00150;2026-03-29;Müller & Söhne GmbH;"Multi-line
+note: handle with care";433;285,68;123.699,44;
+A00151;2026-05-12;株式会社東京精密;"Part ""X-2""; reinforced";155;344,20;53.351,00;
+A00152;2026-05-22;Société Générale Pièces;"Spare; kit";316;144,27;45.589,32;
+A00153;22.08.2026;株式会社東京精密;"Spare; kit";287;264,48;75.905,76;
+A00154;18.08.2026;Ångström AB;Standard part;299;22,54;6.739,46;
+A00155;19-Nov-26;Société Générale Pièces;"Part ""X-2""; reinforced";329;165,87;54.571,23;
+A00156;10.04.2026;上海科技有限公司;"Spare; kit";331;10,30;3.409,30;
+A00157;05.02.2027;上海科技有限公司;"Spare; kit";487;443,91;216.184,17;
+A00158;30-Oct-26;Ångström AB;"Spare; kit";402;95,52;38.399,04;
+A00159;27-Jun-26;上海科技有限公司;"Part ""X-2""; reinforced";46;294,32;13.538,72;
+A00160;2026-07-16;Müller & Söhne GmbH;"Multi-line
+note: handle with care";367;213,85;78.482,95;
+A00161;21-Jan-27;株式会社東京精密;"Spare; kit";20;20,93;418,60;
+A00162;16-Oct-26;Société Générale Pièces;"Part ""X-2""; reinforced";470;293,50;137.945,00;
+A00163;13-Apr-26;Ångström AB;Standard part;374;156,99;58.714,26;
+A00164;12.05.2026;Ångström AB;"Multi-line
+note: handle with care";29;319,13;9.254,77;
+A00165;03-Feb-26;Müller & Söhne GmbH;"Spare; kit";416;121,38;50.494,08;
+A00166;2026-06-03;Société Générale Pièces;"Multi-line
+note: handle with care";271;207,24;56.162,04;
+A00167;31-Jan-27;株式会社東京精密;"Part ""X-2""; reinforced";141;67,18;9.472,38;
+A00168;2026-03-26;서울전자;"Spare; kit";101;8,92;900,92;
+A00169;01.02.2026;Société Générale Pièces;"Spare; kit";438;71,41;31.277,58;
+A00170;08-Apr-26;Société Générale Pièces;"Part ""X-2""; reinforced";430;327,55;140.846,50;
+A00171;2026-05-29;Ångström AB;"Multi-line
+note: handle with care";341;20,73;7.068,93;
+A00172;27-Aug-26;上海科技有限公司;"Multi-line
+note: handle with care";475;334,70;158.982,50;
+A00173;26-Aug-26;Société Générale Pièces;"Multi-line
+note: handle with care";113;404,18;45.672,34;
+A00174;20.12.2026;Müller & Söhne GmbH;Standard part;103;201,80;20.785,40;
+A00175;11-Oct-26;Müller & Söhne GmbH;Standard part;96;416,15;39.950,40;
+A00176;11.01.2026;株式会社東京精密;"Part ""X-2""; reinforced";418;192,84;80.607,12;
+A00177;18.04.2026;株式会社東京精密;Standard part;18;357,60;6.436,80;
+A00178;2026-06-21;Société Générale Pièces;Standard part;115;388,56;44.684,40;
+A00179;24.07.2026;Société Générale Pièces;"Part ""X-2""; reinforced";491;334,93;164.450,63;
+A00180;2026-08-21;Ångström AB;Standard part;96;16,31;1.565,76;
+A00181;20-Apr-26;Ångström AB;"Multi-line
+note: handle with care";148;33,32;4.931,36;
+A00182;12.02.2026;서울전자;"Spare; kit";3;68,36;205,08;
+A00183;2026-09-23;서울전자;Standard part;302;241,42;72.908,84;
+A00184;02-May-26;上海科技有限公司;"Spare; kit";87;100,46;8.740,02;
+A00185;2026-03-14;Ångström AB;"Part ""X-2""; reinforced";148;378,50;56.018,00;
+A00186;02.01.2027;株式会社東京精密;"Multi-line
+note: handle with care";202;224,39;45.326,78;
+A00187;26-Sep-26;Ångström AB;Standard part;234;447,79;104.782,86;
+A00188;2026-06-30;Ångström AB;"Spare; kit";76;42,83;3.255,08;
+A00189;10.08.2026;株式会社東京精密;"Multi-line
+note: handle with care";292;291,27;85.050,84;
+A00190;2026-09-27;Société Générale Pièces;"Part ""X-2""; reinforced";388;107,98;41.896,24;
+A00191;08-Apr-26;Ångström AB;"Part ""X-2""; reinforced";245;246,49;60.390,05;
+A00192;27.01.2026;Ångström AB;"Part ""X-2""; reinforced";186;404,12;75.166,32;
+A00193;2026-05-03;上海科技有限公司;Standard part;300;344,81;103.443,00;
+A00194;02-Jan-27;上海科技有限公司;"Multi-line
+note: handle with care";197;209,18;41.208,46;
+A00195;10.01.2026;Müller & Söhne GmbH;"Part ""X-2""; reinforced";482;293,57;141.500,74;
+A00196;2027-01-25;Société Générale Pièces;Standard part;239;386,46;92.363,94;
+A00197;08-Mar-26;Société Générale Pièces;"Multi-line
+note: handle with care";436;121,79;53.100,44;
+A00198;11-Sep-26;株式会社東京精密;Standard part;169;137,74;23.278,06;
+A00199;24-Mar-26;Müller & Söhne GmbH;"Multi-line
+note: handle with care";153;164,07;25.102,71;
+A00200;2026-04-27;Ångström AB;"Part ""X-2""; reinforced";48;169,50;8.136,00;
+A00201;2026-01-26;Ångström AB;Standard part;107;88,71;9.491,97;
+A00202;2026-05-19;Müller & Söhne GmbH;"Part ""X-2""; reinforced";23;266,16;6.121,68;
+A00203;11.01.2026;Ångström AB;"Part ""X-2""; reinforced";452;79,48;35.924,96;
+A00204;09-Apr-26;Société Générale Pièces;"Part ""X-2""; reinforced";250;361,77;90.442,50;
+A00205;07.05.2026;上海科技有限公司;Standard part;282;301,17;84.929,94;
+A00206;24.06.2026;上海科技有限公司;"Multi-line
+note: handle with care";106;288,34;30.564,04;
+A00207;16-Aug-26;Ångström AB;Standard part;451;222,15;100.189,65;
+A00208;17-Jun-26;上海科技有限公司;"Multi-line
+note: handle with care";401;427,95;171.607,95;
+A00209;29.09.2026;上海科技有限公司;"Spare; kit";101;173,66;17.539,66;
+A00210;29.04.2026;Société Générale Pièces;"Multi-line
+note: handle with care";5;24,37;121,85;
+A00211;28.03.2026;株式会社東京精密;"Multi-line
+note: handle with care";295;332,43;98.066,85;
+A00212;29-Aug-26;서울전자;Standard part;10;416,24;4.162,40;
+A00213;06.02.2026;Müller & Söhne GmbH;Standard part;11;370,09;4.070,99;
+A00214;2026-01-06;株式会社東京精密;"Multi-line
+note: handle with care";286;147,68;42.236,48;
+A00215;25-Jul-26;서울전자;"Part ""X-2""; reinforced";413;444,10;183.413,30;
+A00216;14-May-26;上海科技有限公司;Standard part;271;285,41;77.346,11;
+A00217;26.10.2026;서울전자;"Multi-line
+note: handle with care";421;71,13;29.945,73;
+A00218;2027-02-01;株式会社東京精密;"Part ""X-2""; reinforced";88;389,93;34.313,84;
+A00219;31-Jan-27;Müller & Söhne GmbH;"Part ""X-2""; reinforced";178;179,40;31.933,20;
+A00220;16-Feb-26;Société Générale Pièces;Standard part;157;46,13;7.242,41;
+A00221;28.02.2026;Müller & Söhne GmbH;"Multi-line
+note: handle with care";303;181,66;55.042,98;
+A00222;12-Aug-26;株式会社東京精密;"Multi-line
+note: handle with care";456;170,61;77.798,16;
+A00223;18-Apr-26;Ångström AB;"Spare; kit";192;65,65;12.604,80;
+A00224;16-Feb-26;Müller & Söhne GmbH;"Multi-line
+note: handle with care";304;400,09;121.627,36;
+A00225;2026-12-25;上海科技有限公司;"Spare; kit";168;230,64;38.747,52;
+A00226;09-Sep-26;Société Générale Pièces;"Multi-line
+note: handle with care";104;414,07;43.063,28;
+A00227;05-Mar-26;上海科技有限公司;"Part ""X-2""; reinforced";498;235,03;117.044,94;
+A00228;25.07.2026;Müller & Söhne GmbH;"Multi-line
+note: handle with care";380;315,71;119.969,80;
+A00229;24-May-26;上海科技有限公司;"Multi-line
+note: handle with care";431;67,29;29.001,99;
+A00230;05-Mar-26;Ångström AB;"Spare; kit";226;11,99;2.709,74;
+A00231;24.10.2026;Müller & Söhne GmbH;"Part ""X-2""; reinforced";56;236,05;13.218,80;
+A00232;15-Jan-26;株式会社東京精密;Standard part;492;116,28;57.209,76;
+A00233;04.05.2026;Ångström AB;"Spare; kit";99;441,00;43.659,00;
+A00234;15-Jun-26;Société Générale Pièces;"Multi-line
+note: handle with care";202;288,12;58.200,24;
+A00235;23.06.2026;上海科技有限公司;"Part ""X-2""; reinforced";251;224,40;56.324,40;
+A00236;2026-12-12;Société Générale Pièces;"Part ""X-2""; reinforced";263;16,23;4.268,49;
+A00237;21.06.2026;Ångström AB;"Spare; kit";232;32,57;7.556,24;
+A00238;25-Mar-26;Ångström AB;"Multi-line
+note: handle with care";275;399,23;109.788,25;
+A00239;2026-09-06;株式会社東京精密;"Spare; kit";215;201,46;43.313,90;
+A00240;2026-07-26;Ångström AB;Standard part;213;58,46;12.451,98;
+A00241;03-Feb-26;上海科技有限公司;Standard part;116;141,75;16.443,00;
+A00242;23.07.2026;Ångström AB;Standard part;278;373,61;103.863,58;
+A00243;25.02.2026;Ångström AB;"Spare; kit";424;291,11;123.430,64;
+A00244;2026-01-14;서울전자;"Spare; kit";400;244,82;97.928,00;
+A00245;15.07.2026;株式会社東京精密;Standard part;306;348,57;106.662,42;
+A00246;01-Jul-26;서울전자;"Spare; kit";432;219,64;94.884,48;
+A00247;21-May-26;上海科技有限公司;"Part ""X-2""; reinforced";186;108,48;20.177,28;
+A00248;02-Feb-27;Ångström AB;"Spare; kit";481;25,64;12.332,84;
+A00249;03-Dec-26;株式会社東京精密;"Part ""X-2""; reinforced";227;83,61;18.979,47;
+A00250;17-Jan-26;Müller & Söhne GmbH;"Spare; kit";129;140,57;18.133,53;
+A00251;23-Jan-26;株式会社東京精密;"Spare; kit";133;279,78;37.210,74;
+A00252;25-Sep-26;Ångström AB;Standard part;51;353,09;18.007,59;
+A00253;19-Nov-26;Müller & Söhne GmbH;"Multi-line
+note: handle with care";149;211,32;31.486,68;
+A00254;10.01.2027;Ångström AB;"Multi-line
+note: handle with care";452;280,57;126.817,64;
+A00255;23-Jun-26;서울전자;"Spare; kit";226;127,90;28.905,40;
+A00256;2026-12-05;Ångström AB;"Part ""X-2""; reinforced";480;287,50;138.000,00;
+A00257;2026-07-10;Müller & Söhne GmbH;"Part ""X-2""; reinforced";441;336,80;148.528,80;
+A00258;2026-09-01;上海科技有限公司;"Spare; kit";462;216,22;99.893,64;
+A00259;09.05.2026;Ångström AB;"Spare; kit";377;309,73;116.768,21;
+A00260;22.03.2026;Société Générale Pièces;"Part ""X-2""; reinforced";54;213,76;11.543,04;
+A00261;09.12.2026;Ångström AB;Standard part;480;374,55;179.784,00;
+A00262;2027-01-31;Société Générale Pièces;Standard part;312;274,12;85.525,44;
+A00263;31.08.2026;株式会社東京精密;"Multi-line
+note: handle with care";257;434,20;111.589,40;
+A00264;04.08.2026;上海科技有限公司;"Part ""X-2""; reinforced";165;16,94;2.795,10;
+A00265;29.09.2026;Société Générale Pièces;"Spare; kit";91;233,44;21.243,04;
+A00266;20-Nov-26;Société Générale Pièces;"Part ""X-2""; reinforced";228;26,39;6.016,92;
+A00267;18.01.2027;서울전자;Standard part;350;152,73;53.455,50;
+A00268;18-Nov-26;上海科技有限公司;Standard part;369;22,44;8.280,36;
+A00269;2026-04-15;株式会社東京精密;"Part ""X-2""; reinforced";495;340,97;168.780,15;
+A00270;14-Jul-26;서울전자;"Spare; kit";331;382,68;126.667,08;
+A00271;12.12.2026;Ångström AB;"Spare; kit";208;16,85;3.504,80;
+A00272;30-Nov-26;서울전자;"Part ""X-2""; reinforced";464;393,62;182.639,68;
+A00273;2026-09-18;上海科技有限公司;Standard part;256;217,62;55.710,72;
+A00274;01-Apr-26;Société Générale Pièces;"Part ""X-2""; reinforced";378;281,40;106.369,20;
+A00275;2026-03-16;上海科技有限公司;Standard part;479;53,43;25.592,97;
+A00276;06.04.2026;Ångström AB;"Part ""X-2""; reinforced";172;141,18;24.282,96;
+A00277;06.10.2026;Société Générale Pièces;"Multi-line
+note: handle with care";8;190,87;1.526,96;
+A00278;2027-01-21;Müller & Söhne GmbH;"Spare; kit";498;407,99;203.179,02;
+A00279;20.12.2026;서울전자;"Spare; kit";52;283,97;14.766,44;
+A00280;14-Dec-26;서울전자;"Part ""X-2""; reinforced";156;424,89;66.282,84;
+A00281;18.09.2026;Société Générale Pièces;"Part ""X-2""; reinforced";442;391,67;173.118,14;
+A00282;23-Mar-26;Ångström AB;"Part ""X-2""; reinforced";488;68,30;33.330,40;
+A00283;2026-04-13;株式会社東京精密;Standard part;320;372,19;119.100,80;
+A00284;28-Jun-26;Société Générale Pièces;"Spare; kit";405;292,46;118.446,30;
+A00285;16-Sep-26;Société Générale Pièces;Standard part;73;200,77;14.656,21;
+A00286;2026-03-20;서울전자;"Multi-line
+note: handle with care";256;387,78;99.271,68;
+A00287;01-Feb-27;株式会社東京精密;"Part ""X-2""; reinforced";274;94,90;26.002,60;
+A00288;28-Apr-26;Müller & Söhne GmbH;Standard part;183;174,83;31.993,89;
+A00289;12-Jun-26;서울전자;"Part ""X-2""; reinforced";300;42,83;12.849,00;
+A00290;2026-06-12;株式会社東京精密;Standard part;308;403,34;124.228,72;
+A00291;16-Sep-26;上海科技有限公司;Standard part;398;411,84;163.912,32;
+A00292;16-Jan-27;서울전자;"Part ""X-2""; reinforced";499;404,88;202.035,12;
+A00293;18.01.2027;서울전자;"Spare; kit";369;317,24;117.061,56;
+A00294;05-Dec-26;Société Générale Pièces;"Spare; kit";1;161,70;161,70;
+A00295;13.05.2026;서울전자;"Part ""X-2""; reinforced";15;255,30;3.829,50;
+A00296;2026-05-21;株式会社東京精密;"Multi-line
+note: handle with care";146;169,12;24.691,52;
+A00297;05.07.2026;Müller & Söhne GmbH;"Multi-line
+note: handle with care";95;249,47;23.699,65;
+A00298;25.08.2026;서울전자;"Part ""X-2""; reinforced";400;440,69;176.276,00;
+A00299;09-Jun-26;株式会社東京精密;"Spare; kit";274;240,84;65.990,16;
+A00300;2026-06-20;上海科技有限公司;"Part ""X-2""; reinforced";104;356,15;37.039,60;
+A00301;2026-06-18;上海科技有限公司;Standard part;84;6,73;565,32;
+A00302;2026-09-15;서울전자;Standard part;242;240,92;58.302,64;
+A00303;10-Feb-26;Société Générale Pièces;"Spare; kit";282;245,98;69.366,36;
+A00304;06.07.2026;Müller & Söhne GmbH;"Multi-line
+note: handle with care";117;243,58;28.498,86;
+A00305;2026-07-23;서울전자;"Multi-line
+note: handle with care";63;122,20;7.698,60;
+A00306;2026-08-23;上海科技有限公司;"Spare; kit";479;354,52;169.815,08;
+A00307;30.11.2026;株式会社東京精密;"Part ""X-2""; reinforced";111;231,67;25.715,37;
+A00308;06-Apr-26;株式会社東京精密;"Spare; kit";11;329,34;3.622,74;
+A00309;12.09.2026;Société Générale Pièces;"Spare; kit";217;75,55;16.394,35;
+A00310;05.05.2026;上海科技有限公司;"Multi-line
+note: handle with care";220;178,43;39.254,60;
+A00311;2026-12-30;上海科技有限公司;"Multi-line
+note: handle with care";180;333,09;59.956,20;
+A00312;07.07.2026;Müller & Söhne GmbH;"Multi-line
+note: handle with care";258;92,04;23.746,32;
+A00313;21-Feb-26;Ångström AB;"Spare; kit";423;137,59;58.200,57;
+A00314;2026-04-06;Ångström AB;Standard part;300;144,14;43.242,00;
+A00315;18-Jun-26;Ångström AB;"Part ""X-2""; reinforced";42;110,73;4.650,66;
+A00316;31.12.2026;Société Générale Pièces;"Spare; kit";60;193,24;11.594,40;
+A00317;14-Feb-26;上海科技有限公司;"Spare; kit";268;331,72;88.900,96;
+A00318;04.03.2026;Müller & Söhne GmbH;"Part ""X-2""; reinforced";110;410,40;45.144,00;
+A00319;22.05.2026;株式会社東京精密;"Part ""X-2""; reinforced";172;232,10;39.921,20;
+A00320;18.11.2026;Société Générale Pièces;"Part ""X-2""; reinforced";112;325,39;36.443,68;
+A00321;28.04.2026;Müller & Söhne GmbH;Standard part;466;333,16;155.252,56;
+A00322;15.01.2026;Müller & Söhne GmbH;"Multi-line
+note: handle with care";332;82,08;27.250,56;
+A00323;2026-02-23;株式会社東京精密;"Multi-line
+note: handle with care";15;22,29;334,35;
+A00324;2026-08-16;株式会社東京精密;"Part ""X-2""; reinforced";58;26,80;1.554,40;
+A00325;30-Jul-26;Société Générale Pièces;"Spare; kit";287;14,32;4.109,84;
+A00326;09-Nov-26;Müller & Söhne GmbH;"Part ""X-2""; reinforced";309;102,22;31.585,98;
+A00327;16.07.2026;株式会社東京精密;Standard part;101;269,03;27.172,03;
+A00328;2026-04-06;Ångström AB;"Spare; kit";381;306,70;116.852,70;
+A00329;22.11.2026;株式会社東京精密;"Part ""X-2""; reinforced";445;150,17;66.825,65;
+A00330;24-Mar-26;Société Générale Pièces;"Part ""X-2""; reinforced";216;423,46;91.467,36;
+A00331;2027-01-01;Müller & Söhne GmbH;"Part ""X-2""; reinforced";362;429,56;155.500,72;
+A00332;12.03.2026;株式会社東京精密;"Multi-line
+note: handle with care";373;120,66;45.006,18;
+A00333;29.08.2026;Müller & Söhne GmbH;"Multi-line
+note: handle with care";433;374,37;162.102,21;
+A00334;2026-07-03;株式会社東京精密;"Spare; kit";313;168,04;52.596,52;
+A00335;24-Feb-26;上海科技有限公司;"Multi-line
+note: handle with care";481;33,40;16.065,40;
+A00336;28-Sep-26;Müller & Söhne GmbH;"Multi-line
+note: handle with care";419;359,52;150.638,88;
+A00337;04-May-26;Société Générale Pièces;"Spare; kit";226;106,60;24.091,60;
+A00338;2026-01-18;上海科技有限公司;Standard part;94;4,67;438,98;
+A00339;2026-05-14;株式会社東京精密;"Spare; kit";118;54,85;6.472,30;
+A00340;2026-08-18;Ångström AB;"Multi-line
+note: handle with care";125;261,24;32.655,00;
+A00341;2026-10-04;株式会社東京精密;"Part ""X-2""; reinforced";24;41,32;991,68;
+A00342;25.12.2026;Müller & Söhne GmbH;"Part ""X-2""; reinforced";369;431,04;159.053,76;
+A00343;26.12.2026;서울전자;"Multi-line
+note: handle with care";12;131,95;1.583,40;
+A00344;19.09.2026;上海科技有限公司;"Spare; kit";329;81,77;26.902,33;
+A00345;2026-01-21;上海科技有限公司;"Part ""X-2""; reinforced";449;300,35;134.857,15;
+A00346;17-May-26;上海科技有限公司;"Part ""X-2""; reinforced";166;414,31;68.775,46;
+A00347;21-Oct-26;株式会社東京精密;"Multi-line
+note: handle with care";195;138,10;26.929,50;
+A00348;19.02.2026;上海科技有限公司;"Part ""X-2""; reinforced";109;281,14;30.644,26;
+A00349;28.04.2026;Ångström AB;"Spare; kit";353;256,36;90.495,08;
+A00350;2026-07-03;株式会社東京精密;"Multi-line
+note: handle with care";408;307,55;125.480,40;
+A00351;17-Jan-26;서울전자;"Multi-line
+note: handle with care";448;180,30;80.774,40;
+A00352;18.01.2027;서울전자;"Part ""X-2""; reinforced";76;119,66;9.094,16;
+A00353;2026-04-25;Müller & Söhne GmbH;"Spare; kit";197;130,06;25.621,82;
+A00354;30.10.2026;서울전자;"Part ""X-2""; reinforced";399;106,45;42.473,55;
+A00355;20.06.2026;上海科技有限公司;"Part ""X-2""; reinforced";471;88,83;41.838,93;
+A00356;11-Apr-26;Müller & Söhne GmbH;"Spare; kit";168;98,36;16.524,48;
+A00357;19.01.2027;Société Générale Pièces;"Multi-line
+note: handle with care";199;255,45;50.834,55;
+A00358;14-Aug-26;上海科技有限公司;Standard part;133;85,50;11.371,50;
+A00359;2027-01-10;Ångström AB;"Spare; kit";10;69,02;690,20;
+A00360;2026-01-16;Müller & Söhne GmbH;"Spare; kit";499;72,93;36.392,07;
+A00361;29-Aug-26;Ångström AB;"Multi-line
+note: handle with care";386;56,14;21.670,04;
+A00362;03-Feb-27;Société Générale Pièces;"Multi-line
+note: handle with care";347;250,42;86.895,74;
+A00363;10-Oct-26;株式会社東京精密;"Multi-line
+note: handle with care";144;292,88;42.174,72;
+A00364;16.06.2026;Société Générale Pièces;"Spare; kit";152;193,27;29.377,04;
+A00365;13-Sep-26;Ångström AB;"Multi-line
+note: handle with care";393;170,27;66.916,11;
+A00366;09.08.2026;Ångström AB;"Spare; kit";172;105,73;18.185,56;
+A00367;02.02.2026;Société Générale Pièces;Standard part;410;27,85;11.418,50;
+A00368;21.08.2026;Müller & Söhne GmbH;"Spare; kit";232;229,63;53.274,16;
+A00369;30-Oct-26;株式会社東京精密;"Multi-line
+note: handle with care";89;444,20;39.533,80;
+A00370;10.03.2026;Ångström AB;"Part ""X-2""; reinforced";6;354,02;2.124,12;
+A00371;2026-12-17;上海科技有限公司;"Multi-line
+note: handle with care";421;270,50;113.880,50;
+A00372;06.12.2026;Müller & Söhne GmbH;"Part ""X-2""; reinforced";211;142,57;30.082,27;
+A00373;08-Dec-26;Société Générale Pièces;"Multi-line
+note: handle with care";465;159,63;74.227,95;
+A00374;08-Jun-26;Société Générale Pièces;"Part ""X-2""; reinforced";349;249,76;87.166,24;
+A00375;2026-09-23;Société Générale Pièces;"Multi-line
+note: handle with care";383;216,86;83.057,38;
+A00376;29.06.2026;株式会社東京精密;"Part ""X-2""; reinforced";57;268,79;15.321,03;
+A00377;10.05.2026;서울전자;"Spare; kit";107;234,71;25.113,97;
+A00378;13.03.2026;서울전자;"Part ""X-2""; reinforced";129;57,85;7.462,65;
+A00379;22-Mar-26;Müller & Söhne GmbH;"Spare; kit";308;340,04;104.732,32;
+A00380;30-Jan-27;上海科技有限公司;Standard part;423;126,40;53.467,20;
+A00381;2026-08-08;上海科技有限公司;"Spare; kit";287;392,46;112.636,02;
+A00382;10.01.2027;株式会社東京精密;Standard part;390;327,73;127.814,70;
+A00383;01-Sep-26;Ångström AB;"Multi-line
+note: handle with care";433;164,81;71.362,73;
+A00384;2026-12-27;Société Générale Pièces;Standard part;397;423,32;168.058,04;
+A00385;2027-01-07;Ångström AB;Standard part;201;339,00;68.139,00;
+A00386;12.05.2026;Ångström AB;"Multi-line
+note: handle with care";500;201,35;100.675,00;
+A00387;16.08.2026;上海科技有限公司;"Spare; kit";428;165,39;70.786,92;
+A00388;2026-08-01;株式会社東京精密;"Part ""X-2""; reinforced";334;200,04;66.813,36;
+A00389;2026-06-01;서울전자;"Multi-line
+note: handle with care";78;426,34;33.254,52;
+A00390;2026-01-16;Société Générale Pièces;"Part ""X-2""; reinforced";432;291,86;126.083,52;
+A00391;2026-11-02;上海科技有限公司;"Spare; kit";39;289,98;11.309,22;
+A00392;16-Jan-26;Ångström AB;"Spare; kit";293;73,77;21.614,61;
+A00393;2026-06-19;株式会社東京精密;"Spare; kit";222;254,89;56.585,58;
+A00394;2026-06-28;Müller & Söhne GmbH;"Spare; kit";240;184,62;44.308,80;
+A00395;2026-10-14;Société Générale Pièces;"Spare; kit";277;413,15;114.442,55;
+A00396;02.05.2026;上海科技有限公司;"Spare; kit";363;117,48;42.645,24;
+A00397;2026-10-31;서울전자;"Multi-line
+note: handle with care";212;107,61;22.813,32;
+A00398;05-Feb-26;Ångström AB;Standard part;237;100,12;23.728,44;
+A00399;15-Nov-26;Société Générale Pièces;"Spare; kit";164;57,84;9.485,76;
+A00400;2026-05-23;서울전자;Standard part;191;18,64;3.560,24;
+A00401;22.11.2026;Société Générale Pièces;"Multi-line
+note: handle with care";280;99,21;27.778,80;
+A00402;28-Dec-26;株式会社東京精密;Standard part;325;242,19;78.711,75;
+A00403;03-Dec-26;Müller & Söhne GmbH;"Part ""X-2""; reinforced";114;194,46;22.168,44;
+A00404;27.01.2027;株式会社東京精密;"Part ""X-2""; reinforced";471;338,94;159.640,74;
+A00405;2026-12-17;Müller & Söhne GmbH;"Multi-line
+note: handle with care";298;340,90;101.588,20;
+A00406;19.04.2026;Société Générale Pièces;"Multi-line
+note: handle with care";154;69,28;10.669,12;
+A00407;29-Aug-26;上海科技有限公司;"Spare; kit";463;273,37;126.570,31;
+A00408;2026-12-14;서울전자;"Spare; kit";217;74,55;16.177,35;
+A00409;2026-12-26;Müller & Söhne GmbH;"Spare; kit";198;135,73;26.874,54;
+A00410;2026-05-04;서울전자;"Part ""X-2""; reinforced";474;183,67;87.059,58;
+A00411;20-Jan-27;上海科技有限公司;"Multi-line
+note: handle with care";36;97,20;3.499,20;
+A00412;2026-02-07;Société Générale Pièces;"Spare; kit";463;57,11;26.441,93;
+A00413;19.12.2026;Société Générale Pièces;"Spare; kit";386;430,68;166.242,48;
+A00414;2026-07-23;서울전자;"Part ""X-2""; reinforced";344;241,54;83.089,76;
+A00415;08.10.2026;Société Générale Pièces;Standard part;41;423,15;17.349,15;
+A00416;25-Mar-26;Müller & Söhne GmbH;Standard part;458;22,29;10.208,82;
+A00417;23.12.2026;上海科技有限公司;Standard part;281;84,95;23.870,95;
+A00418;2026-07-29;株式会社東京精密;"Spare; kit";84;416,47;34.983,48;
+A00419;10.01.2026;Ångström AB;"Part ""X-2""; reinforced";216;398,47;86.069,52;
+A00420;2026-06-29;Müller & Söhne GmbH;Standard part;47;338,93;15.929,71;
+A00421;22-Sep-26;서울전자;"Multi-line
+note: handle with care";44;53,79;2.366,76;
+A00422;2026-09-25;Ångström AB;"Part ""X-2""; reinforced";13;6,24;81,12;
+A00423;24.09.2026;上海科技有限公司;Standard part;189;241,32;45.609,48;
+A00424;2026-03-23;上海科技有限公司;"Part ""X-2""; reinforced";366;58,54;21.425,64;
+A00425;29.07.2026;서울전자;"Part ""X-2""; reinforced";382;277,92;106.165,44;
+A00426;16-Mar-26;Société Générale Pièces;Standard part;13;229,49;2.983,37;
+A00427;08-Aug-26;Müller & Söhne GmbH;"Multi-line
+note: handle with care";243;258,42;62.796,06;
+A00428;2026-03-20;Ångström AB;"Spare; kit";486;110,44;53.673,84;
+A00429;12-Oct-26;서울전자;"Multi-line
+note: handle with care";79;367,02;28.994,58;
+A00430;23.11.2026;Müller & Söhne GmbH;"Spare; kit";227;267,91;60.815,57;
+A00431;11-Jul-26;서울전자;"Multi-line
+note: handle with care";486;434,76;211.293,36;
+A00432;20-Mar-26;株式会社東京精密;Standard part;458;57,83;26.486,14;
+A00433;03-Jan-27;上海科技有限公司;"Part ""X-2""; reinforced";418;351,30;146.843,40;
+A00434;03-Jan-27;Ångström AB;Standard part;355;286,74;101.792,70;
+A00435;22.10.2026;Société Générale Pièces;"Spare; kit";343;3,93;1.347,99;
+A00436;2026-05-29;Ångström AB;"Multi-line
+note: handle with care";199;37,29;7.420,71;
+A00437;25-Apr-26;Müller & Söhne GmbH;"Spare; kit";262;87,41;22.901,42;
+A00438;25.09.2026;Müller & Söhne GmbH;"Part ""X-2""; reinforced";39;53,56;2.088,84;
+A00439;01-Mar-26;株式会社東京精密;"Part ""X-2""; reinforced";23;4,39;100,97;
+A00440;2026-10-10;Ångström AB;"Spare; kit";161;370,16;59.595,76;
+A00441;04.11.2026;Müller & Söhne GmbH;"Spare; kit";203;231,86;47.067,58;
+A00442;06.12.2026;서울전자;"Part ""X-2""; reinforced";2;355,62;711,24;
+A00443;07.09.2026;上海科技有限公司;"Multi-line
+note: handle with care";437;219,80;96.052,60;
+A00444;24.01.2026;Ångström AB;"Part ""X-2""; reinforced";468;78,85;36.901,80;
+A00445;08-Jul-26;株式会社東京精密;"Part ""X-2""; reinforced";124;166,88;20.693,12;
+A00446;22-Jan-27;Société Générale Pièces;"Part ""X-2""; reinforced";117;15,13;1.770,21;
+A00447;22-Dec-26;Müller & Söhne GmbH;"Part ""X-2""; reinforced";417;216,53;90.293,01;
+A00448;2026-07-06;上海科技有限公司;Standard part;298;217,64;64.856,72;
+A00449;02-May-26;Müller & Söhne GmbH;"Spare; kit";76;231,77;17.614,52;
+A00450;2026-01-07;서울전자;"Spare; kit";8;11,76;94,08;
+A00451;10-Oct-26;株式会社東京精密;"Spare; kit";275;107,92;29.678,00;
+A00452;2026-11-07;서울전자;Standard part;134;2,63;352,42;
+A00453;19.01.2027;株式会社東京精密;Standard part;218;386,11;84.171,98;
+A00454;23-Dec-26;株式会社東京精密;"Multi-line
+note: handle with care";117;221,94;25.966,98;
+A00455;01-Jan-26;上海科技有限公司;Standard part;22;144,64;3.182,08;
+A00456;01-Jul-26;上海科技有限公司;Standard part;101;243,35;24.578,35;
+A00457;2026-12-23;株式会社東京精密;"Spare; kit";355;176,17;62.540,35;
+A00458;19.01.2027;Müller & Söhne GmbH;"Part ""X-2""; reinforced";73;285,50;20.841,50;
+A00459;2026-10-13;上海科技有限公司;"Multi-line
+note: handle with care";314;275,71;86.572,94;
+A00460;20.05.2026;上海科技有限公司;"Spare; kit";166;160,99;26.724,34;
+A00461;14.11.2026;서울전자;"Spare; kit";114;56,21;6.407,94;
+A00462;2026-08-24;上海科技有限公司;"Part ""X-2""; reinforced";492;35,38;17.406,96;
+A00463;26-Mar-26;서울전자;"Multi-line
+note: handle with care";209;241,05;50.379,45;
+A00464;2026-07-21;Ångström AB;"Multi-line
+note: handle with care";103;279,48;28.786,44;
+A00465;2026-11-13;서울전자;"Multi-line
+note: handle with care";316;230,07;72.702,12;
+A00466;18-Nov-26;上海科技有限公司;"Multi-line
+note: handle with care";266;342,07;90.990,62;
+A00467;26-Nov-26;Société Générale Pièces;"Spare; kit";438;274,83;120.375,54;
+A00468;2026-03-02;Müller & Söhne GmbH;"Spare; kit";425;117,72;50.031,00;
+A00469;02-Jun-26;株式会社東京精密;Standard part;419;94,84;39.737,96;
+A00470;2026-02-07;株式会社東京精密;Standard part;178;157,22;27.985,16;
+A00471;2026-04-22;Müller & Söhne GmbH;"Part ""X-2""; reinforced";256;406,73;104.122,88;
+A00472;11-Sep-26;株式会社東京精密;"Spare; kit";3;342,14;1.026,42;
+A00473;27-Jul-26;서울전자;"Part ""X-2""; reinforced";161;48,89;7.871,29;
+A00474;16-Jun-26;Ångström AB;"Multi-line
+note: handle with care";21;324,11;6.806,31;
+A00475;05.03.2026;서울전자;"Multi-line
+note: handle with care";238;325,54;77.478,52;
+A00476;26-Mar-26;Ångström AB;"Multi-line
+note: handle with care";37;300,65;11.124,05;
+A00477;01-Apr-26;Müller & Söhne GmbH;Standard part;500;157,87;78.935,00;
+A00478;2026-12-31;Müller & Söhne GmbH;"Part ""X-2""; reinforced";468;93,21;43.622,28;
+A00479;2027-01-22;서울전자;"Multi-line
+note: handle with care";326;62,37;20.332,62;
+A00480;2026-02-18;서울전자;"Spare; kit";222;68,94;15.304,68;
