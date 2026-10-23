@@ -378,6 +378,16 @@ const buildExplicitRowRoleAnnotations = (data: CsvData): RowSemanticAnnotation[]
         }];
     });
 
+const buildExplicitDetailRowIndexes = (data: CsvData): Set<number> => {
+    const indexes = new Set<number>();
+    data.data.forEach((row, rowIndex) => {
+        if (normalizeExplicitSemanticRowRole(row.RowClass ?? row.RowRole) === 'detail') {
+            indexes.add(rowIndex);
+        }
+    });
+    return indexes;
+};
+
 const mergeRowAnnotations = (
     data: CsvData,
     annotations: RowSemanticAnnotation[],
@@ -408,7 +418,15 @@ const mergeRowAnnotations = (
         }
     });
 
-    return [...merged.values()].sort((left, right) => left.rowIndex - right.rowIndex);
+    // A row the prepared table itself marks as a detail row (RowClass 'fact') is structural
+    // evidence from the deterministic hierarchy canonicalization. A model label or a
+    // name-based heuristic must not hide it from the default analysis view: the view feeds
+    // the SQL engine, so a hidden detail row silently shrinks every total.
+    const explicitDetailRows = buildExplicitDetailRowIndexes(data);
+
+    return [...merged.values()]
+        .filter(annotation => annotation.rowRole === 'detail' || !explicitDetailRows.has(annotation.rowIndex))
+        .sort((left, right) => left.rowIndex - right.rowIndex);
 };
 
 const inferHeuristicColumnAnnotation = (

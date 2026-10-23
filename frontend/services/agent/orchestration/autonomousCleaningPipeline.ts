@@ -55,6 +55,7 @@ import { emitFailure, attemptGracefulDegradation } from './cleaningPipelineTermi
 import { replaceInternalCodesWithPlainText } from '../../../utils/localization';
 import { getPreferredAnalysisDataset } from '../reportStructureState';
 import { trySandboxCleaningFallback } from './sandboxCleaningFallback';
+import { assertFactRowsPreserved, FactRowLossError, findFactRowLoss } from './rowHierarchyConservation';
 
 export const orchestrateAutonomousAiCleaning = async (
     store: StoreApi,
@@ -643,9 +644,9 @@ export const orchestrateAutonomousAiCleaning = async (
                 continue;
             }
 
-            const program = selectedCandidate.program;
-            const usedAi = selectedCandidate.source !== 'deterministic_cleanup';
-            const recoveryPath = selectedCandidate.source === 'deterministic_cleanup'
+            let program = selectedCandidate.program;
+            let usedAi = selectedCandidate.source !== 'deterministic_cleanup';
+            let recoveryPath: 'deterministic_cleanup' | 'ai_retry' = selectedCandidate.source === 'deterministic_cleanup'
                 ? 'deterministic_cleanup'
                 : 'ai_retry';
 
@@ -698,7 +699,26 @@ export const orchestrateAutonomousAiCleaning = async (
             }
 
             const executeStartedAt = performance.now();
-            const execution = await executeAiCleaningProgramWithWorker(workingData.data, program, workingProfiles);
+            let execution = await executeAiCleaningProgramWithWorker(workingData.data, program, workingProfiles);
+            // A model-written program deletes rows by index or predicate without seeing the
+            // full table. When the table states its detail rows explicitly (RowClass), losing
+            // one silently shrinks business totals, so such a program is replaced by the
+            // deterministic cleanup, which only removes rows the inspection classified as noise.
+            const factLoss = findFactRowLoss(workingData.data, execution.data);
+            if (factLoss) {
+                console.warn(`[CleaningPipeline] Strategy "${selectedCandidate.source}" removed ${factLoss.lostFactRows} detail row(s); discarding its result.`);
+                updateRecoveryStateForAttempt(store, selectedCandidate, loopRound, 'fact_rows_lost', true);
+                const fallbackCandidate = candidates.find(candidate => candidate.source === 'deterministic_cleanup');
+                if (!fallbackCandidate || selectedCandidate.source === 'deterministic_cleanup') {
+                    throw new FactRowLossError(factLoss, `cleaning strategy "${selectedCandidate.source}"`);
+                }
+                selectedCandidate = fallbackCandidate;
+                program = fallbackCandidate.program;
+                usedAi = false;
+                recoveryPath = 'deterministic_cleanup';
+                execution = await executeAiCleaningProgramWithWorker(workingData.data, program, workingProfiles);
+                assertFactRowsPreserved(workingData.data, execution.data, 'deterministic cleanup');
+            }
             const reconciliation = execution.numericReconciliation;
             logCleaningLoopStage(
                 loopRound,
