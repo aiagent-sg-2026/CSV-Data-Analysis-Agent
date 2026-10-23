@@ -1,4 +1,5 @@
 import * as Papa from 'papaparse';
+import { detectFixedWidthLayout, sliceFixedWidthRows } from './fixedWidthText';
 import type {
     CsvIntakeConfidence,
     CsvIntakeDetectionResult,
@@ -38,6 +39,10 @@ const SAMPLE_NON_EMPTY_LINE_LIMIT = 200;
 // A legitimate quoted cell rarely spans more than a few lines. Beyond this a
 // quote is treated as runaway (a stray quote swallowing the following rows).
 const MAX_QUOTED_FIELD_LINE_BREAKS = 40;
+// Fixed-width probing only runs when no delimiter gives uniform records.
+const FIXED_WIDTH_MAX_DELIMITED_CONSISTENCY = 0.9;
+const NOT_DELIMITED_SPLIT_MESSAGE = 'This file looks like a text report with space-aligned columns, not a delimited CSV. Columns were inferred from character positions and should be reviewed.';
+const NOT_DELIMITED_UNSPLIT_MESSAGE = 'This file looks like a text report with space-aligned columns, not a delimited CSV. The columns could not be separated reliably, so the imported structure is probably wrong.';
 const DELIMITER_CANDIDATES = [',', ';', '\t', '|', ':'] as const;
 const QUOTE_CHAR_CANDIDATES = ['"', '\'', ''] as const;
 const MIN_SCORED_CANDIDATE_SCORE = 0.42;
@@ -564,7 +569,28 @@ export const parseCsvTextWithDetection = (text: string): CsvDetectionParseResult
     const runnerUp = getAlternateDelimiterCandidate(scoredCandidates, best);
     const confidence = buildConfidence(best, runnerUp);
     const scoredWarnings = buildBaseWarnings(sample, best, runnerUp, confidence);
-    const effectiveBaseConfidence: CsvIntakeConfidence = scoredWarnings.some(warning => warning.code === 'malformed_quote')
+
+    // A text report has no delimiter, so the best delimited parse is either
+    // ragged (stray commas in numbers) or a single column.
+    const fixedWidth = (best.widthConsistency < FIXED_WIDTH_MAX_DELIMITED_CONSISTENCY || best.dominantWidth <= 1)
+        ? detectFixedWidthLayout(sample.text.split('\n'))
+        : null;
+    if (fixedWidth?.kind === 'split') {
+        const rawRows = sliceFixedWidthRows(stripBom(text), fixedWidth);
+        const warnings = mergeWarnings(
+            [{ code: 'not_delimited_text', message: NOT_DELIMITED_SPLIT_MESSAGE }],
+            [{ code: 'low_confidence', message: 'CSV dialect detection confidence is limited, so the imported structure should be reviewed in diagnostics.' }],
+        );
+        return {
+            rawRows,
+            detection: createDetection('fixed_width_layout', null, null, 'low', warnings, sampledNonEmptyLines, 0),
+        };
+    }
+    if (fixedWidth?.kind === 'unsplittable') {
+        pushWarning(scoredWarnings, 'not_delimited_text', NOT_DELIMITED_UNSPLIT_MESSAGE);
+    }
+    const notDelimited = fixedWidth?.kind === 'unsplittable';
+    const effectiveBaseConfidence: CsvIntakeConfidence = notDelimited || scoredWarnings.some(warning => warning.code === 'malformed_quote')
         ? 'low'
         : confidence;
 

@@ -3483,6 +3483,8 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'data_warnings_title': { 'English': 'Data Warnings', 'Mandarin': '数据警告', 'Japanese': 'データ警告', 'Malay': 'Amaran data' },
     'data_warnings_intake_label': { 'English': 'CSV Structure Warnings', 'Mandarin': 'CSV 结构警告', 'Japanese': 'CSV構造警告', 'Malay': 'Amaran struktur CSV' },
     'data_warnings_intake_reported': { 'English': 'CSV structure check found {count} issue(s) during import.', 'Mandarin': 'CSV 结构检查在导入时发现 {count} 个问题。', 'Japanese': 'CSVインポート時に {count} 件の構造問題が見つかりました。', 'Malay': 'Semakan struktur CSV menemui {count} isu semasa import.' },
+    'data_warnings_intake_not_delimited_split': { 'English': 'This file is a text report with space-aligned columns, not a delimited CSV. The app split the columns by character position, so please check them.', 'Mandarin': '该文件是用空格对齐列的文本报表，而不是带分隔符的 CSV。系统按字符位置拆分了列，请检查结果。', 'Japanese': 'このファイルは区切り文字付きのCSVではなく、空白で桁を揃えたテキストレポートです。文字位置で列を分割したため、結果を確認してください。', 'Malay': 'Fail ini ialah laporan teks dengan lajur yang dijajarkan menggunakan ruang, bukan CSV berpemisah. Aplikasi memisahkan lajur mengikut kedudukan aksara, jadi sila semak lajur tersebut.' },
+    'data_warnings_intake_not_delimited_unsplit': { 'English': 'This file is a text report with space-aligned columns, not a delimited CSV. The columns could not be separated reliably, so the imported table is probably wrong.', 'Mandarin': '该文件是用空格对齐列的文本报表，而不是带分隔符的 CSV。无法可靠地拆分列，因此导入的表格很可能不正确。', 'Japanese': 'このファイルは区切り文字付きのCSVではなく、空白で桁を揃えたテキストレポートです。列を確実に分割できなかったため、取り込んだ表は正しくない可能性があります。', 'Malay': 'Fail ini ialah laporan teks dengan lajur yang dijajarkan menggunakan ruang, bukan CSV berpemisah. Lajur tidak dapat dipisahkan dengan pasti, jadi jadual yang diimport mungkin tidak betul.' },
     'data_warnings_technical_toggle': { 'English': 'Show technical details', 'Mandarin': '查看技术详情', 'Japanese': '技術的詳細を表示', 'Malay': 'Tunjukkan butiran teknikal' },
     'data_warnings_footer': { 'English': 'Full diagnostics are available in the Data Preparation Workflow.', 'Mandarin': '完整诊断信息可在数据准备工作流中查看。', 'Japanese': '詳細な診断情報はデータ準備ワークフローで確認できます。', 'Malay': 'Diagnostik penuh tersedia dalam Aliran Kerja Penyediaan Data.' },
 
@@ -4427,6 +4429,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Mandarin': '文件中堆叠了多个不同的表格。仅分析第一个表格，其余表格已被单独搁置，避免其数据混入。',
         'Japanese': 'ファイルに異なる表が縦に並んでいます。最初の表だけを分析し、他の表は行が混ざらないよう別に扱っています。',
         'Malay': 'Fail ini mengandungi beberapa jadual berbeza yang disusun bertindan. Hanya jadual pertama dianalisis, dan jadual lain diketepikan supaya barisnya tidak bercampur.',
+    },
+    'structure_review_reason_not_delimited_text': {
+        'English': 'The file looks like a text report with space-aligned columns, not a delimited CSV, so the column layout needs a check.',
+        'Mandarin': '该文件看起来是用空格对齐列的文本报表，而不是带分隔符的 CSV，因此需要确认列的划分。',
+        'Japanese': 'このファイルは区切り文字付きのCSVではなく、空白で桁を揃えたテキストレポートのようです。列の分割を確認してください。',
+        'Malay': 'Fail ini kelihatan seperti laporan teks dengan lajur yang dijajarkan menggunakan ruang, bukan CSV berpemisah, jadi susun atur lajur perlu disemak.',
     },
     'structure_review_reason_runtime_boundary_ambiguous': {
         'English': 'The table boundaries are unclear, so the file can be read in more than one way.',
@@ -5452,6 +5460,7 @@ export const STRUCTURE_REVIEW_REASON_CODES = [
     'boundary_incomplete',
     'header_shape_drift',
     'stacked_sections_set_aside',
+    'not_delimited_text',
     'runtime_boundary_ambiguous',
     'runtime_boundary_rejected',
     'repeated_header_leakage',

@@ -371,6 +371,11 @@ const buildBlockingReasons = (
     rowInspection: NonNullable<ReportStructureResolution['rowInspection']>,
 ) => {
     const reasons: string[] = [];
+    // First, so it becomes the reason the review dialog leads with: a file that
+    // is not delimited at all explains every later structure symptom.
+    if (input.rawIntakeIr?.detection?.warnings.some(warning => warning.code === 'not_delimited_text')) {
+        reasons.push('not_delimited_text');
+    }
     const preparedLooksTabular = Boolean(
         (input.csvData?.headerDepth ?? 1) <= 1
         && rowInspection.totalRows > 0

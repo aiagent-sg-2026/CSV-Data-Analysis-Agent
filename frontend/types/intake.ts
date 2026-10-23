@@ -5,7 +5,7 @@
 export type CsvCellValue = string | number | boolean | null;
 export type CsvRow = { [key: string]: CsvCellValue };
 
-export type CsvIntakeDetectionStrategy = 'scored_candidate' | 'papaparse_auto_fallback' | 'raw_line_fallback';
+export type CsvIntakeDetectionStrategy = 'scored_candidate' | 'papaparse_auto_fallback' | 'raw_line_fallback' | 'fixed_width_layout';
 export type CsvIntakeConfidence = 'high' | 'medium' | 'low';
 export type CsvIntakeWarningCode =
     | 'mixed_delimiter'
@@ -13,7 +13,9 @@ export type CsvIntakeWarningCode =
     | 'header_shape_drift'
     | 'stacked_sections'
     | 'low_confidence'
-    | 'parse_errors';
+    | 'parse_errors'
+    /** The file is a space-aligned text report, not a delimited CSV. */
+    | 'not_delimited_text';
 
 export interface CsvIntakeWarning {
     code: CsvIntakeWarningCode;
