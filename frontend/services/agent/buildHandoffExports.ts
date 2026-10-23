@@ -10,6 +10,7 @@ import {
     getCurrentAnalysisDatasetVersion,
     resolveAnalysisArtifactFreshness,
 } from './artifactProvenance';
+import { formatCountNoun } from '../../utils/displayText';
 
 const toIso = (value: Date | string) => new Date(value).toISOString();
 
@@ -496,7 +497,7 @@ const finalizeAiDebugBundle = (sections: string[]): string => {
         finalSections.push([
             '## Bundle Truncation',
             '',
-            `- ${omittedCount} section(s) omitted to keep this export within the ~50KB debug bundle budget.`,
+            `- ${formatCountNoun(omittedCount, 'section')} omitted to keep this export within the ~50KB debug bundle budget.`,
         ].join('\n'));
     }
     finalSections.push(footer);

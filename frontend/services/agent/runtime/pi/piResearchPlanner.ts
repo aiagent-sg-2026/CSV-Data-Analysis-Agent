@@ -29,6 +29,7 @@ import { executeEvidenceQuery } from '../../execution/sqlCardExecutor';
 import { buildVolumeCheckQuery, readVolumeCheckRows } from '../../planning/volumeDrivenSum';
 import { buildSeriesMeasureGuidance, resolveSeriesMeasure } from '../../planning/seriesMeasureGuard';
 import { buildRowHierarchyGuidance, resolveRowHierarchy, type RowHierarchyContract } from '../../planning/rowHierarchyGuard';
+import { formatCount, pluralizeCount } from '../../../../utils/displayText';
 
 export const SUBMIT_RESEARCH_PLAN_TOOL = 'submit_research_plan';
 const PLANNER_MAX_PROVIDER_TURNS = 9;
@@ -301,7 +302,7 @@ export const runPiResearchPlanner = async (params: {
         phase: 'planning',
         step: 'pi_research_plan_ready',
         status: 'done',
-        message: `Pi drafted ${(accepted as ResearchPlan).questions.length} research question(s).`,
+        message: `Pi drafted ${formatCount((accepted as ResearchPlan).questions.length)} research ${pluralizeCount((accepted as ResearchPlan).questions.length, 'question')}.`,
         detail: { runtimeOwner: 'pi', rejected: (accepted as ResearchPlan).rejected.length },
     });
     return accepted;

@@ -3,6 +3,7 @@ import type { DataPreparationWorkflowBundle } from '../../types';
 import { buildCleaningInspectionBundle } from './buildCleaningInspectionBundle';
 import { evaluateIntakeDiagnostics, evaluatePostCleaningGateRelaxation } from './intakeDiagnosticsPolicy';
 import { resolveEffectiveSummaryStartIndex } from './reportStructureNormalization';
+import { formatCount, formatCountNoun, pluralizeCount } from '../../utils/displayText';
 
 // Narrower state type accepted by this function — all fields accessed directly or via buildCleaningInspectionBundle.
 export type WorkflowBundleState = Pick<AppStore,
@@ -61,7 +62,7 @@ const buildIssueMappings = (
 
     if (inspection.cleaning.baselineNoiseRowsRemoved > 0) {
         mappings.push({
-            issue: `${inspection.cleaning.baselineNoiseRowsRemoved} embedded body-noise row(s) detected`,
+            issue: `${formatCount(inspection.cleaning.baselineNoiseRowsRemoved)} embedded body-noise ${pluralizeCount(inspection.cleaning.baselineNoiseRowsRemoved, 'row')} detected`,
             action: 'Deterministic baseline cleaner removed obvious project/export note rows',
             result: 'baseline-fixed',
         });
@@ -69,7 +70,7 @@ const buildIssueMappings = (
 
     if (inspection.execution.removedColumns.length > 0) {
         mappings.push({
-            issue: `${inspection.execution.removedColumns.length} low-value column(s) were flagged as noise`,
+            issue: `${formatCount(inspection.execution.removedColumns.length)} low-value ${pluralizeCount(inspection.execution.removedColumns.length, 'column')} were flagged as noise`,
             action: `Removed columns: ${inspection.execution.removedColumns.slice(0, 4).join(', ')}${inspection.execution.removedColumns.length > 4 ? '...' : ''}`,
             result: 'baseline-fixed',
         });
@@ -81,8 +82,8 @@ const buildIssueMappings = (
                 ? 'AI workspace cleaning wrote executable dataset edits'
                 : 'AI cleaning plan produced executable deterministic operations',
             action: inspection.cleaning.derivedFromWorkspaceEdits
-                ? `${inspection.cleaning.workspaceEditCount} workspace edit(s) updated cleaned.csv`
-                : `${inspection.cleaning.operationCount} operation(s) auto-applied`,
+                ? `${formatCount(inspection.cleaning.workspaceEditCount)} workspace ${pluralizeCount(inspection.cleaning.workspaceEditCount, 'edit')} updated cleaned.csv`
+                : `${formatCountNoun(inspection.cleaning.operationCount, 'operation')} auto-applied`,
             result: 'ai-executed',
         });
     } else if (inspection.cleaning.planStatus === 'schema_only') {
@@ -103,7 +104,7 @@ const buildIssueMappings = (
 
     if ((inspection.cleaning.labelNormalization?.appliedClusters.length ?? 0) > 0) {
         mappings.push({
-            issue: `${inspection.cleaning.labelNormalization?.appliedClusters.length ?? 0} high-confidence label alias group(s) were normalized`,
+            issue: `${formatCount(inspection.cleaning.labelNormalization?.appliedClusters.length ?? 0)} high-confidence label alias ${pluralizeCount(inspection.cleaning.labelNormalization?.appliedClusters.length ?? 0, 'group')} were normalized`,
             action: inspection.cleaning.labelNormalization?.summary ?? 'Applied deterministic replace_values mappings to standardize duplicate labels.',
             result: 'ai-executed',
         });
@@ -111,7 +112,7 @@ const buildIssueMappings = (
 
     if ((inspection.cleaning.labelNormalization?.deferredSuggestions.length ?? 0) > 0) {
         mappings.push({
-            issue: `${inspection.cleaning.labelNormalization?.deferredSuggestions.length ?? 0} lower-confidence label alias suggestion(s) were deferred`,
+            issue: `${formatCount(inspection.cleaning.labelNormalization?.deferredSuggestions.length ?? 0)} lower-confidence label alias ${pluralizeCount(inspection.cleaning.labelNormalization?.deferredSuggestions.length ?? 0, 'suggestion')} were deferred`,
             action: 'Review deferred label suggestions before forcing broader normalization rules.',
             result: 'proposed-only',
         });
@@ -229,7 +230,7 @@ export const buildDataPreparationWorkflowBundle = (state: WorkflowBundleState): 
                 : intakeGuard.inspectMessage
                 ? intakeGuard.inspectMessage
                 : inspection.profiling.detectedIssues.length > 0
-                ? `${inspection.profiling.detectedIssues.length} quality issue(s) detected during profiling.`
+                ? `${formatCount(inspection.profiling.detectedIssues.length)} quality ${pluralizeCount(inspection.profiling.detectedIssues.length, 'issue')} detected during profiling.`
                 : inspection.importFacts.fileName
                     ? 'Initial profiling completed without user-visible warnings.'
                     : 'Inspection starts after a dataset is loaded.',
@@ -248,8 +249,8 @@ export const buildDataPreparationWorkflowBundle = (state: WorkflowBundleState): 
                             : 'not_started',
             description: inspection.cleaning.planStatus === 'operations'
                 ? inspection.cleaning.derivedFromWorkspaceEdits
-                    ? `${inspection.cleaning.workspaceEditCount} workspace cleaning edit(s) executed.`
-                    : `${inspection.cleaning.operationCount} deterministic operation(s) executed.`
+                    ? `${formatCount(inspection.cleaning.workspaceEditCount)} workspace cleaning ${pluralizeCount(inspection.cleaning.workspaceEditCount, 'edit')} executed.`
+                    : `${formatCount(inspection.cleaning.operationCount)} deterministic ${pluralizeCount(inspection.cleaning.operationCount, 'operation')} executed.`
                 : inspection.cleaning.planStatus === 'schema_only'
                     ? 'Baseline-prepared rows kept; AI only refined schema interpretation.'
                     : inspection.cleaning.planStatus === 'inconsistent'

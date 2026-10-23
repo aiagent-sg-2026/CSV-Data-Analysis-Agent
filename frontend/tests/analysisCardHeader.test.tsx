@@ -106,8 +106,8 @@ describe('AnalysisCardHeader', () => {
             />,
         );
 
-        expect(screen.getByText('Value by Series Label 1')).toBeInTheDocument();
-        expect(screen.getByText('Compare Value by Series Label 1.')).toBeInTheDocument();
+        expect(screen.getByText('Value by Group')).toBeInTheDocument();
+        expect(screen.getByText('Compare Value by Group.')).toBeInTheDocument();
     });
 
     it('shows explicit stale, degraded, and unverified evidence states', () => {

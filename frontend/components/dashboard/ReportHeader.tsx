@@ -4,6 +4,7 @@ import { getTranslation } from '../../utils/localization';
 import type { Settings } from '../../types';
 import { isSchemaDerivedReportTitle, isUsableReportTitle } from '../../services/agent/reportContext';
 import { describeSetAsideTables } from '../../utils/setAsideTables';
+import { isDateOrPeriodLine } from '../../services/agent/reportTitleLines';
 
 type ReportHeaderProps = {
     reportContextResolution: ReportContextResolution | null;
@@ -115,7 +116,18 @@ const ReportHeaderComponent: React.FC<ReportHeaderProps> = ({
         && !isSchemaDerivedReportTitle(candidate, columnNames)) ?? 'Untitled Report';
     const aiParameterLines = toLineList(aiGuess?.parameterLines);
     const effectiveParameterLines = toLineList(effectiveReportContext.parameterLines);
-    const parameterLines = (aiParameterLines.length > 0 ? aiParameterLines : effectiveParameterLines).slice(0, 5);
+    const allParameterLines = aiParameterLines.length > 0 ? aiParameterLines : effectiveParameterLines;
+    // A period ("As At | 30-06-2026") is never the title; it reads as the subtitle under the report
+    // name, or under the file name when the file names no report.
+    const periodSubtitle = [
+        aiGuess?.reportTitle,
+        effectiveReportContext.reportTitle,
+        ...aiParameterLines,
+        ...effectiveParameterLines,
+    ].find((line): line is string => typeof line === 'string' && isDateOrPeriodLine(line));
+    const subtitle = periodSubtitle?.replace(/\s*\|\s*/g, ' ').trim() ?? null;
+    // The period is shown once, under the title, not again as a tag.
+    const parameterLines = allParameterLines.filter(line => line !== periodSubtitle).slice(0, 5);
     const showAiGuessBanner = Boolean(aiGuess);
     const showValidatedFallbackNote = Boolean(
         aiGuess
@@ -137,6 +149,9 @@ const ReportHeaderComponent: React.FC<ReportHeaderProps> = ({
                     <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">
                         {displayTitle}
                     </h2>
+                    {subtitle && (
+                        <p className="mt-0.5 text-sm font-medium text-slate-600">{subtitle}</p>
+                    )}
                     {effectiveReportContext.reportDescription && (
                         <p className="mt-1 text-sm text-slate-600">{effectiveReportContext.reportDescription}</p>
                     )}
@@ -199,7 +214,7 @@ const ReportHeaderComponent: React.FC<ReportHeaderProps> = ({
                             value={headerDepth}
                         />
                     </div>
-                    {parameterLines.length > 0 && (
+                    {(parameterLines.length > 0 || (allParameterLines.length > 0 && summaryRowCount > 0)) && (
                         <div className="mt-3">
                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                                 {getTranslation('report_header_parameters', language)}

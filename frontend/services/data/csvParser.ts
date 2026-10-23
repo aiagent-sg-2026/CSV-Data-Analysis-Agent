@@ -11,6 +11,7 @@ import type { ContextTelemetryTarget } from '../ai/contextManager';
 import { detectReportShape } from '../agent/reportShapeDetector';
 import { robustParseFloat } from './dataProfiler';
 import { buildDatasetId } from '../../utils/datasetId';
+import { formatCount, pluralizeCount } from '../../utils/displayText';
 
 const AI_TABULAR_REGRESSION_SHAPES = new Set(['wide_crosstab', 'multi_header_matrix', 'mixed_report']);
 const UNNAMED_COLUMN_PATTERN = /^_unnamed_column_/i;
@@ -237,19 +238,19 @@ export const evaluateAiBoundaryQuality = (
     if (deterministicSignals.headerLayerCount > 0 && aiSignals.headerLayerCount < deterministicSignals.headerLayerCount) {
         regressionSignals.push('AI boundary lost preserved header layers that deterministic intake already identified.');
     } else if (aiSignals.headerLayerCount > deterministicSignals.headerLayerCount) {
-        improvedSignals.push(`AI boundary preserved ${aiSignals.headerLayerCount - deterministicSignals.headerLayerCount} additional header layer(s).`);
+        improvedSignals.push(`AI boundary preserved ${formatCount(aiSignals.headerLayerCount - deterministicSignals.headerLayerCount)} additional header ${pluralizeCount(aiSignals.headerLayerCount - deterministicSignals.headerLayerCount, 'layer')}.`);
     }
 
     if (deterministicSignals.repeatedHeaderCount > 0 && aiSignals.repeatedHeaderCount < deterministicSignals.repeatedHeaderCount) {
         regressionSignals.push('AI boundary lost repeated header rows that deterministic intake had already identified.');
     } else if (aiSignals.repeatedHeaderCount > deterministicSignals.repeatedHeaderCount) {
-        improvedSignals.push(`AI boundary preserved ${aiSignals.repeatedHeaderCount - deterministicSignals.repeatedHeaderCount} additional repeated header row(s).`);
+        improvedSignals.push(`AI boundary preserved ${formatCount(aiSignals.repeatedHeaderCount - deterministicSignals.repeatedHeaderCount)} additional repeated header ${pluralizeCount(aiSignals.repeatedHeaderCount - deterministicSignals.repeatedHeaderCount, 'row')}.`);
     }
 
     if (deterministicSignals.parameterRowCount > 0 && aiSignals.parameterRowCount < deterministicSignals.parameterRowCount) {
         regressionSignals.push('AI boundary lost parameter rows that deterministic intake had already identified.');
     } else if (aiSignals.parameterRowCount > deterministicSignals.parameterRowCount) {
-        improvedSignals.push(`AI boundary preserved ${aiSignals.parameterRowCount - deterministicSignals.parameterRowCount} additional parameter row(s).`);
+        improvedSignals.push(`AI boundary preserved ${formatCount(aiSignals.parameterRowCount - deterministicSignals.parameterRowCount)} additional parameter ${pluralizeCount(aiSignals.parameterRowCount - deterministicSignals.parameterRowCount, 'row')}.`);
     }
 
     if (!deterministicIntakeIr.provisionalTable && aiIntakeIr.provisionalTable) {
@@ -536,7 +537,7 @@ export const processCsvWithIntakeIr = async (
         emitIntakeTelemetry(
             telemetryTarget,
             'intake_ai_boundary_accepted',
-            `Auto-named ${analysisCsvData.autoNamedColumns!.length} high-confidence empty header column(s) for analysis view.`,
+            `Auto-named ${formatCount(analysisCsvData.autoNamedColumns!.length)} high-confidence empty header ${pluralizeCount(analysisCsvData.autoNamedColumns!.length, 'column')} for analysis view.`,
             {
                 fileName: file.name,
                 autoNamedColumns: analysisCsvData.autoNamedColumns,

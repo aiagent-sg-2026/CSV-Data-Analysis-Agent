@@ -28,6 +28,7 @@ import { recoverMisalignedSectionDimensions } from './sectionDimensionRecovery';
 import { withoutBodyNoise, type BodyRowFinding } from '../data/reportBodyRows';
 import { robustParseFloat } from '../data/dataProfiler';
 import { classifyNumberCell } from '../data/numberLocale';
+import { formatCount, formatCountNoun, pluralizeCount } from '../../utils/displayText';
 
 const UNNAMED_COLUMN_PATTERN = /^_?unnamed_column_/i;
 const DATE_LIKE_PATTERN = /^(?:\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})$/;
@@ -609,7 +610,7 @@ const buildPreparedRowTableFallback = (
             rowCount: canonicalRows.length,
             columnCount: Object.keys(canonicalRows[0] ?? {}).length,
             lineageColumns: ['SourceRowIndex', 'ResolvedRowRole', 'SectionLabel', 'HeaderPath', 'CarryForwardAppliedColumns'],
-            summary: `Retained ${canonicalRows.length} detail row(s) from the prepared dataset.`,
+            summary: `Retained ${formatCount(canonicalRows.length)} detail ${pluralizeCount(canonicalRows.length, 'row')} from the prepared dataset.`,
             excludedRowCounts: {},
             carryForwardAppliedCounts: sectionDimensionRecovery.recoveredCounts,
             footerTotalsMatched: null,
@@ -1113,8 +1114,8 @@ const buildRowTableFromRawBoundary = (params: {
                 columnCount: Object.keys(finalRows[0] ?? {}).length,
                 lineageColumns: ['SourceRowIndex', 'ResolvedRowRole', 'SectionLabel', 'HeaderPath', 'CarryForwardAppliedColumns'],
                 summary: hierarchy
-                    ? `Retained ${hierarchy.meta.detailRows} detail row(s) and ${hierarchy.meta.parentRows} parent row(s) from raw report rows; indentation hierarchy verified against parent sums.`
-                    : `Retained ${compactRows.length} canonical detail row(s) from raw report rows.`,
+                    ? `Retained ${formatCount(hierarchy.meta.detailRows)} detail ${pluralizeCount(hierarchy.meta.detailRows, 'row')} and ${formatCount(hierarchy.meta.parentRows)} parent ${pluralizeCount(hierarchy.meta.parentRows, 'row')} from raw report rows; indentation hierarchy verified against parent sums.`
+                    : `Retained ${formatCount(compactRows.length)} canonical detail ${pluralizeCount(compactRows.length, 'row')} from raw report rows.`,
                 excludedRowCounts,
                 carryForwardAppliedCounts,
                 footerTotalsMatched: footerVerification.footerTotalsMatched,
@@ -1165,7 +1166,7 @@ const buildPeriodWideCanonicalTable = (
             rowCount: canonicalRows.length,
             columnCount: Object.keys(canonicalRows[0] ?? {}).length,
             lineageColumns: ['SourceRowIndex', 'SourceColumnName', 'ResolvedRowRole', 'HeaderPath', 'CarryForwardAppliedColumns'],
-            summary: `Melted ${reshape.sourceRows.length} series across ${reshape.detection.periodColumns.length} ${reshape.detection.grain} periods into ${canonicalRows.length} row(s).`,
+            summary: `Melted ${reshape.sourceRows.length} series across ${reshape.detection.periodColumns.length} ${reshape.detection.grain} periods into ${formatCountNoun(canonicalRows.length, 'row')}.`,
             excludedRowCounts,
             carryForwardAppliedCounts: {},
             footerTotalsMatched: null,
@@ -1420,7 +1421,7 @@ const buildReshapedTable = (
             rowCount: canonicalRows.length,
             columnCount: Object.keys(canonicalRows[0] ?? {}).length,
             lineageColumns: ['SourceRowIndex', 'SourceColumnName', 'ResolvedRowRole', 'HeaderPath', 'CarryForwardAppliedColumns'],
-            summary: `Canonicalized ${canonicalRows.length} row(s) into ${structure.decision.targetShape}.`,
+            summary: `Canonicalized ${formatCountNoun(canonicalRows.length, 'row')} into ${structure.decision.targetShape}.`,
             excludedRowCounts,
             carryForwardAppliedCounts: carryForward.appliedCounts,
             footerTotalsMatched: null,

@@ -28,8 +28,8 @@ describe('businessLabelResolver', () => {
             valueColumn: 'Value',
         };
 
-        expect(resolveDisplayPlanTitle(plan)).toBe('Value by Series Label 1');
-        expect(resolveDisplayPlanDescription(plan)).toBe('Compare Value by Series Label 1.');
+        expect(resolveDisplayPlanTitle(plan)).toBe('Value by Group');
+        expect(resolveDisplayPlanDescription(plan)).toBe('Compare Value by Group.');
     });
 
     it('derives browser column labels from business-friendly card plans', () => {
@@ -61,9 +61,9 @@ describe('businessLabelResolver', () => {
             valueColumn: 'Value',
         };
 
-        expect(resolveDisplayPlanTitle(plan)).toBe('Total Financial Value by Series Label 1');
+        expect(resolveDisplayPlanTitle(plan)).toBe('Total Financial Value by Group');
         expect(buildColumnDisplayLabels(['SeriesLabelL1'], [plan])).toEqual({
-            SeriesLabelL1: 'Series Label 1',
+            SeriesLabelL1: 'Group',
         });
     });
 

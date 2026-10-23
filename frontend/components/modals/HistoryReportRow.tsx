@@ -3,6 +3,7 @@ import React from 'react';
 import { getTranslation } from '../../utils/localization';
 import { HistoryOverflowMenu } from './HistoryOverflowMenu';
 import type { ReportListItem } from '../../types';
+import { isUsableReportTitle } from '../../services/agent/reportContext';
 
 // ── Inline icons ───────────────────────────────────────────────────────
 
@@ -58,8 +59,10 @@ export const HistoryReportRow: React.FC<HistoryReportRowProps> = ({
     isProtectedReport, formatDate, formatDateFull,
 }) => {
     const { latest, older, isCurrent } = group;
-    const hasTitle = Boolean(latest.reportTitle);
-    const displayTitle = latest.reportTitle ?? group.filename;
+    // Saved reports from before the title heuristic can carry a period ("From 01-01-2026 To 30-06-2026") as title.
+    const latestTitle = latest.reportTitle && isUsableReportTitle(latest.reportTitle) ? latest.reportTitle : null;
+    const hasTitle = Boolean(latestTitle);
+    const displayTitle = latestTitle ?? group.filename;
     const dualDates = showDualDates(latest.createdAt, latest.updatedAt);
 
     const renderActionButton = (report: ReportListItem, isCurrent: boolean, compact?: boolean) => (
@@ -160,7 +163,7 @@ export const HistoryReportRow: React.FC<HistoryReportRowProps> = ({
                     {older.map(entry => (
                         <div key={entry.id} className="flex items-center gap-3 px-5 py-2 pl-16 transition-colors hover:bg-slate-100/80">
                             <div className="min-w-0 flex-1">
-                                {entry.reportTitle && (
+                                {entry.reportTitle && isUsableReportTitle(entry.reportTitle) && (
                                     <p className="truncate text-xs text-slate-500">{entry.reportTitle}</p>
                                 )}
                                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">

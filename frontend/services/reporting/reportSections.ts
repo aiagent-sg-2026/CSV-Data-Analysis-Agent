@@ -27,6 +27,7 @@ import {
     renderBusinessTextFindingRows,
     renderTextFindingRows,
 } from './reportFindingRenderers';
+import { formatCount, pluralizeCount } from '../../utils/displayText';
 
 export { renderManagementFindingSentence, resolveBusinessKpiNote } from './reportFindingRenderers';
 
@@ -298,7 +299,7 @@ export const buildCompactAppendixSection = (
           </div>
           ${renderBadge(text.traceability, 'neutral')}
         </div>
-        <p>${escapeHtml(`${ir.appendix.evidenceCatalog.length} evidence reference(s) and ${ir.appendix.excludedEvidence.length} excluded item(s) remain available in the audit appendix layout.`)}</p>
+        <p>${escapeHtml(`${formatCount(ir.appendix.evidenceCatalog.length)} evidence ${pluralizeCount(ir.appendix.evidenceCatalog.length, 'reference')} and ${formatCount(ir.appendix.excludedEvidence.length)} excluded ${pluralizeCount(ir.appendix.excludedEvidence.length, 'item')} remain available in the audit appendix layout.`)}</p>
         <p class="meta-line"><strong>${escapeHtml(text.evidenceReferences)}:</strong> ${escapeHtml(String(ir.appendix.evidenceCatalog.length))}</p>
         <p class="meta-line"><strong>${escapeHtml(text.excludedCount)}:</strong> ${escapeHtml(String(ir.appendix.excludedEvidence.length))}</p>
         ${topExcludedSummary

@@ -569,7 +569,7 @@ export const reportContextExtractionSchema = {
     properties: {
         reportTitle: {
             type: 'string',
-            description: 'A concise human-readable report title. You may rephrase or clean up raw text for readability, but it must be grounded in visible CSV evidence.',
+            description: 'A concise human-readable report title (a report or company name, never a date range, a key/value parameter, a rule of dashes or a file name). You may rephrase or clean up raw text for readability, but it must be grounded in visible CSV evidence.',
         },
         reportDescription: {
             type: 'string',

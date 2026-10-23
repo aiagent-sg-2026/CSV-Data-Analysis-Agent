@@ -9,6 +9,13 @@ import type {
 } from '../../types';
 import { detectReportShape } from './reportShapeDetector';
 import { WORKSPACE_REPORT_CONTEXT_JSON } from './workspaceFileUtils';
+import {
+    extractTitleCandidate,
+    isDateOrPeriodLine,
+    isParameterPairLine,
+    isNonTitleLine,
+    pickMostTitleLikeLine,
+} from './reportTitleLines';
 
 const normalizeText = (value: unknown) => String(value ?? '').trim();
 const normalizeComparableText = (value: unknown) =>
@@ -237,6 +244,11 @@ export const isUsableReportTitle = (value: string | null | undefined): boolean =
         return false;
     }
 
+    // A period ("From 01-01-2026 To 30-06-2026") or a "key | value" parameter is context, not a title.
+    if (isDateOrPeriodLine(normalized) || isParameterPairLine(normalized)) {
+        return false;
+    }
+
     const tokens = normalized.split(/\s+/).filter(Boolean);
     if (tokens.length < 6) {
         return true;
@@ -288,7 +300,11 @@ const resolveConfidence = (value: unknown): ReportContextConfidence => {
 };
 
 const inferFallbackReportTitle = (data: CsvData): string | null => {
-    const metadataLines = getMetadataLines(data);
+    // Only lines that can name the report take part: periods, parameter pairs, print stamps and
+    // dash rules never do, and "Report Name | X" offers X.
+    const metadataLines = getMetadataLines(data)
+        .map(extractTitleCandidate)
+        .filter((line): line is string => Boolean(line));
     const leadingEntityLine = metadataLines.find(isEntityOnlyLine) ?? null;
     const embeddedTitle = metadataLines
         .map(extractEmbeddedReportTitle)
@@ -299,10 +315,12 @@ const inferFallbackReportTitle = (data: CsvData): string | null => {
         }
         return embeddedTitle;
     }
-    const titleFromMetadata = metadataLines.find(line => !isLikelyParameterLine(line) && line.length >= 6)
+    // The most title-like line wins ("SALES ORDER OUTSTANDING REPORT" over the company line above it).
+    const titleFromMetadata = pickMostTitleLikeLine(metadataLines.filter(line => !isLikelyParameterLine(line) && line.length >= 6))
         ?? metadataLines.find(line => line.length >= 6);
     if (titleFromMetadata) {
-        return titleFromMetadata;
+        // A generic statement name ("Income Statement By Project") is less telling than the company above it.
+        return leadingEntityLine && isGenericFinancialReportTitle(titleFromMetadata) ? leadingEntityLine : titleFromMetadata;
     }
 
     const headers = getSchemaHeaders(data);
@@ -523,7 +541,12 @@ export const verifyAiExtractedReportContext = (
     fallback: ResolvedReportContext;
 } => {
     const fallback = createFallbackReportContext(rawData);
-    const sanitizedAiExtracted = sanitizeAiExtractedReportContext(aiExtracted);
+    const sanitizedAiCandidate = sanitizeAiExtractedReportContext(aiExtracted);
+    // The model sometimes names the report by its period or a parameter ("As At | 30-06-2026"):
+    // that line is context, so the title falls back to the one read from the preamble.
+    const sanitizedAiExtracted = sanitizedAiCandidate?.reportTitle && isNonTitleLine(sanitizedAiCandidate.reportTitle)
+        ? { ...sanitizedAiCandidate, reportTitle: fallback.reportTitle }
+        : sanitizedAiCandidate;
 
     if (!sanitizedAiExtracted) {
         return {

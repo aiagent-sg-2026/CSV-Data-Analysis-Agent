@@ -41,6 +41,7 @@ import { getOriginalData } from '../../services/storageService';
 import { buildColumnRegistry, buildEffectiveColumnRegistryFromState, getAllowedColumns } from '../../services/data/columnRegistry';
 import { captureHistoryAnalysisSnapshot, getRestoredHistoryAnalysisState } from '../../services/agent/orchestration/historyAnalysisRestore';
 import { hasPiInitialCheckpoint } from '../../services/agent/runtime/pi/piInitialCheckpoint';
+import { formatCount, pluralizeCount } from '../../utils/displayText';
 
 export interface IDataSlice {
     addProgress: (message: string, type?: 'system' | 'warning' | 'error', model?: string) => void;
@@ -611,7 +612,7 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
 
                 const hiddenRowCount = getSemanticHiddenRowCount(snapshot, datasetVersion, targetDataset);
                 if (hiddenRowCount > 0 && get().semanticDatasetVersion === datasetVersion) {
-                    get().addProgress(`AI semantic view prepared. ${hiddenRowCount} non-detail row(s) will be hidden by default.`, 'system', snapshot.modelId);
+                    get().addProgress(`AI semantic view prepared. ${formatCount(hiddenRowCount)} non-detail ${pluralizeCount(hiddenRowCount, 'row')} will be hidden by default.`, 'system', snapshot.modelId);
                 }
                 return snapshot;
             })();

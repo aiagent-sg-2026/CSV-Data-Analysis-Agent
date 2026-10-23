@@ -66,12 +66,12 @@ export const describeCardGroupCoverage = (
     if (totals.complete) return null;
     const valueKey = resolveCardValueKey(plan, aggregatedData);
     const shownTotal = aggregatedData.reduce((sum, row) => sum + parseNumericValue(row[valueKey]), 0);
-    const groups = totals.matchedGroupCount !== null ? `${totals.matchedGroupCount} groups` : 'the groups the query matched';
+    const groups = totals.matchedGroupCount !== null ? `${formatForModel(totals.matchedGroupCount)} groups` : 'the groups the query matched';
     if (totals.overallTotal === null) {
-        return `Scope: these ${aggregatedData.length} rows are only the top of a ranking of ${groups}, and the total over all groups is unknown. `
+        return `Scope: these ${formatForModel(aggregatedData.length)} rows are only the top of a ranking of ${groups}, and the total over all groups is unknown. `
             + 'Do not state percentages or shares of a total, and do not describe these rows as the whole dataset.';
     }
-    return `Scope: these ${aggregatedData.length} rows are only the top of a ranking of ${groups}; together they total ${formatForModel(shownTotal)}. `
+    return `Scope: these ${formatForModel(aggregatedData.length)} rows are only the top of a ranking of ${groups}; together they total ${formatForModel(shownTotal)}. `
         + `The total over all groups is ${formatForModel(totals.overallTotal)}. `
         + `Compute every percentage or share against ${formatForModel(totals.overallTotal)}, never against the rows shown, and do not describe these rows as the whole dataset.`;
 };

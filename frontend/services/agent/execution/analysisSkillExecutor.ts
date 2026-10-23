@@ -631,6 +631,7 @@ export const executePivotMatrixAnalysis = async (
                 getTranslation('skill_pivot_complete', getLang(store), {
                     rows: request.rows.join(' / '),
                     columnCount: 1,
+                    count: 1,
                 }),
                 card.id,
             );
@@ -686,6 +687,7 @@ export const executePivotMatrixAnalysis = async (
         getTranslation('skill_pivot_complete', getLang(store), {
             rows: request.rows.join(' / '),
             columnCount: orderedColumnKeys.length,
+            count: orderedColumnKeys.length,
         }),
         card.id,
     );

@@ -16,6 +16,7 @@ import type { StoreApi, DuckDbAnalysisBinding } from './analysisSessionHelpers';
 import { requireDuckDbBinding } from './analysisSessionHelpers';
 import { resolveSeriesMeasure } from '../planning/seriesMeasureGuard';
 import { resolveRowHierarchy, withRowHierarchyDetailFilter } from '../planning/rowHierarchyGuard';
+import { formatCount, pluralizeCount } from '../../../utils/displayText';
 
 export type RefreshedAnalysisContext = {
     inputData: CsvData;
@@ -192,7 +193,7 @@ export const refreshAnalysisContext = async (
         inputData,
     );
     if (hiddenSemanticRows > 0) {
-        addProgress?.(`AI semantic analysis view excluded ${hiddenSemanticRows} non-detail row(s) from automatic analysis.`, 'system');
+        addProgress?.(`AI semantic analysis view excluded ${formatCount(hiddenSemanticRows)} non-detail ${pluralizeCount(hiddenSemanticRows, 'row')} from automatic analysis.`, 'system');
     }
 
     const binding = await requireDuckDbBinding(store, semanticDataForAnalysis);

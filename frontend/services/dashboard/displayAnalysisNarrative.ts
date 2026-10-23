@@ -6,6 +6,7 @@ import type {
 import { buildDisplayAnalysisIrList } from './displayAnalysisIr';
 import { formatPeriodRowsForDisplay } from '../../utils/temporalDisplay';
 import { describeCardGroupCoverage } from '../../utils/cardGroupTotals';
+import { roundRowsToDisplayPrecision } from '../../utils/analysisCardPresentation';
 
 const sortByNarrativePriority = (left: DisplayAnalysisNarrativeInput, right: DisplayAnalysisNarrativeInput) => {
     const trustRank = {
@@ -61,7 +62,7 @@ export const buildNarrativeAnalysisIrInputList = (
                 selectionScore: 0,
                 selectionReasons: ['legacy_card_context'],
                 summary: card.summary.text,
-                aggregatedDataSample: formatPeriodRowsForDisplay(card.aggregatedData.slice(0, maxRows), card.plan.periodSeries),
+                aggregatedDataSample: formatPeriodRowsForDisplay(roundRowsToDisplayPrecision(card.aggregatedData.slice(0, maxRows)), card.plan.periodSeries),
                 aggregatedRowCount: card.aggregatedData.length,
                 ...scopeField,
                 isFallback: Boolean(card.plan.isFallback),
@@ -83,7 +84,7 @@ export const buildNarrativeAnalysisIrInputList = (
             selectionReasons: ir.selectionReasons,
             summary: card.summary.text,
             // Periods reach the narrative at their grain ("2025"), as the card shows them.
-            aggregatedDataSample: formatPeriodRowsForDisplay(ir.aggregatedData.slice(0, maxRows), card.plan.periodSeries),
+            aggregatedDataSample: formatPeriodRowsForDisplay(roundRowsToDisplayPrecision(ir.aggregatedData.slice(0, maxRows)), card.plan.periodSeries),
             aggregatedRowCount: ir.aggregatedData.length,
             ...scopeField,
             isFallback: ir.isFallback,

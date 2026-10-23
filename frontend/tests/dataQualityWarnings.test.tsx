@@ -33,10 +33,11 @@ describe('data quality warning summaries', () => {
         ]);
 
         expect(result).not.toBeNull();
-        expect(result!.userSummary).toContain('auto-corrected during cleaning');
+        expect(result!.userSummary).toBe('Some numbers contain thousands separators; we read them correctly.');
         expect(result!.userSummary).not.toContain('replace_values');
         expect(result!.userSummary).not.toContain('cast_column');
-        expect(result!.technicalDetail).toContain('Comma-formatted columns (auto-corrected)');
+        expect(result!.notes[0].columns).toEqual(['NET TOTAL FOREX', 'GST']);
+        expect(result!.technicalDetail).toBeNull();
     });
 
     it('separates user summary from technical detail for missing-value warnings', () => {
@@ -46,9 +47,9 @@ describe('data quality warning summaries', () => {
         ]);
 
         expect(result).not.toBeNull();
-        expect(result!.userSummary).toContain('mostly empty');
-        expect(result!.userSummary).toContain('low-priority');
-        expect(result!.technicalDetail).toContain('Reference Number (94%)');
+        expect(result!.userSummary).toBe('2 columns are mostly empty and will be ignored unless needed.');
+        expect(result!.userSummary).not.toContain('low-priority');
+        expect(result!.notes[0].columns).toContain('Reference Number (94%)');
     });
 
     it('renders user-friendly summary for end users', () => {
@@ -66,7 +67,9 @@ describe('data quality warning summaries', () => {
 
         render(<DataQualityWarnings />);
 
-        expect(screen.getByText(/4 columns have mostly empty values/i)).toBeInTheDocument();
+        expect(screen.getByText(/4 columns are mostly empty and will be ignored unless needed/i)).toBeInTheDocument();
+        expect(screen.getByText(/Columns: Reference Number \(94%\), Master Number \(100%\), Project Code \(96%\) \+1/)).toBeInTheDocument();
+        expect(screen.getByText(/^1 data quality note ·/)).toBeInTheDocument();
         expect(screen.getByText(/Full diagnostics are available/i)).toBeInTheDocument();
         expect(screen.queryByText(/Column 'Reference Number' has a high percentage of missing values/i)).not.toBeInTheDocument();
     });

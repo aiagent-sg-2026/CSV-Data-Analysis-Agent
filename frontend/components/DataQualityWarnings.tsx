@@ -3,7 +3,7 @@ import React from 'react';
 import { shallow } from 'zustand/shallow';
 import { useAppStore, AppStore } from '../store/useAppStore';
 import { IconWarning } from '../icons/IconWarning';
-import { summarizeDataQualityForEndUser } from '../services/data/dataProfiler';
+import { formatNoteColumns, summarizeDataQualityForEndUser } from '../services/data/dataQualityNotes';
 import { getTranslation } from '../utils/localization';
 
 const DataQualityWarningsComponent: React.FC = () => {
@@ -35,13 +35,13 @@ const DataQualityWarningsComponent: React.FC = () => {
     if (!hasWarnings) return null;
 
     const endUserResult = warningMessages.length > 0
-        ? summarizeDataQualityForEndUser(warningMessages)
+        ? summarizeDataQualityForEndUser(warningMessages, language)
         : null;
-    const userSummary = endUserResult?.userSummary
-        ?? getTranslation('data_warnings_intake_reported', language, { count: intakeWarningMessages.length });
+    const notes = endUserResult?.notes ?? [];
     const technicalDetail = endUserResult?.technicalDetail ?? null;
 
-    const noteCount = (warningMessages.length > 0 ? warningMessages.length : intakeWarningMessages.length) + (numericParseMessage ? 1 : 0);
+    // One note is one plain sentence, so the count in the header matches what the panel lists.
+    const noteCount = (notes.length > 0 ? notes.length : intakeWarningMessages.length) + (numericParseMessage ? 1 : 0);
 
     // Quality notes are handled by the analysis agent and need no action, so they
     // stay as one quiet, collapsed line instead of a large warning block.
@@ -58,7 +58,22 @@ const DataQualityWarningsComponent: React.FC = () => {
             </summary>
             <div className="mt-2 space-y-2 border-t border-slate-200 pt-2 text-xs text-slate-600">
                 {numericParseMessage && <p className="font-semibold text-red-700">{numericParseMessage}</p>}
-                {(warningMessages.length > 0 || intakeWarningMessages.length > 0) && <p>{userSummary}</p>}
+                {notes.length > 0 ? (
+                    <ul className="space-y-1">
+                        {notes.map(note => (
+                            <li key={note.kind}>
+                                <p>{note.sentence}</p>
+                                {note.columns.length > 0 && (
+                                    <p className="text-slate-500">
+                                        {getTranslation('dq_note_columns', language, { columns: formatNoteColumns(note.columns) })}
+                                    </p>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
+                ) : intakeWarningMessages.length > 0 && (
+                    <p>{getTranslation('data_warnings_intake_reported', language, { count: intakeWarningMessages.length })}</p>
+                )}
                 {intakeWarningMessages.length > 0 && (
                     <div>
                         <p className="font-semibold text-slate-700">{getTranslation('data_warnings_intake_label', language)}</p>
@@ -70,7 +85,10 @@ const DataQualityWarningsComponent: React.FC = () => {
                     </div>
                 )}
                 {(technicalDetail || numericParseDetail) && (
-                    <p className="rounded-md bg-white p-2 font-mono text-slate-500">{[technicalDetail, numericParseDetail].filter(Boolean).join(' | ')}</p>
+                    <details>
+                        <summary className="cursor-pointer text-slate-500">{getTranslation('data_warnings_technical_toggle', language)}</summary>
+                        <p className="mt-1 rounded-md bg-white p-2 font-mono text-slate-500">{[technicalDetail, numericParseDetail].filter(Boolean).join(' | ')}</p>
+                    </details>
                 )}
                 <p className="text-slate-500">{getTranslation('data_warnings_footer', language)}</p>
             </div>

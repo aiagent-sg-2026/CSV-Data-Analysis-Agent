@@ -12,6 +12,7 @@
 
 import type { ReportCardEvidence, ReportEvidenceBundle, CsvRow } from '../../types';
 import { resolveCardGroupTotals } from '../../utils/cardGroupTotals';
+import { formatCount, naturalizeLayeredText, pluralizeCount, pluralizeLabelOrNull } from '../../utils/displayText';
 
 /* ── Interfaces ──────────────────────────────────────────── */
 
@@ -101,7 +102,7 @@ const formatCurrency = (value: number, currency: string | null): string => {
 };
 
 const cleanLabel = (value: string): string =>
-    value.replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim();
+    naturalizeLayeredText(value).replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim();
 
 const isNullLabel = (value: unknown): boolean =>
     NULL_PATTERN.test(String(value ?? '').trim());
@@ -312,7 +313,11 @@ const buildBriefingMarkdown = (
     if (profiles.length > 0) {
         lines.push('\n### Key Metrics Detected');
         for (const p of profiles) {
-            lines.push(`- **${p.displayLabel}**: ${p.formattedTotal} across ${p.groupCount} ${p.groupColumn ? cleanLabel(p.groupColumn) : 'item'}(s)`);
+            // A label from the user's own column is pluralised only when it is a word we know; otherwise "groups".
+            const groupNoun = p.groupColumn
+                ? (p.groupCount === 1 ? cleanLabel(p.groupColumn) : (pluralizeLabelOrNull(cleanLabel(p.groupColumn)) ?? 'groups'))
+                : pluralizeCount(p.groupCount, 'item');
+            lines.push(`- **${p.displayLabel}**: ${p.formattedTotal} across ${formatCount(p.groupCount)} ${groupNoun}`);
             if (p.topGroups.length > 0) {
                 const topLabels = p.topGroups.slice(0, 3).map(g =>
                     `${g.label} (${Math.round(g.share * 100)}%)`

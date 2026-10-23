@@ -17,6 +17,7 @@ import { analystMemoSchema } from '../ai/schemas/agentSchemas';
 import { createAnalystMemoPrompt } from '../prompts/reportingPrompts';
 import { getAnalystRoleDefinition, resolvePreferredEvidenceIds } from './analystRoles';
 import type { ReportEvidenceBriefing } from './reportEvidenceHarness';
+import { formatCount, formatCountNoun, pluralizeCount } from '../../utils/displayText';
 
 export interface AnalystMemoGenerationDiagnostics {
     llmUsed: boolean;
@@ -103,9 +104,9 @@ const buildFallbackFinding = (
         return {
             id: `${role}.finding.1`,
             claim: trustedCardsCount > 0
-                ? `${trustedCardsCount} trusted analysis card(s) are available for business interpretation.`
+                ? `${formatCount(trustedCardsCount)} trusted analysis ${pluralizeCount(trustedCardsCount, 'card')} are available for business interpretation.`
                 : includedCardsCount > 0
-                    ? `${includedCardsCount} caveated analysis card(s) are available, so business synthesis should remain provisional.`
+                    ? `${formatCount(includedCardsCount)} caveated analysis ${pluralizeCount(includedCardsCount, 'card')} are available, so business synthesis should remain provisional.`
                     : 'No trusted analysis cards exist yet, so business synthesis remains preliminary.',
             importance: includedCardsCount > 0 ? 'medium' : 'high',
             evidenceRefs: evidenceRefs.length > 0 ? evidenceRefs : ['dataset.readiness'],
@@ -121,7 +122,7 @@ const buildFallbackFinding = (
     if (role === 'risk') {
         return {
             id: `${role}.finding.1`,
-            claim: `Report confidence is constrained by ${bundle.dataset.caveats.length} caveat(s) and ${bundle.workflow.topWarnings.length} workflow warning(s).`,
+            claim: `Report confidence is constrained by ${formatCountNoun(bundle.dataset.caveats.length, 'caveat')} and ${formatCount(bundle.workflow.topWarnings.length)} workflow ${pluralizeCount(bundle.workflow.topWarnings.length, 'warning')}.`,
             importance: 'high',
             evidenceRefs: dedupeStrings(preferredEvidenceIds, MAX_EVIDENCE_REFS),
             metricRefs: [],

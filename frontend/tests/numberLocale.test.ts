@@ -99,7 +99,7 @@ describe('decimal-comma columns in the profiler', () => {
         expect(betrag.valueRange).toEqual([2.5, 10000]);
         expect(issues.some(issue => issue.includes("Column 'Betrag' uses decimal commas"))).toBe(true);
         expect(issues.some(issue => issue.includes('Strip commas'))).toBe(false);
-        expect(summarizeDataQualityForEndUser(issues)?.userSummary).toContain('decimal commas');
+        expect(summarizeDataQualityForEndUser(issues)?.userSummary).toContain('decimal comma');
 
         // Menge has only ambiguous or plain cells. Betrag proves the decimal
         // comma for the dataset and nothing proves the decimal point, so Menge

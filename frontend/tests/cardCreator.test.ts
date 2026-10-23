@@ -257,8 +257,8 @@ describe('cardCreator', () => {
         }, [{ SeriesLabelL1: '36 TUAS ROAD', Value: 250 }], store);
 
         expect(generateSummaryMock).not.toHaveBeenCalled();
-        expect(card.summary.text).toContain('Total Financial Value by Series Label 1');
-        expect(state.progressMessages.at(-1)?.text).toBe('Generated View: Total Financial Value by Series Label 1');
+        expect(card.summary.text).toContain('Total Financial Value by Group');
+        expect(state.progressMessages.at(-1)?.text).toBe('Generated View: Total Financial Value by Group');
     });
 
     it('localizes fallback summaries using the active app language', async () => {

@@ -26,6 +26,7 @@ import {
 import { buildDisplayAnalysisIrList } from './displayAnalysisIr';
 import { resolveCardTrustDecision } from '../agent/cardTrustDecision';
 import { getTranslation } from '../../utils/localization';
+import { formatCount } from '../../utils/displayText';
 import { isStructuralMetadataColumn } from '../agent/structuralMetadata';
 import { isAdditiveAggregation } from '../../utils/analysisCardPresentation';
 import { formatTemporalDisplayValue, resolvePeriodGrain } from '../../utils/temporalDisplay';
@@ -181,8 +182,8 @@ const buildCardScope = (
             kind: 'top_n',
             sourceCardId: card.id,
             label: card.plan.rankDirection === 'asc'
-                ? (language === 'Mandarin' ? `最低 ${explicitTopN} 个${pluralGroupLabel}` : `Lowest ${explicitTopN} ${pluralGroupLabel}`)
-                : (language === 'Mandarin' ? `前 ${explicitTopN} 个${pluralGroupLabel}` : `Top ${explicitTopN} ${pluralGroupLabel}`),
+                ? (language === 'Mandarin' ? `最低 ${formatCount(explicitTopN)} 个${pluralGroupLabel}` : `Lowest ${formatCount(explicitTopN)} ${pluralGroupLabel}`)
+                : (language === 'Mandarin' ? `前 ${formatCount(explicitTopN)} 个${pluralGroupLabel}` : `Top ${formatCount(explicitTopN)} ${pluralGroupLabel}`),
             topN: explicitTopN,
             rowCount: rowCount ?? undefined,
             ...(filters.length > 0 ? { filterSummary: filters.join(' · ') } : {}),
@@ -196,8 +197,8 @@ const buildCardScope = (
             kind: 'top_n',
             sourceCardId: card.id,
             label: card.plan.rankDirection === 'asc'
-                ? (language === 'Mandarin' ? `最低 ${unmeasuredRankedRows} 个${pluralGroupLabel}` : `Lowest ${unmeasuredRankedRows} ${pluralGroupLabel}`)
-                : (language === 'Mandarin' ? `前 ${unmeasuredRankedRows} 个${pluralGroupLabel}` : `Top ${unmeasuredRankedRows} ${pluralGroupLabel}`),
+                ? (language === 'Mandarin' ? `最低 ${formatCount(unmeasuredRankedRows)} 个${pluralGroupLabel}` : `Lowest ${formatCount(unmeasuredRankedRows)} ${pluralGroupLabel}`)
+                : (language === 'Mandarin' ? `前 ${formatCount(unmeasuredRankedRows)} 个${pluralGroupLabel}` : `Top ${formatCount(unmeasuredRankedRows)} ${pluralGroupLabel}`),
             topN: unmeasuredRankedRows,
             rowCount: rowCount ?? undefined,
             ...(filters.length > 0 ? { filterSummary: filters.join(' · ') } : {}),

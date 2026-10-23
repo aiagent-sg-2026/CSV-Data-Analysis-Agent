@@ -379,66 +379,10 @@ export const summarizeDataQualityIssues = (issues: string[]): string | null => {
 };
 
 /**
- * User-friendly version of summarizeDataQualityIssues.
- * Returns { userSummary, technicalDetail } so the UI can show user-facing text
- * and optionally reveal agent-facing instructions behind a toggle.
+ * The user-facing counterpart of summarizeDataQualityIssues: plain sentences in the
+ * user's language, without the model instructions. See dataQualityNotes.ts.
  */
-export const summarizeDataQualityForEndUser = (issues: string[]): { userSummary: string; technicalDetail: string | null } | null => {
-    if (!Array.isArray(issues) || issues.length === 0) return null;
-
-    const parsedMissingWarnings = issues
-        .map(issue => issue.match(HIGH_MISSING_VALUE_PATTERN))
-        .filter((match): match is RegExpMatchArray => Boolean(match))
-        .map(match => ({ column: match[1], percentage: Number(match[2]) }));
-
-    const parsedFormattedWarnings = issues
-        .map(issue => issue.match(COMMA_FORMATTED_PATTERN))
-        .filter((match): match is RegExpMatchArray => Boolean(match))
-        .map(match => match[1]);
-
-    const parsedDecimalCommaWarnings = issues
-        .map(issue => issue.match(DECIMAL_COMMA_PATTERN))
-        .filter((match): match is RegExpMatchArray => Boolean(match))
-        .map(match => match[1]);
-
-    const knownIssueCount = parsedMissingWarnings.length + parsedFormattedWarnings.length + parsedDecimalCommaWarnings.length;
-
-    if (knownIssueCount === issues.length) {
-        const userParts: string[] = [];
-        const techParts: string[] = [];
-
-        if (parsedMissingWarnings.length > 0) {
-            const examples = parsedMissingWarnings.slice(0, 3).map(e => e.column).join(', ');
-            const remainder = parsedMissingWarnings.length - Math.min(parsedMissingWarnings.length, 3);
-            const maxMissing = Math.max(...parsedMissingWarnings.map(e => e.percentage));
-            const exampleText = examples ? ` (${examples}${remainder > 0 ? ` +${remainder}` : ''})` : '';
-            userParts.push(`${parsedMissingWarnings.length} columns have mostly empty values (up to ${maxMissing}% missing)${exampleText}. These are treated as low-priority by the AI.`);
-            techParts.push(`Missing-value columns: ${parsedMissingWarnings.map(e => `${e.column} (${e.percentage}%)`).join(', ')}`);
-        }
-        if (parsedFormattedWarnings.length > 0) {
-            const examples = parsedFormattedWarnings.slice(0, 3).join(', ');
-            const remainder = parsedFormattedWarnings.length - Math.min(parsedFormattedWarnings.length, 3);
-            userParts.push(`${parsedFormattedWarnings.length} numeric column${parsedFormattedWarnings.length > 1 ? 's' : ''} contained formatting (e.g. "1,234.56") that was auto-corrected during cleaning${examples ? `: ${examples}` : ''}${remainder > 0 ? ` +${remainder}` : ''}.`);
-            techParts.push(`Comma-formatted columns (auto-corrected): ${parsedFormattedWarnings.join(', ')}. Commas were stripped and values cast to numeric during cleaning.`);
-        }
-        if (parsedDecimalCommaWarnings.length > 0) {
-            const examples = parsedDecimalCommaWarnings.slice(0, 3).join(', ');
-            const remainder = parsedDecimalCommaWarnings.length - Math.min(parsedDecimalCommaWarnings.length, 3);
-            userParts.push(`${parsedDecimalCommaWarnings.length} numeric column${parsedDecimalCommaWarnings.length > 1 ? 's use' : ' uses'} decimal commas (e.g. "1.234,56") and ${parsedDecimalCommaWarnings.length > 1 ? 'are' : 'is'} read as ordinary numbers: ${examples}${remainder > 0 ? ` +${remainder}` : ''}.`);
-            techParts.push(`Decimal-comma columns: ${parsedDecimalCommaWarnings.join(', ')}. Do not strip commas; the app reads them per column.`);
-        }
-
-        return {
-            userSummary: userParts.join(' '),
-            technicalDetail: techParts.length > 0 ? techParts.join(' | ') : null,
-        };
-    }
-
-    return {
-        userSummary: `Detected ${issues.length} data quality issue${issues.length > 1 ? 's' : ''} that the AI will account for during analysis.`,
-        technicalDetail: issues.join(' | '),
-    };
-};
+export { summarizeDataQualityForEndUser } from './dataQualityNotes';
 
 export type SchemaSnapshot = ReturnType<typeof buildSchemaSnapshot>;
 

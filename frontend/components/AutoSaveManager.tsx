@@ -6,6 +6,7 @@ import {
     buildPersistedAppStateSignature,
 } from '../services/persistence/persistedAppState';
 import { persistCurrentAppSessionSnapshot } from '../services/persistence/currentSessionPersistence';
+import { formatCount, pluralizeCount } from '../utils/displayText';
 
 const AUTOSAVE_DEBOUNCE_MS = 1500;
 /** Run storage health check every 5 minutes. */
@@ -150,7 +151,7 @@ export const AutoSaveManager: React.FC = () => {
             const { evictedReports } = await checkStorageHealth(sessionId);
             if (evictedReports > 0) {
                 useAppStore.getState().addProgress(
-                    `Storage cleanup: removed ${evictedReports} old report(s) to free space.`,
+                    `Storage cleanup: removed ${formatCount(evictedReports)} old ${pluralizeCount(evictedReports, 'report')} to free space.`,
                     'warning',
                 );
             }

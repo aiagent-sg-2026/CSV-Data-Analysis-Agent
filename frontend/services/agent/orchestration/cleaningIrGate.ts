@@ -11,6 +11,7 @@
  */
 
 import type { CsvData, ReportIntakeIr, ReportShapeProfile } from '../../../types';
+import { formatCount, pluralizeCount } from '../../../utils/displayText';
 
 export interface CleaningIrGateResult {
     /** True when the IR confirms a stable, single-layer detail table with no structural anomalies. */
@@ -113,10 +114,10 @@ export const evaluateCleaningIrGate = ({
         reasons.push('IR confirms stable single-layer detail table');
     }
     if (hasMultiHeaderEvidence) {
-        reasons.push(`IR has ${table.headerLayerRowIndexes.length} header layer row(s)`);
+        reasons.push(`IR has ${formatCount(table.headerLayerRowIndexes.length)} header layer ${pluralizeCount(table.headerLayerRowIndexes.length, 'row')}`);
     }
     if (hasRepeatedHeaderEvidence) {
-        reasons.push(`IR has ${table.repeatedHeaderRowIndexes.length} repeated header row(s)`);
+        reasons.push(`IR has ${formatCount(table.repeatedHeaderRowIndexes.length)} repeated header ${pluralizeCount(table.repeatedHeaderRowIndexes.length, 'row')}`);
     }
     if (hasStructuralNoise) {
         reasons.push('structural noise detected');

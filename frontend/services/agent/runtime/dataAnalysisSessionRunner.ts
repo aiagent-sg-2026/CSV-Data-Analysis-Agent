@@ -78,6 +78,7 @@ import {
     isDataResearchCancellationRequested,
 } from './dataResearchCancellation';
 import { attachAutoAnalysisEvaluationToCards } from '../autoAnalysisEvaluation';
+import { formatCount, formatCountNoun, pluralizeCount } from '../../../utils/displayText';
 
 export const INITIAL_ANALYSIS_HARNESS_BUDGET_MS = 20_000;
 
@@ -428,7 +429,7 @@ const runDataAnalysisSessionInternal = async (
         recordRuntimeEvent(store, {
             type: 'harness_pairing_soft_deprioritized',
             stage: 'executing',
-            message: `Harness soft-deprioritized ${harnessContext.softDeprioritizeGroupBy.length} dimension(s) due to medium-confidence code/label pairing.`,
+            message: `Harness soft-deprioritized ${formatCountNoun(harnessContext.softDeprioritizeGroupBy.length, 'dimension')} due to medium-confidence code/label pairing.`,
             detail: {
                 columns: harnessContext.softDeprioritizeGroupBy,
                 pairingSignals: harnessContext.pairingSignals ?? [],
@@ -442,7 +443,7 @@ const runDataAnalysisSessionInternal = async (
         inputSummary: 'Run data investigation harness to detect value hierarchies, duplicates, outliers, and missing data.',
         inputSummaryI18n: { key: 'analysis_trace_explore_data_input' },
         outputSummary: investigationFindings
-            ? `Found ${investigationFindings.hierarchyGroups.length} hierarchy(s), ${investigationFindings.duplicateLabels.length} duplicate(s), ${investigationFindings.metricRelationships.length} relationship(s), ${investigationFindings.outlierDescriptions.length} outlier(s), ${investigationFindings.missingDataPatterns.length} missing pattern(s), ${investigationFindings.leafDescriptions.length} leaves.`
+            ? `Found ${formatCountNoun(investigationFindings.hierarchyGroups.length, 'hierarchy')}, ${formatCountNoun(investigationFindings.duplicateLabels.length, 'duplicate')}, ${formatCountNoun(investigationFindings.metricRelationships.length, 'relationship')}, ${formatCountNoun(investigationFindings.outlierDescriptions.length, 'outlier')}, ${formatCount(investigationFindings.missingDataPatterns.length)} missing ${pluralizeCount(investigationFindings.missingDataPatterns.length, 'pattern')}, ${investigationFindings.leafDescriptions.length} leaves.`
             : 'Investigation harness skipped — no suitable description+value columns found.',
         outputSummaryI18n: {
             key: investigationFindings
@@ -794,7 +795,7 @@ const runDataAnalysisSessionInternal = async (
         step: hypotheses.length > 0 ? 'research_brief_ready' : 'research_clarification_needed',
         status: hypotheses.length > 0 ? 'done' : 'in_progress',
         message: hypotheses.length > 0
-            ? `Research brief prepared with ${hypotheses.length} prioritized question(s).`
+            ? `Research brief prepared with ${formatCount(hypotheses.length)} prioritized ${pluralizeCount(hypotheses.length, 'question')}.`
             : session.researchBrief?.clarification?.question ?? 'Research needs clarification before business claims can be made.',
         activity: {
             kind: hypotheses.length > 0 ? 'research' : 'approval',
@@ -936,7 +937,7 @@ const runDataAnalysisSessionInternal = async (
                     status: 'thinking',
                     title: 'Generating additional analysis topics',
                     titleKey: 'ai_task_starting_analysis',
-                    subtitle: `Round ${topicRound} — seeking ${needed} more card(s)`,
+                    subtitle: `Round ${topicRound} — seeking ${formatCount(needed)} more ${pluralizeCount(needed, 'card')}`,
                     subtitleKey: 'ai_task_session_investigation',
                     totalSteps: session.hypotheses.length,
                     currentStep: processedHypotheses,
@@ -976,7 +977,7 @@ const runDataAnalysisSessionInternal = async (
                             status: 'succeeded',
                             inputSummary: `Round ${topicRound}: generate additional hypotheses to reach minimum card target.`,
                             inputSummaryI18n: { key: 'analysis_trace_propose_hypotheses_input' },
-                            outputSummary: `Round ${topicRound}: proposed ${gapHypotheses.length} additional hypothesis candidate(s).`,
+                            outputSummary: `Round ${topicRound}: proposed ${formatCount(gapHypotheses.length)} additional hypothesis ${pluralizeCount(gapHypotheses.length, 'candidate')}.`,
                             outputSummaryI18n: {
                                 key: 'analysis_trace_propose_hypotheses_output',
                                 vars: { count: gapHypotheses.length },
@@ -1413,7 +1414,7 @@ const runDataAnalysisSessionInternal = async (
         message: session.status === 'cancelled'
             ? 'Research run cancelled. No later questions were executed.'
             : session.acceptedOutputs.length > 0
-                ? `Research run completed with ${session.acceptedOutputs.length} evidence-backed finding(s).`
+                ? `Research run completed with ${formatCount(session.acceptedOutputs.length)} evidence-backed ${pluralizeCount(session.acceptedOutputs.length, 'finding')}.`
                 : 'Research run completed without a supported business finding.',
         detail: {
             runId: session.runId,

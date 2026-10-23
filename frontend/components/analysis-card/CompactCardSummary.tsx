@@ -1,6 +1,7 @@
 import React from 'react';
 import { formatAnalysisValue } from '../../utils/analysisCardPresentation';
 import type { CsvCellValue } from '../../types';
+import { formatCount } from '../../utils/displayText';
 
 interface CompactCardSummaryProps {
     displayedTotalValue: CsvCellValue;
@@ -50,7 +51,7 @@ export const CompactCardSummary: React.FC<CompactCardSummaryProps> = ({
                 </>
             )}
             <span className="shrink-0 text-xs">
-                {displayedRowCount} / {totalRowCount} rows
+                {formatCount(displayedRowCount)} / {formatCount(totalRowCount)} rows
             </span>
             {truncatedSummary && (
                 <>

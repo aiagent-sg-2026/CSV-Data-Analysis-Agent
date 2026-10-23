@@ -1,6 +1,8 @@
 import type { AnalysisPlan, PeriodGrain } from '../../types';
-import { pluralizeLabel, toDisplayLabel } from './executiveKpiUtils';
+import { pluralizeLabelOrSelf, toDisplayLabel } from './executiveKpiUtils';
 import { isHelperLikeGroupHint } from './businessLabelHeuristics';
+import { hasHeaderLayers, naturalizeColumnName, naturalizeLayeredText } from '../../utils/displayText';
+import { isBandColumnName, replaceBandColumnNames, resolveBandColumnLabel } from '../../utils/bandLabels';
 
 const INTERNAL_GROUP_COLUMNS = new Set([
     'rowlabel',
@@ -102,8 +104,9 @@ const singularizeLabel = (value: string): string => {
     const lastWord = words[words.length - 1];
 
     let singularLast = lastWord;
-    if (/^series$/i.test(lastWord)) {
-        singularLast = lastWord;
+    if (/^series(?:es)?$/i.test(lastWord)) {
+        // "series" is both singular and plural; a model-written "serieses" folds back to it.
+        singularLast = lastWord.slice(0, 6);
     } else if (/ies$/i.test(lastWord) && lastWord.length > 3) {
         singularLast = `${lastWord.slice(0, -3)}y`;
     } else if (/(ches|shes|xes|zes|ses)$/i.test(lastWord) && lastWord.length > 3) {
@@ -116,18 +119,19 @@ const singularizeLabel = (value: string): string => {
     return words.join(' ');
 };
 
+// A label that cannot be pluralised safely ("Kunde", helper names) stays as it is in a title.
 const pluralizeTitleGroupLabel = (value: string) =>
     /^series label\b/i.test(value) || /^source /i.test(value)
         ? value
-        : pluralizeLabel(value);
+        : pluralizeLabelOrSelf(value);
 
 const getFallbackDisplayLabel = (value: string | undefined, fallback: string): string => {
     if (!value) return fallback;
 
     const normalized = normalizeKey(value);
-    const seriesLabelMatch = normalized.match(SERIES_LABEL_LAYER_PATTERN);
-    if (seriesLabelMatch) {
-        return `Series Label ${seriesLabelMatch[1]}`;
+    // A melt band column reads as what its values are ("Fiscal Year"), never as "Series Label 1".
+    if (SERIES_LABEL_LAYER_PATTERN.test(normalized)) {
+        return toDisplayLabel(resolveBandColumnLabel(value) ?? undefined, 'Group');
     }
 
     if (normalized === 'sourcecolumnname') return 'Source Column';
@@ -274,6 +278,8 @@ export const resolvePlanGroupLabel = (plan: DisplayPlanSource): string => {
     if (
         isMeaningfulLabel(hints.groupLabel ?? null, INTERNAL_GROUP_COLUMNS)
         && !isHelperLikeGroupHint(plan.groupByColumn, hints.groupLabel ?? null)
+        // A title that only repeats the helper name ("Series Label 1") says nothing; the band's own meaning does.
+        && !(isBandColumnName(plan.groupByColumn) && replaceBandColumnNames(hints.groupLabel ?? '') !== (hints.groupLabel ?? ''))
     ) {
         return toDisplayLabel(hints.groupLabel, 'Group');
     }
@@ -299,10 +305,14 @@ export const resolvePlanMetricLabel = (plan: DisplayPlanSource): string | null =
     return fallback;
 };
 
+// Columns the plan names exactly: replaced as a whole before any pattern guesses at "Order :: Date".
+const getPlanColumnNames = (plan: DisplayPlanSource): string[] =>
+    [plan.groupByColumn, plan.valueColumn].filter((column): column is string => Boolean(column));
+
 export const resolveDisplayPlanTitle = (
     plan: DisplayPlanSource,
 ): string => {
-    const rawTitle = sanitizePhrase(plan.title) ?? 'AI Generated Analysis';
+    const rawTitle = naturalizeLayeredText(sanitizePhrase(plan.title) ?? 'AI Generated Analysis', getPlanColumnNames(plan));
     const title = sanitizeTitleSystemTerms(rawTitle)
         .replace(/\b(by|per|vs)(?=[A-Z])/g, '$1 ');
     const metricLabel = resolvePlanMetricLabel(plan);
@@ -350,7 +360,7 @@ export const resolveDisplayPlanDescription = (
     plan: DisplayPlanSource,
 ): string => {
     const description = sanitizeTechnicalDescriptionTerms(
-        sanitizeTitleSystemTerms(plan.description ?? ''),
+        sanitizeTitleSystemTerms(naturalizeLayeredText(plan.description ?? '', getPlanColumnNames(plan))),
     );
     const metricLabel = resolvePlanMetricLabel(plan);
     const groupLabel = resolvePlanGroupLabel(plan);
@@ -414,7 +424,11 @@ export const buildColumnDisplayLabels = (
     Object.fromEntries(columns.map(column => [
         column,
         // AI-inferred labels (from harness Phase 4) take priority for unnamed columns
-        inferredLabels[column] ?? resolveColumnDisplayLabel(column, plans),
+        inferredLabels[column]
+            // Peers let two columns that share a leaf ("Order :: Date", "Delivery :: Date") keep their qualifier.
+            ?? (hasHeaderLayers(column)
+                ? toDisplayLabel(naturalizeColumnName(column, columns), column)
+                : resolveColumnDisplayLabel(column, plans)),
     ]));
 
 export const formatColumnDisplayHints = (

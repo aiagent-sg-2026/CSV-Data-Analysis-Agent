@@ -9,6 +9,7 @@ import type {
 import { resolveDisplayPlanLabels } from './displayLabelContext';
 import { resolvePlanGroupLabel, resolvePlanMetricLabel } from './businessLabelResolver';
 import { buildMetricLabel, isNeutralHelperDisplayLabel } from './executiveKpiUtils';
+import { isBandColumnWithoutMeaning } from '../../utils/bandLabels';
 import { classifyAnalysisColumnRole, isTimeLikeDimensionColumn } from '../agent/analysisColumnRoles';
 import { isMoneyMeasureName } from '../data/columnNameLeaf';
 
@@ -51,6 +52,10 @@ const hasNullLikeGroupValues = (card: AnalysisCardData) => {
     });
 };
 
+// A melt's band column whose values say nothing ("Group") is as neutral as the old "Series Label 1".
+const isNeutralHelperGroup = (card: AnalysisCardData, displayGroupLabel: string): boolean =>
+    isNeutralHelperDisplayLabel(displayGroupLabel) || isBandColumnWithoutMeaning(card.plan.groupByColumn, displayGroupLabel);
+
 const classifySemanticRole = (
     card: AnalysisCardData,
     displayGroupLabel: string,
@@ -66,7 +71,7 @@ const classifySemanticRole = (
 
     const rawGroupKey = normalizeKey(card.plan.groupByColumn);
     const displayKey = displayGroupLabel.toLowerCase();
-    const displayIsNeutralHelper = isNeutralHelperDisplayLabel(displayGroupLabel);
+    const displayIsNeutralHelper = isNeutralHelperGroup(card, displayGroupLabel);
 
     if (HELPER_ROW_INDEX_PATTERN.test(rawGroupKey) || HELPER_ROW_INDEX_PATTERN.test(displayKey)) {
         return 'helper_row_index';
@@ -105,7 +110,7 @@ const buildAggregationQualityFlags = (
 ): string[] => {
     const flags = new Set<string>();
     const numericValues = toFiniteNumbers(card);
-    const neutralHelperLabel = isNeutralHelperDisplayLabel(displayGroupLabel);
+    const neutralHelperLabel = isNeutralHelperGroup(card, displayGroupLabel);
 
     if (card.plan.isFallback) {
         flags.add('fallback_view');
@@ -170,7 +175,7 @@ const buildNarrativeSignals = (
     businessMeaningConfidence: number;
     narrativeEligibility: DisplayAnalysisIrNarrativeEligibility;
 } => {
-    const neutralHelperLabel = isNeutralHelperDisplayLabel(displayGroupLabel);
+    const neutralHelperLabel = isNeutralHelperGroup(card, displayGroupLabel);
     const titleLooksBusinessLike = !/source row|source column|row class|series key|series label|row label|row total/i.test(displayTitle);
 
     let helperExposureLevel: DisplayAnalysisIrHelperExposureLevel = 'medium';

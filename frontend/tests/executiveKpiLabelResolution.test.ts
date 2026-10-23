@@ -69,7 +69,7 @@ describe('buildExecutiveKpis business label resolution', () => {
 
         expect(kpis[0]?.label).toBe('Total Revenue');
         expect(kpis[1]?.label).toBe('Top Project');
-        expect(kpis[2]?.label).toBe('Projects');
+        expect(kpis[2]?.label).toBe('Distinct Projects');
     });
 
     it('singularizes plural top-N titles when deriving the group label', () => {
@@ -81,6 +81,6 @@ describe('buildExecutiveKpis business label resolution', () => {
 
         expect(kpis[0]?.label).toBe('Total Revenue');
         expect(kpis[1]?.label).toBe('Top Project');
-        expect(kpis[2]?.label).toBe('Projects');
+        expect(kpis[2]?.label).toBe('Distinct Projects');
     });
 });

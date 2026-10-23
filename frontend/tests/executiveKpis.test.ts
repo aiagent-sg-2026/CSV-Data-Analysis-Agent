@@ -205,7 +205,7 @@ describe('buildExecutiveKpis', () => {
         });
         expect(kpis[1].detail).toContain('36 TUAS ROAD');
         expect(kpis[2]).toMatchObject({
-            label: 'Projects',
+            label: 'Distinct Projects',
             value: '4',
             hierarchy: 'secondary',
         });
@@ -580,7 +580,7 @@ describe('buildExecutiveKpis', () => {
             label: 'Top Project',
         });
         expect(kpis[2]).toMatchObject({
-            label: 'Projects',
+            label: 'Distinct Projects',
         });
     });
 
@@ -618,7 +618,7 @@ describe('buildExecutiveKpis', () => {
             label: 'Top Source Column',
         });
         expect(kpis[2]).toMatchObject({
-            label: 'Source Column',
+            label: 'Distinct Source Column',
         });
     });
 

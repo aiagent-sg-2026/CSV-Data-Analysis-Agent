@@ -26,6 +26,7 @@ import type {
     InitialAnalysisStageToolName,
 } from '../../tools/manifests/initialAnalysisStageManifests';
 import type { StoreApi } from '../../types';
+import { formatCount, pluralizeCount } from '../../../../utils/displayText';
 
 export interface InitialAnalysisStageServiceBindings {
     resolveStructure: typeof resolveReportStructureArtifactsWithProposal;
@@ -228,7 +229,7 @@ export const createInitialAnalysisStageExecutors = (
                 toolName: 'dataset.detectNoiseRows',
                 decision: residualCount > 0 ? 'warn' : 'pass',
                 summary: residualCount > 0
-                    ? `${residualCount} residual report-noise row candidate(s) remain.`
+                    ? `${formatCount(residualCount)} residual report-noise row ${pluralizeCount(residualCount, 'candidate')} remain.`
                     : 'No residual report-noise row candidates were detected.',
                 warningCodes: residualCount > 0 ? ['residual_noise_candidates'] : [],
                 artifactRefs: [`row-inspection:${inspection.generatedAt}`],
@@ -253,7 +254,7 @@ export const createInitialAnalysisStageExecutors = (
                 phase: 'propose_cleaning',
                 toolName: 'dataset.suggestCleaningPlan',
                 decision: plan.planStatus === 'inconsistent' ? 'warn' : 'pass',
-                summary: `Prepared ${plan.operations.length} governed cleaning operation(s).`,
+                summary: `Prepared ${formatCount(plan.operations.length)} governed cleaning ${pluralizeCount(plan.operations.length, 'operation')}.`,
                 warningCodes: plan.planStatus === 'inconsistent'
                     ? ['cleaning_plan_inconsistent']
                     : [],
@@ -311,7 +312,7 @@ export const createInitialAnalysisStageExecutors = (
                 toolName: 'dataset.applyTransform',
                 decision: completed ? 'pass' : 'fail',
                 summary: completed
-                    ? `Committed ${operations.length} safe cleaning operation(s).`
+                    ? `Committed ${formatCount(operations.length)} safe cleaning ${pluralizeCount(operations.length, 'operation')}.`
                     : state.cleaningRun?.userFacingMessage
                         ?? 'The cleaning run did not reach a stable completed state.',
                 warningCodes: completed ? [] : ['cleaning_not_completed'],
@@ -531,8 +532,8 @@ export const createInitialAnalysisStageExecutors = (
                     ? usedDeterministicFallback
                         ? 'Created one deterministic aggregate for review after the governed research run produced no accepted card.'
                         : readOnlyEvidenceFallback
-                            ? `Created ${acceptedCardCount} evidence-backed analysis card(s) from the complete read-only dataset with a visible structure caveat.`
-                            : `Created ${acceptedCardCount} evidence-backed analysis card(s).`
+                            ? `Created ${formatCount(acceptedCardCount)} evidence-backed analysis ${pluralizeCount(acceptedCardCount, 'card')} from the complete read-only dataset with a visible structure caveat.`
+                            : `Created ${formatCount(acceptedCardCount)} evidence-backed analysis ${pluralizeCount(acceptedCardCount, 'card')}.`
                     : evidenceBudgetExpired
                         ? 'The evidence research budget expired and no safe deterministic aggregate could be created.'
                         : 'The bounded evidence run did not produce an accepted card.',
@@ -628,7 +629,7 @@ export const createInitialAnalysisStageExecutors = (
                 summary: summaryOutcome === 'timed_out'
                     ? 'Analysis cards were finalized, but AI summary synthesis exceeded its time budget.'
                     : verifiedCards.length > 0
-                    ? `Finalized ${verifiedCards.length} verified analysis card(s).`
+                    ? `Finalized ${formatCount(verifiedCards.length)} verified analysis ${pluralizeCount(verifiedCards.length, 'card')}.`
                     : 'Artifacts were finalized with trust caveats.',
                 warningCodes: summaryOutcome === 'timed_out'
                     ? ['summary_finalization_budget_expired']

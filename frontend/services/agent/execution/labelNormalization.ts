@@ -7,6 +7,7 @@ import type {
     LabelNormalizationDeferredSuggestion,
     LabelNormalizationMetadata,
 } from '../../../types';
+import { formatCount, formatCountNoun, pluralizeCount } from '../../../utils/displayText';
 
 const MAX_ELIGIBLE_DISTINCT_VALUES = 300;
 const MIN_ELIGIBLE_DISTINCT_VALUES = 2;
@@ -204,10 +205,10 @@ const buildSummary = (
     }
 
     const appliedSummary = appliedClusters.length > 0
-        ? `Auto-merged ${appliedClusters.length} alias group(s) across ${appliedColumns.length} column(s) using ${appliedReplacementCount} replacement rule(s).`
+        ? `Auto-merged ${formatCount(appliedClusters.length)} alias ${pluralizeCount(appliedClusters.length, 'group')} across ${formatCountNoun(appliedColumns.length, 'column')} using ${formatCount(appliedReplacementCount)} replacement ${pluralizeCount(appliedReplacementCount, 'rule')}.`
         : 'No high-confidence label alias groups were auto-merged.';
     const deferredSummary = deferredSuggestions.length > 0
-        ? `Deferred ${deferredSuggestions.length} lower-confidence alias suggestion(s) for review.`
+        ? `Deferred ${formatCount(deferredSuggestions.length)} lower-confidence alias ${pluralizeCount(deferredSuggestions.length, 'suggestion')} for review.`
         : 'No lower-confidence alias suggestions were deferred.';
     return `${appliedSummary} ${deferredSummary}`.trim();
 };
