@@ -5,7 +5,7 @@ import { collectOrderedColumnNames } from './columnRegistry';
 import { isMissingCellValue } from '../duckdb/dimensionNormalization';
 import {
     canonicalizeNumberBody,
-    detectColumnNumberStyle,
+    resolveDecimalCommaColumns,
     stripNumberDecorations,
     type NumberStyle,
 } from './numberLocale';
@@ -13,7 +13,7 @@ import {
 /**
  * Reads one cell as a number. Without `style` the cell decides for itself and a
  * cell valid in both styles (`1,234`, `4.567`) keeps the US reading. Callers
- * that know the column (see `detectColumnNumberStyle`) pass its style so those
+ * that know the column (see `resolveDecimalCommaColumns`) pass its style so those
  * ambiguous cells follow the column.
  */
 export const robustParseFloat = (value: any, style?: NumberStyle | null): number | null => {
@@ -95,9 +95,14 @@ export const profileData = (data: CsvRow[]): { profiles: ColumnProfile[], issues
     const issues: string[] = [];
     const MISSING_VALUE_THRESHOLD = 0.5; // 50%
 
+    // Columns that prove the decimal comma (1.234,56), or inherit it from the
+    // dataset, read their cells with it. Everything else keeps the per-cell rules.
+    const decimalCommaColumns = resolveDecimalCommaColumns(data, headers);
+
     for (const header of headers) {
         let isNumerical = true;
         const values = data.map(row => row[header]);
+        const numberStyle = decimalCommaColumns.has(header) ? 'decimal_comma' as const : null;
         let numericCount = 0;
         let blankCount = 0;
         let markerCount = 0;
@@ -116,7 +121,7 @@ export const profileData = (data: CsvRow[]): { profiles: ColumnProfile[], issues
                 continue;
             }
             if (!isNumerical) continue;
-            if (robustParseFloat(value) === null) {
+            if (robustParseFloat(value, numberStyle) === null) {
                 isNumerical = false;
                 continue;
             }
@@ -129,9 +134,8 @@ export const profileData = (data: CsvRow[]): { profiles: ColumnProfile[], issues
         }
 
         if (isNumerical && numericCount > 0) {
-            // A column that proves the decimal comma (1.234,56) reads ambiguous
-            // cells such as 4.567 as thousands, so its range is not 1000x off.
-            const numberStyle = detectColumnNumberStyle(values);
+            // Ambiguous cells such as 4.567 read as thousands in a decimal-comma
+            // column, so its range is not 1000x off.
             const decimalComma = numberStyle === 'decimal_comma';
             const numericValues = values
                 .filter(v => !isMissingCellValue(v))
@@ -239,6 +243,7 @@ export const profileDataLightweight = (
             issues.push(`Lightweight profiler used a stratified sample of ${maxRows} rows (head/middle/tail) from ${data.length} total rows.`);
         }
 
+        const decimalCommaColumnsLw = resolveDecimalCommaColumns(sample, headers);
         const COMMA_THOUSANDS_PATTERN_LW = /\d{1,3}(,\d{3})+/;
         const APOSTROPHE_PREFIX_PATTERN_LW = /^['\u2018\u2019]/;
         const profiles: ColumnProfile[] = headers.map(header => {
@@ -277,7 +282,7 @@ export const profileDataLightweight = (
             // only in a numeric column; in a text column they are values.
             const presentCount = sample.length - blankCount - markerCount;
             const isNumeric = presentCount > 0 && numericCount / presentCount > 0.8;
-            const decimalComma = isNumeric && detectColumnNumberStyle(seen) === 'decimal_comma';
+            const decimalComma = isNumeric && decimalCommaColumnsLw.has(header);
             const hasFormattedNumbers = isNumeric && !decimalComma && commaFormattedCount > 0;
             const hasApostrophePrefixedNumbers = isNumeric && apostrophePrefixedCount > 0;
             const isMissing = isNumeric ? isMissingCellValue : isBlankCellValue;

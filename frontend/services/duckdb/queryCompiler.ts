@@ -63,23 +63,32 @@ const normalizeAlias = (value: unknown, context: string) => {
 const buildTextExpression = (column: string) => `LOWER(COALESCE(CAST(${quoteIdentifier(column)} AS VARCHAR), ''))`;
 const buildEmptyAwareExpression = (column: string) => `TRIM(COALESCE(CAST(${quoteIdentifier(column)} AS VARCHAR), ''))`;
 /**
- * Cells that are only valid in the European style: `1.234,56`, `1.234.567`,
- * `161,30`, `0,500`, `1234,567`. A lone `1,234` or `4.567` fits both styles
- * and is deliberately not matched, so it keeps the US reading (thousands comma,
- * decimal point) here; columns that prove the decimal comma are normalised per
- * column before the data reaches DuckDB (see `normalizeDecimalCommaColumns`).
- * Mirrors `classifyNumberBody` in services/data/numberLocale.ts.
+ * Cells that are only valid in the European style: `1.234,56`, `161,30`,
+ * `0,500`, `1234,567`. A lone `1,234` or `4.567` fits both styles and is
+ * deliberately not matched, so it keeps the US reading (thousands comma,
+ * decimal point) here. Dotted groups alone (`1.234.567`) are not matched either:
+ * they may be part codes, so they only become numbers in a column that proves
+ * the decimal comma, which is normalised per column before the data reaches
+ * DuckDB (see `normalizeDecimalCommaColumns`). Mirrors `classifyNumberBody` in
+ * services/data/numberLocale.ts.
  */
-const EUROPEAN_NUMBER_SQL_PATTERN = String.raw`^[+-]?[$€£¥]?\s*(\d{1,3}(\.\d{3})+,\d+|\d{1,3}(\.\d{3}){2,}|\d+,(\d{1,2}|\d{4,})|\d{4,},\d{3}|0\d*,\d{3})\s*%?$`;
+const EUROPEAN_NUMBER_SQL_PATTERN = String.raw`^[+-]?[$€£¥]?\s*(\d{1,3}(\.\d{3})+,\d+|\d+,(\d{1,2}|\d{4,})|\d{4,},\d{3}|0\d*,\d{3})\s*%?$`;
+
+/** Swiss thousands apostrophes (1'234.50, 1’234.50); mirrors SWISS_APOSTROPHE in numberLocale.ts. */
+const SWISS_NUMBER_SQL_PATTERN = String.raw`^[+-]?[$€£¥]?\s*\d+(['’]\d{3})+(\.\d+)?\s*%?$`;
 
 /**
- * Turns an unambiguous European number into `1234.56` text; leaves every other cell alone.
- * `source` is a CASE ... END expression and is not parenthesised: SQL admission
- * (sqlSecurity.ts) rejects `ELSE (` as an unreviewed function call.
+ * Turns an unambiguous European or Swiss number into plain digits (`1234.56`);
+ * leaves every other cell alone. `source` is a CASE ... END expression and is
+ * not parenthesised: SQL admission (sqlSecurity.ts) rejects `ELSE (` as an
+ * unreviewed function call.
  */
 const buildDecimalCommaAwareExpression = (source: string) =>
-    `CASE WHEN (${source} LIKE '%,%' OR ${source} LIKE '%.%.%') AND regexp_matches(${source}, ${quoteStringLiteral(EUROPEAN_NUMBER_SQL_PATTERN)})`
-    + ` THEN REPLACE(REPLACE(${source}, '.', ''), ',', '.') ELSE ${source} END`;
+    `CASE WHEN (${source} LIKE '%,%') AND regexp_matches(${source}, ${quoteStringLiteral(EUROPEAN_NUMBER_SQL_PATTERN)})`
+    + ` THEN REPLACE(REPLACE(${source}, '.', ''), ',', '.')`
+    + ` WHEN (${source} LIKE '%''%' OR ${source} LIKE '%’%') AND regexp_matches(${source}, ${quoteStringLiteral(SWISS_NUMBER_SQL_PATTERN)})`
+    + ` THEN REPLACE(REPLACE(${source}, '''', ''), '’', '')`
+    + ` ELSE ${source} END`;
 
 /**
  * A column's numeric value, or NULL when the cell is blank, a missing marker
