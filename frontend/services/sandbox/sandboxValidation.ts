@@ -5,16 +5,16 @@ import type {
     SandboxTransformationProposal,
     SandboxValidationReport,
 } from '../../types';
+import { robustParseFloat } from '../data/dataProfiler';
 
 const NUMERIC_RELATIVE_TOLERANCE = 0.000001;
 
 const toFiniteNumber = (value: CsvCellValue): number | null => {
     if (typeof value === 'number') return Number.isFinite(value) ? value : null;
     if (typeof value !== 'string') return null;
-    const normalized = value.trim().replace(/,/g, '').replace(/^\((.*)\)$/, '-$1');
-    if (!normalized) return null;
-    const parsed = Number(normalized.replace(/[%$€£¥]/g, ''));
-    return Number.isFinite(parsed) ? parsed : null;
+    // Stripping every comma read the European 161,30 as 16130 and made a correct
+    // transformation fail (or a wrong one pass) its totals and derived-field checks.
+    return robustParseFloat(value);
 };
 
 const sumColumn = (rows: CsvRow[], column: string): number => rows.reduce((sum, row) => {

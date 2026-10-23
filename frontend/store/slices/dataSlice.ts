@@ -41,6 +41,7 @@ import { getOriginalData } from '../../services/storageService';
 import { buildColumnRegistry, buildEffectiveColumnRegistryFromState, getAllowedColumns } from '../../services/data/columnRegistry';
 import { captureHistoryAnalysisSnapshot, getRestoredHistoryAnalysisState } from '../../services/agent/orchestration/historyAnalysisRestore';
 import { hasPiInitialCheckpoint } from '../../services/agent/runtime/pi/piInitialCheckpoint';
+import { formatCount, pluralizeCount } from '../../utils/displayText';
 
 export interface IDataSlice {
     addProgress: (message: string, type?: 'system' | 'warning' | 'error', model?: string) => void;
@@ -244,6 +245,16 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
                 set({ duckDbSessionStatus: nextStatus });
             }
             console.log(`[Perf:RefreshDuckDb] set(duckDbSessionStatus): ${Math.round(performance.now() - t4)}ms`);
+            if (binding?.engine === 'duckdb') {
+                // Safeguard before any card is built: compare the loaded numeric columns with
+                // the original text so a silently changed number can never be "Verified".
+                try {
+                    const { runNumericParseCheck } = await import('../../services/data/numericParseGuard');
+                    await runNumericParseCheck(owned as never, bindingTarget.dataset);
+                } catch (error) {
+                    console.warn('[RefreshDuckDb] numeric parse check unavailable.', error);
+                }
+            }
             console.log(`[Perf:RefreshDuckDb] total: ${Math.round(performance.now() - t0)}ms`);
 
             if (binding?.engine === 'duckdb') {
@@ -601,7 +612,7 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
 
                 const hiddenRowCount = getSemanticHiddenRowCount(snapshot, datasetVersion, targetDataset);
                 if (hiddenRowCount > 0 && get().semanticDatasetVersion === datasetVersion) {
-                    get().addProgress(`AI semantic view prepared. ${hiddenRowCount} non-detail row(s) will be hidden by default.`, 'system', snapshot.modelId);
+                    get().addProgress(`AI semantic view prepared. ${formatCount(hiddenRowCount)} non-detail ${pluralizeCount(hiddenRowCount, 'row')} will be hidden by default.`, 'system', snapshot.modelId);
                 }
                 return snapshot;
             })();

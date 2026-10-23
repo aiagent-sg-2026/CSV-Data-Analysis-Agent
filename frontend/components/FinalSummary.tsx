@@ -59,6 +59,11 @@ const FinalSummaryComponent: React.FC<FinalSummaryProps> = ({ title, summary, la
 
     // A "no summary" status text is not evidence, whatever the source cards' status.
     const showsEvidenceBadge = !isPlaceholderSummaryText(summary.text);
+    // "Verified evidence" is for an AI summary that passed the evidence checks. Text the
+    // app read from the verified cards itself says what it is instead.
+    const isBuiltFromCards = evidenceState === 'verified'
+        && provenance?.narrativeSource !== undefined
+        && provenance.narrativeSource !== 'ai_summary';
 
     const toggle = useCallback(() => setIsExpanded(prev => !prev), []);
 
@@ -87,7 +92,9 @@ const FinalSummaryComponent: React.FC<FinalSummaryProps> = ({ title, summary, la
                         <h2 className="text-lg font-bold text-slate-900">{title}</h2>
                         {showsEvidenceBadge && <span
                             className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                                evidenceState === 'verified'
+                                isBuiltFromCards
+                                    ? 'bg-slate-100 text-slate-700'
+                                    : evidenceState === 'verified'
                                     ? 'bg-emerald-100 text-emerald-700'
                                     : evidenceState === 'degraded'
                                         ? 'bg-amber-100 text-amber-700'
@@ -95,7 +102,9 @@ const FinalSummaryComponent: React.FC<FinalSummaryProps> = ({ title, summary, la
                             }`}
                             title={`Narrative dataset version: ${provenance?.datasetVersion ?? 'unverified'}`}
                         >
-                            {evidenceState === 'verified'
+                            {isBuiltFromCards
+                                ? getTranslation('final_summary_badge_from_cards', language)
+                                : evidenceState === 'verified'
                                 ? 'Verified evidence'
                                 : evidenceState === 'degraded'
                                     ? 'Degraded evidence'

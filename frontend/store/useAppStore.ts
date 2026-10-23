@@ -34,6 +34,7 @@ import {
 import { configureCloudAiConsentRuntime } from '../services/privacy/cloudAiConsent';
 import { detectSensitiveData } from '../services/privacy/sensitiveDataDetector';
 import { configureLocalDiagnosticContext } from '../services/observability/localDiagnostics';
+import { syncBandColumnLabels } from '../utils/bandLabels';
 
 /**
  * Yield to the browser's main thread by scheduling a new macro-task via
@@ -518,4 +519,11 @@ configureLocalDiagnosticContext(() => {
                 : activeStep?.action.type)
             ?? 'ai_model',
     };
+});
+
+// A melt's band columns (SeriesLabelL1, ...) read as what their values are ("Fiscal year"),
+// so the display labels follow whichever dataset is currently analysed.
+useAppStore.subscribe((state, previous) => {
+    if (state.csvData === previous.csvData && state.canonicalCsvData === previous.canonicalCsvData) return;
+    syncBandColumnLabels((state.canonicalCsvData ?? state.csvData)?.data);
 });

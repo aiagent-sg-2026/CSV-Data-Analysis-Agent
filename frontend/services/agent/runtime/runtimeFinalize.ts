@@ -15,6 +15,7 @@ import { createChatMessage } from '../../../utils/messageState';
 import { recordRuntimeEvent } from './runtimeHelpers';
 import { normalizeRuntimeOutcomeEnvelope } from './runtimeControlPlaneContract';
 import { assessTaskOutputs } from './taskOutputContract';
+import { formatCount, formatCountNoun, pluralizeCount } from '../../../utils/displayText';
 
 const MAX_RUNTIME_RUN_HISTORY = 50;
 
@@ -340,7 +341,7 @@ export const finalizeRuntimeOutcome = ({
             type: 'turn_health_summary',
             stage: 'finalizing',
             reason: normalizedOutcome.reason,
-            message: `Turn ${normalizedOutcome.outcomeKind}: ${runtimeActivityCount || stepsCompleted} runtime activity event(s), ${errorsEncountered} error(s), ${blockedSteps} blocked event(s), ${durationMs}ms.`,
+            message: `Turn ${normalizedOutcome.outcomeKind}: ${formatCount(runtimeActivityCount || stepsCompleted)} runtime activity ${pluralizeCount(runtimeActivityCount || stepsCompleted, 'event')}, ${formatCountNoun(errorsEncountered, 'error')}, ${formatCount(blockedSteps)} blocked ${pluralizeCount(blockedSteps, 'event')}, ${durationMs}ms.`,
             detail: {
                 durationMs,
                 stepsCompleted,

@@ -14,6 +14,7 @@ import type { ColumnProfile, UnpivotColumnsOperation } from '../../../types';
 import type { PeriodColumnFamily } from './periodColumnDetector';
 import { isStructuralMetadataColumn } from '../structuralMetadata';
 import { isUnnamedHelperColumn } from '../analysisColumnRoles';
+import { formatCount, pluralizeCount } from '../../../utils/displayText';
 
 // --- Constants ---
 
@@ -130,7 +131,7 @@ export const generatePeriodUnpivotPlan = (
     if (sourceColumns.length < 2) {
         return {
             operation: null,
-            skipReason: `Only ${sourceColumns.length} period column(s) after excluding totals — not enough for unpivot.`,
+            skipReason: `Only ${formatCount(sourceColumns.length)} period ${pluralizeCount(sourceColumns.length, 'column')} after excluding totals — not enough for unpivot.`,
             excludedColumns,
         };
     }
@@ -238,7 +239,7 @@ export const generateAllPeriodUnpivotPlans = (
     if (allSourceColumns.length < 2) {
         return {
             operation: null,
-            skipReason: `Only ${allSourceColumns.length} period column(s) across all families after excluding totals.`,
+            skipReason: `Only ${formatCount(allSourceColumns.length)} period ${pluralizeCount(allSourceColumns.length, 'column')} across all families after excluding totals.`,
             excludedColumns: allExcludedColumns,
         };
     }

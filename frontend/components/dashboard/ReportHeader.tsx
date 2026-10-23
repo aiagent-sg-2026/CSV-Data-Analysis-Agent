@@ -3,6 +3,8 @@ import type { ReportContextResolution, ResolvedReportContext } from '../../types
 import { getTranslation } from '../../utils/localization';
 import type { Settings } from '../../types';
 import { isSchemaDerivedReportTitle, isUsableReportTitle } from '../../services/agent/reportContext';
+import { describeSetAsideTables } from '../../utils/setAsideTables';
+import { isDateOrPeriodLine } from '../../services/agent/reportTitleLines';
 
 type ReportHeaderProps = {
     reportContextResolution: ReportContextResolution | null;
@@ -13,6 +15,8 @@ type ReportHeaderProps = {
     summaryRowCount: number;
     /** Column names of the dataset, used to avoid showing them as if they were a title. */
     columnNames?: readonly string[];
+    /** Row counts of other tables stacked in the file that were set aside, in file order. */
+    setAsideRowCounts?: readonly number[];
     language: Settings['language'];
 };
 
@@ -89,6 +93,7 @@ const ReportHeaderComponent: React.FC<ReportHeaderProps> = ({
     headerDepth,
     summaryRowCount,
     columnNames = [],
+    setAsideRowCounts = [],
     language,
 }) => {
     const generatedAtRef = useRef<string>(
@@ -111,7 +116,18 @@ const ReportHeaderComponent: React.FC<ReportHeaderProps> = ({
         && !isSchemaDerivedReportTitle(candidate, columnNames)) ?? 'Untitled Report';
     const aiParameterLines = toLineList(aiGuess?.parameterLines);
     const effectiveParameterLines = toLineList(effectiveReportContext.parameterLines);
-    const parameterLines = (aiParameterLines.length > 0 ? aiParameterLines : effectiveParameterLines).slice(0, 5);
+    const allParameterLines = aiParameterLines.length > 0 ? aiParameterLines : effectiveParameterLines;
+    // A period ("As At | 30-06-2026") is never the title; it reads as the subtitle under the report
+    // name, or under the file name when the file names no report.
+    const periodSubtitle = [
+        aiGuess?.reportTitle,
+        effectiveReportContext.reportTitle,
+        ...aiParameterLines,
+        ...effectiveParameterLines,
+    ].find((line): line is string => typeof line === 'string' && isDateOrPeriodLine(line));
+    const subtitle = periodSubtitle?.replace(/\s*\|\s*/g, ' ').trim() ?? null;
+    // The period is shown once, under the title, not again as a tag.
+    const parameterLines = allParameterLines.filter(line => line !== periodSubtitle).slice(0, 5);
     const showAiGuessBanner = Boolean(aiGuess);
     const showValidatedFallbackNote = Boolean(
         aiGuess
@@ -133,6 +149,9 @@ const ReportHeaderComponent: React.FC<ReportHeaderProps> = ({
                     <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">
                         {displayTitle}
                     </h2>
+                    {subtitle && (
+                        <p className="mt-0.5 text-sm font-medium text-slate-600">{subtitle}</p>
+                    )}
                     {effectiveReportContext.reportDescription && (
                         <p className="mt-1 text-sm text-slate-600">{effectiveReportContext.reportDescription}</p>
                     )}
@@ -141,6 +160,12 @@ const ReportHeaderComponent: React.FC<ReportHeaderProps> = ({
                         {getTranslation('report_header_meta_rows', language, { count: preparedRowCount.toLocaleString() })}
                         {fileName && differs(fileName, displayTitle) && <> · {fileName}</>}
                     </p>
+                    {/* The rows above are only the first table; say so wherever the row count is shown. */}
+                    {setAsideRowCounts.length > 0 && (
+                        <p className="mt-0.5 text-xs font-medium text-amber-800">
+                            {describeSetAsideTables(setAsideRowCounts, language)}
+                        </p>
+                    )}
                     {/* Badges only for states that matter (the page is already "AI Analysis") */}
                     <div className="mt-2 flex flex-wrap items-center gap-2 empty:hidden">
                         {showAiGuessBanner && (
@@ -189,7 +214,7 @@ const ReportHeaderComponent: React.FC<ReportHeaderProps> = ({
                             value={headerDepth}
                         />
                     </div>
-                    {parameterLines.length > 0 && (
+                    {(parameterLines.length > 0 || (allParameterLines.length > 0 && summaryRowCount > 0)) && (
                         <div className="mt-3">
                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                                 {getTranslation('report_header_parameters', language)}

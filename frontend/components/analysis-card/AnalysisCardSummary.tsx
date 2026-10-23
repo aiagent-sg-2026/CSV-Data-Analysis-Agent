@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AnalysisPlan, LocalizedText, Settings } from '../../types';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { getTranslation } from '../../utils/localization';
+import { formatCount } from '../../utils/displayText';
 import { shouldHideCardChart } from '../../utils/analysisCardPresentationPolicy';
 import { PivotCardQualitySummary, formatAnalysisMeasureValue, formatAnalysisValue, isAdditiveAggregation, normalizeCategoryLabel } from '../../utils/analysisCardPresentation';
 
@@ -86,7 +87,7 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
         const lowest = rankDirection === 'asc';
         if (!groupsComplete) {
             // The query returned only the head of its ranking: say how much of it, never "Full dataset".
-            const params = { count: String(Math.min(topN ?? totalRowCount, totalRowCount)), total: String(totalGroupCount ?? '') };
+            const params = { count: formatCount(Math.min(topN ?? totalRowCount, totalRowCount)), total: totalGroupCount === null ? '' : formatCount(totalGroupCount) };
             // Without a measured total only the groups returned are described, not the ones beyond them.
             if (totalGroupCount !== null && overallTotalValue !== null) {
                 return getTranslation(lowest ? 'analysis_card_scope_bottom_n_of' : 'analysis_card_scope_top_n_of', language, params);
@@ -94,7 +95,7 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
             return getTranslation(lowest ? 'analysis_card_scope_bottom_n_returned' : 'analysis_card_scope_top_n_returned', language, params);
         }
         if (topN) {
-            return getTranslation(lowest ? 'analysis_card_scope_bottom_n' : 'analysis_card_scope_top_n', language, { count: String(topN) });
+            return getTranslation(lowest ? 'analysis_card_scope_bottom_n' : 'analysis_card_scope_top_n', language, { count: formatCount(topN) });
         }
         return getTranslation('analysis_card_scope_full', language);
     }, [groupsComplete, language, overallTotalValue, rankDirection, topN, totalGroupCount, totalRowCount]);
@@ -126,6 +127,14 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
                     total: totalRowCount.toLocaleString(),
                     shown: formatSummaryMeasure(totalValue),
                 })
+                : plan.aggregation && !groupsComplete
+                // A cut-off ranking: the rows are not all the groups, so never present their count as the total.
+                ? getTranslation(totalGroupCount !== null
+                    ? 'analysis_card_view_line_scope_non_additive'
+                    : 'analysis_card_view_line_scope_non_additive_returned', language, {
+                    visible: displayedRowCount.toLocaleString(),
+                    total: (totalGroupCount ?? totalRowCount).toLocaleString(),
+                })
                 : getTranslation(plan.aggregation
                     ? 'analysis_card_view_line_scope_non_additive'
                     : 'analysis_card_view_line_scope_unknown', language, {
@@ -142,7 +151,7 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
             const params = {
                 scope: scopeLabel,
                 hidden: hiddenLabelCount > 0
-                    ? getTranslation('analysis_card_scope_hidden_count', language, { count: String(hiddenLabelCount) })
+                    ? getTranslation('analysis_card_scope_hidden_count', language, { count: formatCount(hiddenLabelCount) })
                     : getTranslation('analysis_card_scope_no_hidden', language),
             };
             lines.push(hasAdditiveMeasure && hasFoldedGroups
@@ -174,6 +183,7 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
         language,
         matchedGroupCount,
         overallTotalValue,
+        totalGroupCount,
         plan.aggregation,
         plan.presentationMode,
         plan.artifactMetadata?.tableOnlyPresentation,

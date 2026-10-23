@@ -35,6 +35,7 @@ import {
     resolveColumnReference,
 } from '../../data/columnRegistry';
 import { getPreferredAnalysisDataset } from '../reportStructureState';
+import { assessRowHierarchyPlan, resolveRowHierarchy, rowHierarchyDetailFilter, withRowHierarchyDetailFilter } from '../planning/rowHierarchyGuard';
 import {
     isDerivedMetricOperation,
     isDerivedMetricWarningExplicitlyConfirmed,
@@ -379,7 +380,18 @@ export const executeDataQueryAction = async (
     // Inject harness directives (detail-row filter, hierarchy exclusion)
     // into the query plan deterministically — same as auto-analysis path.
     // This ensures the AI does not need to manually add RowRole filters.
-    const steering = state.latestAnalysisSession?.analysisSteering;
+    // A verified row hierarchy fixes the detail-row filter even when no harness
+    // steering exists (the harness may have been skipped or failed).
+    const rowHierarchy = resolveRowHierarchy(state);
+    const sessionSteering = state.latestAnalysisSession?.analysisSteering;
+    const steering = rowHierarchy
+        ? withRowHierarchyDetailFilter(
+            sessionSteering ?? ({
+                preferGroupBy: [], blockGroupBy: [], excludeFromAggregation: [], parentDescriptions: [], duplicateDescriptions: [],
+            } as unknown as NonNullable<typeof sessionSteering>),
+            rowHierarchy,
+        )
+        : sessionSteering;
     let augmentedPlan = normalizedPayload.plan;
     const actualDataColumns = getAllowedColumns(columnRegistry, 'select').length > 0
         ? getAllowedColumns(columnRegistry, 'select')
@@ -437,6 +449,33 @@ export const executeDataQueryAction = async (
     }
 
     augmentedPlan = normalizeEvidenceQueryPlan(augmentedPlan, activeTurn?.userMessage ?? '');
+
+    // An aggregate that still reads parent rows next to their detail rows (a
+    // raw SQL query, or a plan with its own RowClass scope) counts every
+    // amount once per hierarchy level; the model corrects it instead.
+    const hierarchyVerdict = assessRowHierarchyPlan({
+        title: 'data.query',
+        queryMode: augmentedPlan.aggregates?.length || augmentedPlan.rawSql ? 'aggregate' : 'rowset',
+        query: augmentedPlan,
+    }, rowHierarchy);
+    if (hierarchyVerdict.decision === 'reject') {
+        const message = hierarchyVerdict.feedback ?? `Add WHERE "${rowHierarchy ? rowHierarchyDetailFilter(rowHierarchy).column : 'RowClass'}" = 'fact'.`;
+        return {
+            status: 'error',
+            toolName: 'data.query',
+            message,
+            shouldStop: false,
+            retryHint: message,
+            observation: {
+                type: 'tool_result',
+                status: 'error',
+                summary: message,
+                toolName: 'data.query',
+                code: 'validation_failed',
+                detail: { semanticCode: 'series_hierarchy_double_count' },
+            },
+        };
+    }
 
     const aggregateAliasMismatch = validateAggregateAliasSemantics(augmentedPlan);
     if (aggregateAliasMismatch) {

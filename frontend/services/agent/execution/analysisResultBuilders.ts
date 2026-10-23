@@ -15,6 +15,7 @@ import type { StoreApi } from '../types';
 import { createNewCard } from './cardCreator';
 import { assessCardSeriesScope } from './cardSeriesScope';
 import { resolveSeriesMeasure } from '../planning/seriesMeasureGuard';
+import { resolveRowHierarchy } from '../planning/rowHierarchyGuard';
 import { createChatMessage } from '../../../utils/messageState';
 
 export const buildBlockedResult = (
@@ -73,7 +74,7 @@ export const createAnalysisCard = async ({
     // Skill results are computed before the card exists, so a melted period
     // table's series check can only caveat them: a cross-series aggregate or a
     // mixed-unit comparison is kept as a table and never verified.
-    const seriesScope = assessCardSeriesScope(plan, resolveSeriesMeasure(store.getState()));
+    const seriesScope = assessCardSeriesScope(plan, resolveSeriesMeasure(store.getState()), resolveRowHierarchy(store.getState()));
     const evidenceValueGate = seriesScope.decision === 'reject' ? seriesScope.tableOnlyGate : seriesScope.evidenceValueGate;
     return evidenceValueGate ? createNewCard(plan, data, store, { evidenceValueGate }) : createNewCard(plan, data, store);
 };

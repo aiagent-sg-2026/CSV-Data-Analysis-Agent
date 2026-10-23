@@ -171,6 +171,7 @@ Return:
 Decision contract:
 - reportTitle may be rephrased for readability but must be grounded in visible CSV evidence. Do not invent content absent from the data.
 - reportTitle should be the main human-readable report title, not a body value.
+- reportTitle names the report or the company that issued it, for example "SALES ORDER OUTSTANDING REPORT" or "AR Aging Analysis". Never use a date range ("From 01-01-2026 To 30-06-2026"), a key/value parameter ("As At | 30-06-2026"), a line of dashes, a print stamp ("Printed by ... Page 1 of 80") or the file name as the title; those belong in parameterLines. When a "Report Name | X" line exists, X is the title. Prefer the line that names the report over the company line above it.
 - reportDescription: a 1-2 sentence summary of what the dataset contains (domain, time period, scope), grounded in metadata, headers, and body evidence.
 - parameterLines should contain preserved filter or scope lines (use exact visible text).
 - footerLines should contain preserved footer, memo, remark, or timestamp lines (use exact visible text).

@@ -11,11 +11,14 @@ import { createPiCompactionTelemetry, createPiProviderContextTransform, createPi
 import {
     applyColumnAdditivity,
     buildResearchPlan,
+    checkQuestionDimensions,
     checkQuestionMethods,
+    applyRowHierarchyScope,
     checkQuestionSeriesScope,
     checkSumVolumeDependence,
     MAX_PLAN_QUESTIONS,
     MIN_PLAN_QUESTIONS,
+    prioritizeMoneyMeasure,
     readProfileAdditivity,
     validateColumnAdditivity,
     validateResearchQuestions,
@@ -25,6 +28,8 @@ import { createPiSkillTool } from './piSkillTool';
 import { executeEvidenceQuery } from '../../execution/sqlCardExecutor';
 import { buildVolumeCheckQuery, readVolumeCheckRows } from '../../planning/volumeDrivenSum';
 import { buildSeriesMeasureGuidance, resolveSeriesMeasure } from '../../planning/seriesMeasureGuard';
+import { buildRowHierarchyGuidance, resolveRowHierarchy, type RowHierarchyContract } from '../../planning/rowHierarchyGuard';
+import { formatCount, pluralizeCount } from '../../../../utils/displayText';
 
 export const SUBMIT_RESEARCH_PLAN_TOOL = 'submit_research_plan';
 const PLANNER_MAX_PROVIDER_TURNS = 9;
@@ -48,6 +53,7 @@ const buildPlannerSystemPrompt = (params: {
     rowCount: number | null;
     columns: ColumnProfile[];
     seriesMeasure?: SeriesMeasureSemantics | null;
+    rowHierarchy?: RowHierarchyContract | null;
 }): string => [
     'You plan the first analysis of a CSV dataset for a business reader. You decide which questions are worth answering and how to measure them; the app then runs the queries and verifies the numbers.',
     `File: ${params.fileName}${params.rowCount !== null ? ` (${params.rowCount.toLocaleString()} rows)` : ''}`,
@@ -59,13 +65,16 @@ const buildPlannerSystemPrompt = (params: {
             `For a question about one series, set \`series\` to its exact ${params.seriesMeasure.seriesColumn} value and use ${params.seriesMeasure.periodColumn} as the dimension, e.g. a trend of one series over time. Compare series only by using ${params.seriesMeasure.seriesColumn} as the dimension.`,
         ]
         : []),
+    ...(params.rowHierarchy
+        ? [`Hierarchy table:\n${buildRowHierarchyGuidance(params.rowHierarchy)}`]
+        : []),
     'How to work:',
     '1. Read the choose-metric-and-aggregation skill first, and any other listed skill that matches.',
     '2. Look at the data only as much as needed (data_describe, data_value_counts, data_missing, data_outliers, data_query) so your choices rest on what the columns actually contain.',
-    `3. Call ${SUBMIT_RESEARCH_PLAN_TOOL} once with ${MIN_PLAN_QUESTIONS}-${MAX_PLAN_QUESTIONS} varied questions that a decision-maker would care about. Each question gets a short title, a one-sentence rationale, a dimension and/or a metric using exact column names, and the aggregation that matches the meaning of the metric (do not sum prices or rates; use median or average).`,
+    `3. Call ${SUBMIT_RESEARCH_PLAN_TOOL} once with ${MIN_PLAN_QUESTIONS}-${MAX_PLAN_QUESTIONS} varied questions that a decision-maker would care about. Each question gets a short title, a one-sentence rationale, a dimension and/or a metric using exact column names, and the aggregation that matches the meaning of the metric (do not sum prices or rates; use median or average). When the table has an additive money amount, include its total by the main business party (customer, supplier, product) as a question.`,
     '   - When one row is one event (a sale, an order, a visit), compare groups by the typical value per event (median or avg). A sum of a per-event value mostly repeats how many events each group has. Use sum only when the question is explicitly about total volume or value; then set total_intent to true and say "total" in the title. The app compares each grouped sum with the row counts in the data and sends back sums that only mirror group size.',
     '   - Group by a column whose values are categories a reader compares (a region, a type, a period), not by one that labels individual items (an ID, an address, a house or block number).',
-    '4. In the same call, fill `columns` for every numeric column you looked at or plan to use as a metric, and always for a metric you sum: additivity (additive = summing rows is meaningful, non_additive = it is not) and nature (flow, stock, ratio, unit_value, identifier, other), judged from what the values mean, not from the column name. A rate, ratio, unit price or point-in-time balance is non_additive. A number that labels an item rather than measuring a quantity (an ID, a code, an address number) is an identifier and is never summed or averaged.',
+    '4. In the same call, fill `columns` for every numeric column you looked at or plan to use as a metric, and always for a metric you sum: additivity (additive = summing rows is meaningful, non_additive = it is not) and nature (flow, stock, ratio, unit_value, identifier, other), judged from what the values mean, not from the column name. A rate, ratio, unit price or a point-in-time stock (an account closing balance, stock on hand) is non_additive. The open amount or open quantity on each order or invoice line (`Balance Amount`, `Outstanding`, `Quantity Balance`) is additive: lines add up across customers. In a header like `Amount :: Price` judge the last part (Price), not the group label. A number that labels an item rather than measuring a quantity (an ID, a code, an address number) is an identifier and is never summed or averaged.',
     '5. If the tool rejects a question, fix it and submit the whole plan again, including `columns`.',
     'Use only the tools provided. Do not answer the questions yourself; plan them.',
 ].join('\n');
@@ -75,7 +84,9 @@ const optionalString = (description: string) => Type.Optional(Type.Union([Type.S
 const buildSubmitTool = (params: {
     columns: ColumnProfile[];
     seriesMeasure?: SeriesMeasureSemantics | null;
+    rowHierarchy?: RowHierarchyContract | null;
     datasetVersion: string;
+    rowCount: number | null;
     measureGroups: MeasureGroupSumAndCount;
     signal: AbortSignal;
     onAccepted: (plan: ResearchPlan, additivity: Record<string, ColumnAdditivity>) => void;
@@ -117,8 +128,16 @@ const buildSubmitTool = (params: {
             const methods = checkQuestionMethods(validation.questions, { ...readProfileAdditivity(params.columns), ...additivity.accepted });
             // A melted series table's value only has meaning per series.
             const scoped = checkQuestionSeriesScope(methods.questions, params.seriesMeasure);
-            const volume = await checkSumVolumeDependence(scoped.questions, params.measureGroups, { profiles: params.columns, signal: params.signal });
-            const methodRejections = [...methods.rejected, ...scoped.rejected, ...volume.rejected];
+            // A group is a category a reader compares, not a record identifier (one row per group).
+            const dimensions = checkQuestionDimensions(scoped.questions, params.columns, params.rowCount);
+            // The plan leads with the table's main money amount by its business party, when there is one.
+            const ordered = params.seriesMeasure
+                ? dimensions.questions
+                : prioritizeMoneyMeasure(dimensions.questions, params.columns, { ...readProfileAdditivity(params.columns), ...additivity.accepted }, params.rowCount);
+            // A hierarchy table's parent rows never take part in a measure.
+            const scopedQuestions = applyRowHierarchyScope(ordered, params.rowHierarchy);
+            const volume = await checkSumVolumeDependence(scopedQuestions, params.measureGroups, { profiles: params.columns, signal: params.signal });
+            const methodRejections = [...methods.rejected, ...scoped.rejected, ...dimensions.rejected, ...volume.rejected];
             const checked = { questions: volume.questions, rejected: [...validation.rejected, ...methodRejections] };
             // A method problem is worth a corrected resubmission rather than silently dropping the question.
             if (methodRejections.length > 0 && submissions < PLANNER_MAX_SUBMISSIONS) {
@@ -184,6 +203,7 @@ export const runPiResearchPlanner = async (params: {
     const columns = (state.columnProfiles ?? []) as ColumnProfile[];
     if (!dataset || columns.length === 0) return null;
     const seriesMeasure = resolveSeriesMeasure({ canonicalBuildMeta: state.canonicalBuildMeta, columnProfiles: columns });
+    const rowHierarchy = resolveRowHierarchy({ canonicalBuildMeta: state.canonicalBuildMeta, columnProfiles: columns });
     const datasetVersion = getCurrentAnalysisDatasetVersion(state) ?? params.datasetVersionFallback;
 
     let accepted: ResearchPlan | null = null;
@@ -207,7 +227,9 @@ export const runPiResearchPlanner = async (params: {
         buildSubmitTool({
             columns,
             seriesMeasure,
+            rowHierarchy,
             datasetVersion,
+            rowCount: state.csvData?.backing?.rowCount ?? dataset.data?.length ?? null,
             measureGroups: params.measureGroups ?? createEvidenceQueryMeasure(store, planningController.signal),
             signal: planningController.signal,
             onAccepted: (plan, additivity) => { accepted = plan; acceptedAdditivity = additivity; },
@@ -223,6 +245,7 @@ export const runPiResearchPlanner = async (params: {
                 rowCount: state.csvData?.backing?.rowCount ?? dataset.data?.length ?? null,
                 columns,
                 seriesMeasure,
+                rowHierarchy,
             }),
             model: resolvePiModel(settings),
             thinkingLevel: resolvePiThinkingLevel(settings),
@@ -279,7 +302,7 @@ export const runPiResearchPlanner = async (params: {
         phase: 'planning',
         step: 'pi_research_plan_ready',
         status: 'done',
-        message: `Pi drafted ${(accepted as ResearchPlan).questions.length} research question(s).`,
+        message: `Pi drafted ${formatCount((accepted as ResearchPlan).questions.length)} research ${pluralizeCount((accepted as ResearchPlan).questions.length, 'question')}.`,
         detail: { runtimeOwner: 'pi', rejected: (accepted as ResearchPlan).rejected.length },
     });
     return accepted;

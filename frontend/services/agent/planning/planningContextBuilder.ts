@@ -16,6 +16,7 @@ import { formatColumnDisplayHints } from '../../dashboard/businessLabelResolver'
 import { formatAnalysisSteeringBundle } from '../analysisSteering';
 import type { AnalysisDatasetContext, PlanLearningHints } from '../../prompts/analysisPrompts';
 import { buildSeriesMeasureGuidance } from './seriesMeasureGuard';
+import { buildRowHierarchyGuidance } from './rowHierarchyGuard';
 
 // ─── Dataset overview text ─────────────────────────────────────
 
@@ -103,6 +104,10 @@ export const createPlannerSections = (
     // series; the planner must know before it chooses any aggregate.
     ...(datasetContext.seriesMeasure
         ? [createContextSection('series_measure', `Series-dependent measure:\n${buildSeriesMeasureGuidance(datasetContext.seriesMeasure)}`, 'required', 'sticky')]
+        : []),
+    // Parent rows sit next to their detail rows; every aggregate must skip them.
+    ...(datasetContext.rowHierarchy
+        ? [createContextSection('row_hierarchy', `Row hierarchy:\n${buildRowHierarchyGuidance(datasetContext.rowHierarchy)}`, 'required', 'sticky')]
         : []),
     ...(datasetContext.analysisSteering
         ? [createContextSection('analysis_steering', formatAnalysisSteeringBundle(datasetContext.analysisSteering) ?? 'No structured steering bundle.', 'high', 'sticky')]

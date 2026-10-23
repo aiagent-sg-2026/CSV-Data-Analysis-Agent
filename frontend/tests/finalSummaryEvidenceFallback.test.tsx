@@ -195,6 +195,25 @@ describe('final summary when the AI returns no usable text', () => {
         expect(state.addProgress).toHaveBeenCalledWith(expect.stringContaining('AI final summary unavailable'), 'warning');
     });
 
+    it('records that the summary was read from the cards, not written by the AI', async () => {
+        aiServiceMocks.generateFinalSummary.mockRejectedValue(new Error('Demo session request limit reached'));
+        const { state, store } = createStore(seriesCard());
+
+        await generateAllSummaries(store as never);
+
+        expect(state.finalSummaryProvenance?.evidenceStatus).toBe('verified');
+        expect(state.finalSummaryProvenance?.narrativeSource).toBe('evidence_fallback');
+    });
+
+    it('records an AI summary that was kept as such', async () => {
+        aiServiceMocks.generateFinalSummary.mockResolvedValue({ language: 'English', text: '### Key Findings\n1. MRT ridership recovered.' });
+        const { state, store } = createStore(seriesCard());
+
+        await generateAllSummaries(store as never);
+
+        expect(state.finalSummaryProvenance?.narrativeSource).toBe('ai_summary');
+    });
+
     it('keeps a real AI summary as written', async () => {
         aiServiceMocks.generateFinalSummary.mockResolvedValue({ language: 'English', text: '### Key Findings\n1. MRT ridership recovered.' });
         const { state, store } = createStore(seriesCard());
@@ -211,6 +230,45 @@ describe('FinalSummary badge', () => {
     it('shows no evidence badge on a placeholder summary', () => {
         render(<FinalSummary title="Overall Insights" summary={{ language: 'English', text: 'No final summary generated.' }} language="English" provenance={provenance} />);
         expect(screen.queryByText('Verified evidence')).toBeNull();
+    });
+
+    it('names a summary built from the verified cards instead of calling it verified evidence', () => {
+        render(<FinalSummary
+            title="Overall Insights"
+            summary={{ language: 'English', text: 'The AI summary could not be generated, so these points are read directly from 4 evidence card(s).' }}
+            language="English"
+            provenance={{ ...provenance, narrativeSource: 'evidence_fallback' }}
+        />);
+        expect(screen.getByText('Built from the verified cards')).toBeInTheDocument();
+        expect(screen.queryByText('Verified evidence')).toBeNull();
+    });
+
+    it('treats a deterministic count summary the same way, and localizes the badge', () => {
+        render(<FinalSummary
+            title="Overall Insights"
+            summary={{ language: 'English', text: 'Count summary.' }}
+            language="Mandarin"
+            provenance={{ ...provenance, narrativeSource: 'deterministic' }}
+        />);
+        expect(screen.getByText('根据已验证的卡片生成')).toBeInTheDocument();
+    });
+
+    it('keeps "Verified evidence" for an AI summary and for summaries saved before the source was recorded', () => {
+        const { unmount } = render(<FinalSummary title="Overall Insights" summary={{ language: 'English', text: 'MRT ridership recovered to 2.1M.' }} language="English" provenance={{ ...provenance, narrativeSource: 'ai_summary' }} />);
+        expect(screen.getByText('Verified evidence')).toBeInTheDocument();
+        unmount();
+        render(<FinalSummary title="Overall Insights" summary={{ language: 'English', text: 'MRT ridership recovered to 2.1M.' }} language="English" provenance={provenance} />);
+        expect(screen.getByText('Verified evidence')).toBeInTheDocument();
+    });
+
+    it('keeps a stale or degraded fallback summary under its own warning badge', () => {
+        render(<FinalSummary
+            title="Overall Insights"
+            summary={{ language: 'English', text: 'Read from the cards.' }}
+            language="English"
+            provenance={{ ...provenance, evidenceStatus: 'degraded', narrativeSource: 'evidence_fallback' }}
+        />);
+        expect(screen.getByText('Degraded evidence')).toBeInTheDocument();
     });
 
     it('keeps the badge on a real summary', () => {

@@ -8,6 +8,7 @@ import { emitSilentFailure } from '../../monitoring/silentFailureTracker';
 import type { StoreApi } from '../../types';
 import { resolveCardPresentationPlan, isTableOnlyPresentation } from '../../../../utils/analysisCardPresentationPolicy';
 import { resolveSeriesMeasure } from '../../planning/seriesMeasureGuard';
+import { resolveRowHierarchy } from '../../planning/rowHierarchyGuard';
 
 export interface PiCardGateRejection {
     cardId: string;
@@ -74,6 +75,7 @@ export const gatePiCreatedCards = (store: StoreApi, cardIds: string[]): PiCardGa
                 evidenceSummary,
                 existingAcceptedOutputs,
                 seriesMeasure: resolveSeriesMeasure(state),
+                rowHierarchy: resolveRowHierarchy(state),
             });
             if (gate.decision === 'reject') {
                 state.deleteAnalysisCard(cardId);

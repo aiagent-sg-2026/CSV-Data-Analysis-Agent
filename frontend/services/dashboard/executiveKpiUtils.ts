@@ -1,27 +1,49 @@
 import { compactIfLarge } from '../../utils/compactNumber';
 import type { ColumnProfile, CsvRow } from '../../types';
 import { robustParseFloat } from '../data/dataProfiler';
+import {
+    NEUTRAL_GROUPS_WORD,
+    hasHeaderLayers,
+    naturalizeLayeredText,
+    pluralizeLabelOrNull,
+} from '../../utils/displayText';
+import { replaceBandColumnNames } from '../../utils/bandLabels';
 
 const PERCENTAGE_LIKE_PATTERN = /pct|percent|percentage|rate|ratio|share|margin/i;
 const TOTAL_PREFIX_PATTERN = /^total\b/i;
-const TRAILING_PUNCTUATION_PATTERN = /[\s._:;,)\]-]+$/;
+const TRAILING_PUNCTUATION_PATTERN = /[\s._:;,-]+$/;
 const NON_ASCII_PATTERN = /[^\x00-\x7F]/;
 const FIXED_HELPER_LABEL_PATTERN = /^(source row|source column|row class|series key|series label \d+|hierarchy depth)$/i;
 const STANDARD_BUSINESS_LABELS: Record<string, string> = {
     CCY: 'Currency',
 };
 
+const countOf = (value: string, char: string): number => value.split(char).length - 1;
+
+// A closing bracket that matches an opener belongs to the text ("... (median of Value by Category)").
+const hasUnmatchedTrailingCloser = (value: string): boolean =>
+    (value.endsWith(')') && countOf(value, ')') > countOf(value, '('))
+    || (value.endsWith(']') && countOf(value, ']') > countOf(value, '['));
+
 const trimTrailingPunctuation = (value: string): string => {
     let nextValue = value.trim();
-    while (TRAILING_PUNCTUATION_PATTERN.test(nextValue)) {
-        nextValue = nextValue.replace(TRAILING_PUNCTUATION_PATTERN, '').trim();
+    for (;;) {
+        if (TRAILING_PUNCTUATION_PATTERN.test(nextValue)) {
+            nextValue = nextValue.replace(TRAILING_PUNCTUATION_PATTERN, '').trim();
+        } else if (hasUnmatchedTrailingCloser(nextValue)) {
+            nextValue = nextValue.slice(0, -1).trim();
+        } else {
+            return nextValue;
+        }
     }
-    return nextValue;
 };
 
 export const normalizeDisplayLabel = (value: string | undefined, fallback: string): string => {
     if (!value) return fallback;
-    const trimmed = trimTrailingPunctuation(value);
+    // Header layers ("Order :: Date") are a data detail; people read "Order date".
+    const layered = hasHeaderLayers(value) ? naturalizeLayeredText(value) : value;
+    // A melt's band column (SeriesLabelL1) reads as what its values are, never as "Series Label 1".
+    const trimmed = trimTrailingPunctuation(replaceBandColumnNames(layered));
     if (!trimmed) return fallback;
     if (STANDARD_BUSINESS_LABELS[trimmed]) return STANDARD_BUSINESS_LABELS[trimmed];
     return trimmed
@@ -39,6 +61,10 @@ export const toDisplayLabel = (value: string | undefined, fallback: string): str
         .replace(/\b\w/g, char => char.toUpperCase());
 };
 
+/**
+ * Plural of a group label for a sentence ("Distinct Customers"). Only words the
+ * helper knows are pluralised; anything else reads as the neutral "Groups".
+ */
 export const pluralizeLabel = (value: string): string => {
     const cleanedValue = trimTrailingPunctuation(value || '');
     if (!cleanedValue || /[\u3400-\u9FBF]/.test(cleanedValue) || isNeutralHelperDisplayLabel(cleanedValue)) {
@@ -53,20 +79,13 @@ export const pluralizeLabel = (value: string): string => {
     if (!lastWord || NON_ASCII_PATTERN.test(lastWord) || !/^[A-Za-z]+$/.test(lastWord)) {
         return cleanedValue;
     }
-    const lowerLast = lastWord.toLowerCase();
-
-    let pluralLast = lastWord;
-    if (/(s|x|z|ch|sh)$/i.test(lastWord)) {
-        pluralLast = `${lastWord}es`;
-    } else if (/[^aeiou]y$/i.test(lastWord)) {
-        pluralLast = `${lastWord.slice(0, -1)}ies`;
-    } else if (!/s$/i.test(lastWord)) {
-        pluralLast = `${lastWord}s`;
-    }
-
-    words[words.length - 1] = lowerLast === lastWord ? pluralLast.toLowerCase() : pluralLast;
-    return words.join(' ');
+    // A name taken from the user's own column ("Kunde") is not a word we know: never guess "Kundes".
+    return pluralizeLabelOrNull(cleanedValue)
+        ?? (lastWord === lastWord.toLowerCase() ? NEUTRAL_GROUPS_WORD : 'Groups');
 };
+
+/** Plural for a title ("Top Customers by ..."); the label itself when it cannot be pluralised safely. */
+export const pluralizeLabelOrSelf = (value: string): string => pluralizeLabelOrNull(value) ?? value;
 
 export const getColumnProfile = (columnProfiles: ColumnProfile[], columnName: string | undefined): ColumnProfile | undefined => {
     if (!columnName) return undefined;

@@ -44,6 +44,8 @@ export interface AnalysisDatasetContext {
     analysisSteering?: import('../../types').EvidenceHarnessContext | null;
     /** Meaning of the value column of a melted period-series table, recorded at intake. */
     seriesMeasure?: import('../../types').SeriesMeasureSemantics | null;
+    /** Hierarchy of a row table whose parent rows are tagged subtotal, recorded at intake. */
+    rowHierarchy?: import('../agent/planning/rowHierarchyGuard').RowHierarchyContract | null;
 }
 
 /**

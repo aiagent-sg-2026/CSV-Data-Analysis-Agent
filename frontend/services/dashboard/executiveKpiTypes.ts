@@ -22,6 +22,11 @@ export interface ExecutiveKpiScope {
     topN?: number;
     rowCount?: number;
     filterSummary?: string;
+    /**
+     * For a top-N scope: the denominator the KPIs are measured against, for example
+     * "Top 8 of 24 groups: 800 of 1,797 rows". Absent when the groups shown are all of them.
+     */
+    coverageText?: string;
 }
 
 export interface ExecutiveKpi {

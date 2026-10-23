@@ -23,6 +23,7 @@ import {
 } from '../agent/reportShapeUtils';
 import { buildMergedBoundaryHeaders } from '../agent/reportStructureNormalization';
 import { classifyBodyRows, type BodyRowFinding } from './reportBodyRows';
+import { formatCountNoun } from '../../utils/displayText';
 
 type RawCsvRow = string[];
 
@@ -1256,7 +1257,7 @@ export const buildReportIntakeIr = (
             headerCandidates: [{
                 rowIndex: selection.headerRowIndex,
                 confidence: selection.confidence,
-                reason: `Header detected at row ${selection.headerRowIndex} with ${selection.headerLayerIndexes.length} layer(s)`,
+                reason: `Header detected at row ${selection.headerRowIndex} with ${formatCountNoun(selection.headerLayerIndexes.length, 'layer')}`,
             }],
             bodyStartCandidates: [{
                 rowIndex: selection.bodyStartIndex,

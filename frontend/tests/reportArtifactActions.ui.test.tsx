@@ -205,7 +205,7 @@ describe('report artifact action surfaces', () => {
 
         render(<HistoryPanel />);
 
-        fireEvent.click(screen.getByRole('button', { name: '+2 previous version(s)' }));
+        fireEvent.click(screen.getByRole('button', { name: '+2 previous versions' }));
         fireEvent.click(screen.getAllByTitle('More actions')[1]);
 
         expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();

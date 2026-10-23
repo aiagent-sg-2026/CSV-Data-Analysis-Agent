@@ -205,7 +205,7 @@ describe('buildExecutiveKpis', () => {
         });
         expect(kpis[1].detail).toContain('36 TUAS ROAD');
         expect(kpis[2]).toMatchObject({
-            label: 'Projects',
+            label: 'Distinct Projects',
             value: '4',
             hierarchy: 'secondary',
         });
@@ -580,7 +580,7 @@ describe('buildExecutiveKpis', () => {
             label: 'Top Project',
         });
         expect(kpis[2]).toMatchObject({
-            label: 'Projects',
+            label: 'Distinct Projects',
         });
     });
 
@@ -618,7 +618,7 @@ describe('buildExecutiveKpis', () => {
             label: 'Top Source Column',
         });
         expect(kpis[2]).toMatchObject({
-            label: 'Source Column',
+            label: 'Distinct Source Column',
         });
     });
 
@@ -699,12 +699,84 @@ describe('buildExecutiveKpis', () => {
             expect(kpis['top-group'].detail).toContain('12%');
         });
 
+        it('states the denominator of a top-N scope: groups shown of groups matched, shown total of the real total', () => {
+            const kpis = kpiById(buildCard({ topN: 2, hideOthers: true, groupCoverage: { status: 'partial', groupCount: 20, overallTotal: 10_000 } }));
+
+            expect(kpis['total-metric'].scope.coverageText).toBe('Top 2 of 20 Projects: 2,000 of 10,000');
+            expect(kpis['top-group'].scope.coverageText).toBe('Top 2 of 20 Projects: 2,000 of 10,000');
+        });
+
+        it('counts rows when the measure is a row count', () => {
+            const base = buildCard();
+            const kpis = kpiById(buildCard({
+                topN: 2,
+                hideOthers: true,
+                plan: { ...base.plan, aggregation: 'count', valueColumn: 'count' },
+                aggregatedData: [{ Project: 'A', count: 106 }, { Project: 'B', count: 90 }, { Project: 'C', count: 50 }],
+                groupCoverage: { status: 'partial', groupCount: 24, overallTotal: 1797 },
+            }));
+
+            expect(kpis['total-metric'].scope.coverageText).toBe('Top 2 of 24 Projects: 196 of 1,797 rows');
+        });
+
+        it('names only the groups when the real total could not be measured', () => {
+            const kpis = kpiById(buildCard({ groupCoverage: { status: 'partial', groupCount: 20, overallTotal: null } }));
+
+            expect(kpis['total-metric'].scope.coverageText).toBe('Top 4 of 20 Projects');
+        });
+
+        it('states the denominator of a user-chosen top N over a complete ranking', () => {
+            const kpis = kpiById(buildCard({ topN: 2, hideOthers: true, groupCoverage: { status: 'complete', groupCount: 4, overallTotal: 2600 } }));
+
+            expect(kpis['total-metric'].scope.coverageText).toBe('Top 2 of 4 Projects: 2,000 of 2,600');
+        });
+
+        it('adds no denominator text when the scope already is every group', () => {
+            expect(kpiById(buildCard({ groupCoverage: { status: 'complete', groupCount: 4, overallTotal: 2600 } }))['total-metric'].scope.coverageText).toBeUndefined();
+            expect(kpiById(buildCard())['total-metric'].scope.coverageText).toBeUndefined();
+        });
+
         it('leaves a complete card as it was', () => {
             const kpis = kpiById(buildCard({ groupCoverage: { status: 'complete', groupCount: 4, overallTotal: 2600 } }));
 
             expect(kpis['top-group'].detail).toContain('46%');
             expect(kpis['total-metric'].value).toBe('2,600');
             expect(kpis['group-count'].value).toBe('4');
+        });
+    });
+
+    describe('headline selection', () => {
+        it('leads with a money total by a business party over a quantity total by date', () => {
+            const quantityByDate = buildCard({
+                id: 'quantity-by-date',
+                plan: { title: 'Total Ordered Quantity by Order :: Date', description: '', chartType: 'area', aggregation: 'sum', groupByColumn: 'Order :: Date', valueColumn: 'Total Ordered Quantity' },
+                aggregatedData: [
+                    { 'Order :: Date': '09-03-2026', 'Total Ordered Quantity': 5000 },
+                    { 'Order :: Date': '20-01-2026', 'Total Ordered Quantity': 3000 },
+                ],
+            });
+            const moneyByCustomer = buildCard({
+                id: 'money-by-customer',
+                plan: { title: 'Total Balance Amount by Customer', description: '', chartType: 'bar', aggregation: 'sum', groupByColumn: 'Customer', valueColumn: 'Total Balance Amount' },
+                aggregatedData: [
+                    { Customer: 'RIVERSIDE ENGINEERING', 'Total Balance Amount': 517_201.12 },
+                    { Customer: 'MERIDIAN PARTS CO', 'Total Balance Amount': 482_867.45 },
+                ],
+            });
+            const profiles: ColumnProfile[] = [
+                { name: 'Customer', type: 'categorical', uniqueValues: 20, missingPercentage: 0 },
+                { name: 'Order :: Date', type: 'categorical', uniqueValues: 150, missingPercentage: 0 },
+            ];
+            const kpis = buildExecutiveKpis({
+                cards: [quantityByDate, moneyByCustomer],
+                columnProfiles: profiles,
+                csvData: buildCsvData([]),
+                language: 'English',
+                currentDatasetVersion: 'version-current',
+            });
+
+            expect(kpis.length).toBeGreaterThan(0);
+            kpis.forEach(kpi => expect(kpi.sourceCardId).toBe('money-by-customer'));
         });
     });
 });

@@ -3,7 +3,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AnalysisCardData, AnalysisCardGroupCoverage, CsvCellValue, CsvRow, SqlEvidenceQueryPlan } from '../types';
 import {
+    buildGroupCountCheckPlan,
     buildGroupTotalCheckPlan,
+    GROUP_COUNT_ALIAS,
     GROUP_TOTAL_ALIAS,
     isGroupResultTruncated,
     measureGroupCoverage,
@@ -145,8 +147,14 @@ describe('measureGroupCoverage', () => {
         expect(run).not.toHaveBeenCalled();
     });
 
+    it('records only the group count of an average, with no total and no total query', async () => {
+        const run = companion(30);
+        const plan = rankedPlan({ aggregates: [{ function: 'avg', column: 'Value', as: 'total_value' }] });
+        expect(await measureGroupCoverage(plan, cutOff(rows(10, 8, 6)), run)).toEqual({ status: 'partial', groupCount: 9, overallTotal: null });
+        expect(run).not.toHaveBeenCalled();
+    });
+
     it.each([
-        ['an average', rankedPlan({ aggregates: [{ function: 'avg', column: 'Value', as: 'total_value' }] })],
         ['a query without grouping', rankedPlan({ groupBy: undefined })],
         ['a rowset', rankedPlan({}, { queryMode: 'rowset' })],
     ])('records nothing for %s', async (_label, plan) => {
@@ -183,9 +191,80 @@ describe('resolveCardGroupTotals', () => {
         expect(resolveCardGroupTotals({ ...base, coverage: partial, filterActive: true })).toEqual(complete);
     });
 
-    it('never gives a non-additive measure a total', () => {
+    it('never gives a non-additive measure a total, but keeps the group count of a cut-off ranking', () => {
         expect(resolveCardGroupTotals({ ...base, additive: false, coverage: partial }))
+            .toEqual({ overallTotal: null, matchedGroupCount: 52, complete: false });
+        expect(resolveCardGroupTotals({ ...base, additive: false, coverage: { status: 'partial', groupCount: null, overallTotal: null } }))
+            .toEqual({ overallTotal: null, matchedGroupCount: null, complete: false });
+        // Legacy, complete and filtered views are complete over their rows.
+        expect(resolveCardGroupTotals({ ...base, additive: false, coverage: undefined }))
             .toEqual({ overallTotal: null, matchedGroupCount: 10, complete: true });
+        expect(resolveCardGroupTotals({ ...base, additive: false, coverage: partial, filterActive: true }))
+            .toEqual({ overallTotal: null, matchedGroupCount: 10, complete: true });
+    });
+});
+
+describe('group count of a cut-off non-additive ranking', () => {
+    const medianPlan = (overrides: Partial<SqlEvidenceQueryPlan['query']> = {}, plan: Partial<SqlEvidenceQueryPlan> = {}) => rankedPlan({
+        aggregates: [{ function: 'median', column: 'Value', as: 'median_value' }],
+        orderBy: [{ column: 'median_value', direction: 'desc' }],
+        ...overrides,
+    }, plan);
+    const groupCountCompanion = (count: CsvCellValue) => vi.fn(async () => ({ result: { rows: [{ [GROUP_COUNT_ALIAS]: count }] } }));
+    // The engine did not report how many groups matched: only that the limit was filled.
+    const filledLimit = (rowValues: CsvRow[]) => ({ rows: rowValues, appliedLimit: rowValues.length });
+
+    it('counts the distinct groups over the same filters and pre-filter, with no total or share', () => {
+        const check = buildGroupCountCheckPlan(medianPlan({}, { preFilter: [{ column: 'Period', operator: 'gte', value: '2025-01-01' }] }));
+        expect(check).toMatchObject({
+            query: {
+                where: { predicates: [{ column: 'RowClass', operator: 'eq', value: 'fact' }] },
+                aggregates: [{ function: 'count_distinct', column: 'DataSeries', as: GROUP_COUNT_ALIAS }],
+                limit: 1,
+            },
+            preFilter: [{ column: 'Period', operator: 'gte', value: '2025-01-01' }],
+        });
+        expect(check!.query.groupBy).toBeUndefined();
+        // One group column can be counted; several, a HAVING filter or raw SQL are left unmeasured.
+        expect(buildGroupCountCheckPlan(medianPlan({ groupBy: ['A', 'B'] }))).toBeNull();
+        expect(buildGroupCountCheckPlan(medianPlan({ postAggregateFilter: { predicates: [{ column: 'median_value', operator: 'gt', value: 1 }] } }))).toBeNull();
+    });
+
+    it('takes the matched count the engine reports and runs no companion query', async () => {
+        const run = groupCountCompanion(99);
+        const coverage = await measureGroupCoverage(medianPlan(), cutOff(rows(10, 8, 6), 20), run);
+        expect(coverage).toEqual({ status: 'partial', groupCount: 20, overallTotal: null });
+        expect(run).not.toHaveBeenCalled();
+    });
+
+    it('measures the group count with a companion query when the engine reports none', async () => {
+        const run = groupCountCompanion('3,200');
+        const coverage = await measureGroupCoverage(medianPlan(), filledLimit(rows(10, 8, 6)), run);
+        expect(coverage).toEqual({ status: 'partial', groupCount: 3200, overallTotal: null });
+        expect(run).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the count unknown when the companion fails, returns nothing or contradicts the rows', async () => {
+        const failing = vi.fn(async () => { throw new Error('boom'); });
+        expect(await measureGroupCoverage(medianPlan(), filledLimit(rows(10, 8, 6)), failing))
+            .toEqual({ status: 'partial', groupCount: null, overallTotal: null });
+        expect(await measureGroupCoverage(medianPlan(), filledLimit(rows(10, 8, 6)), groupCountCompanion(null)))
+            .toEqual({ status: 'partial', groupCount: null, overallTotal: null });
+        expect(await measureGroupCoverage(medianPlan(), filledLimit(rows(10, 8, 6)), groupCountCompanion(2)))
+            .toEqual({ status: 'partial', groupCount: null, overallTotal: null });
+    });
+
+    it('records nothing when the query returned every group', async () => {
+        const run = groupCountCompanion(99);
+        expect(await measureGroupCoverage(medianPlan(), cutOff(rows(3, 2, 1), 3), run)).toBeNull();
+        expect(run).not.toHaveBeenCalled();
+    });
+
+    it('rethrows a cancellation', async () => {
+        const controller = new AbortController();
+        controller.abort(new Error('stop'));
+        const cancelled = vi.fn(async () => { throw new Error('aborted'); });
+        await expect(measureGroupCoverage(medianPlan(), filledLimit(rows(10, 8, 6)), cancelled, { signal: controller.signal })).rejects.toThrow();
     });
 });
 
@@ -202,10 +281,16 @@ describe('describeCardGroupCoverage', () => {
         groupCoverage,
     });
 
-    it('is silent when the rows are every group, and for averages', () => {
+    it('is silent when the rows are every group', () => {
         expect(describeCardGroupCoverage(card(undefined))).toBeNull();
         expect(describeCardGroupCoverage(card({ status: 'complete', groupCount: 3, overallTotal: 24 }))).toBeNull();
-        expect(describeCardGroupCoverage(card({ status: 'partial', groupCount: 9, overallTotal: 30 }, 'avg'))).toBeNull();
+        expect(describeCardGroupCoverage(card(undefined, 'avg'))).toBeNull();
+    });
+
+    it('tells the model a cut-off average covers only the top of its ranking and has no shares', () => {
+        const note = describeCardGroupCoverage(card({ status: 'partial', groupCount: 9, overallTotal: null }, 'avg'));
+        expect(note).toContain('only the top of a ranking of 9 groups');
+        expect(note).toContain('Do not state percentages or shares');
     });
 
     it('gives the model the total to compute shares against, or forbids shares when it is unknown', () => {

@@ -7,6 +7,7 @@ import { verifyCleanedDatasetShape } from '../cleaningVerification';
 import { updateCleaningRun } from '../cleaningRunState';
 import type { StoreApi } from '../types';
 import { persistSuccessfulCleaning } from './cleaningPipelinePersistence';
+import { FactRowLossError, findFactRowLoss } from './rowHierarchyConservation';
 
 export type SandboxCleaningFallbackResult = {
     status: 'committed' | 'retry' | 'cancelled';
@@ -90,6 +91,11 @@ export const trySandboxCleaningFallback = async (input: {
             ...input.workingData,
             data: primaryTable.rows.map(row => ({ ...row })),
         };
+        // Model-written code must not drop detail rows of a hierarchy table (see rowHierarchyConservation).
+        const factLoss = findFactRowLoss(input.workingData.data, nextData.data);
+        if (factLoss) {
+            return { status: 'retry', error: new FactRowLossError(factLoss, 'sandbox cleaning code') };
+        }
         const profileResult = await profileDataWithWorker(nextData.data, input.signal);
         const plan: DataPreparationPlan = {
             explanation: proposal.explanation,

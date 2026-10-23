@@ -7,6 +7,7 @@
  */
 
 import type { ReportChartPayload } from '../../types';
+import { naturalizeLayeredText } from '../../utils/displayText';
 
 // ---------------------------------------------------------------------------
 // Formatting helpers (private)
@@ -122,7 +123,7 @@ const buildBarColor = (value: number, index: number): string => {
 
 const cleanChartSubtitle = (valueColumn: string | undefined): string => {
     if (!valueColumn) return 'Metric';
-    return valueColumn
+    return naturalizeLayeredText(valueColumn)
         .replace(/^(sum_|total_|row_|count_)/i, '')
         .replace(/[_-]/g, ' ')
         .replace(/\b\w/g, c => c.toUpperCase())
@@ -151,7 +152,7 @@ export const renderBarChart = (payload: ReportChartPayload): string => {
     const valueRange = Math.max(1, maxValue - minValue);
     const zeroX = chartX + ((0 - minValue) / valueRange) * chartWidth;
     const maxGuideX = chartX + ((maxValue - minValue) / valueRange) * chartWidth;
-    const axisLabel = `${cleanChartSubtitle(payload.valueColumn)} by ${payload.groupByColumn ?? 'Group'}`;
+    const axisLabel = `${cleanChartSubtitle(payload.valueColumn)} by ${naturalizeLayeredText(payload.groupByColumn ?? 'Group')}`;
 
     return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(payload.title)}" xmlns="http://www.w3.org/2000/svg" style="font-family: Arial, Helvetica, sans-serif; font-size: 12px;">
   <rect x="0" y="0" width="${width}" height="${height}" rx="16" fill="#fffefb" />

@@ -10,6 +10,7 @@ import type {
 } from '../../../types';
 import { mergeEvidencePreFilterIntoQuery } from '../planning/evidenceQuerySemantics';
 import { assessSeriesMeasurePlan, resolveSelectedSeries, type SeriesMeasurePlanVerdict } from '../planning/seriesMeasureGuard';
+import { assessRowHierarchyPlan, mergePlanVerdicts, type RowHierarchyContract } from '../planning/rowHierarchyGuard';
 
 /**
  * Chat and skill cards are built from plans the model writes directly, not
@@ -54,7 +55,17 @@ export type CardSeriesScope =
     /** `tableOnlyGate` is for results that are already computed and can only be caveated. */
     | { decision: 'reject'; feedback: string; tableOnlyGate: SeriesTableOnlyGate };
 
-const describeTableOnly = (verdict: SeriesMeasurePlanVerdict, semantics: SeriesMeasureSemantics): string => {
+const describeTableOnly = (
+    verdict: SeriesMeasurePlanVerdict,
+    semantics: SeriesMeasureSemantics | null | undefined,
+    rowHierarchy: RowHierarchyContract | null | undefined,
+): string => {
+    if (!semantics) {
+        const rowClass = rowHierarchy?.rowClassColumn ?? 'RowClass';
+        return verdict.decision === 'reject'
+            ? `The rows include published parent rows next to their detail rows ("${rowClass}" is not restricted to detail rows), so the same amount is counted once per hierarchy level. The result is kept as a table and not verified.`
+            : `The rows mix hierarchy levels ("${rowClass}" is not restricted to detail rows), so the result is kept as a table.`;
+    }
     const { seriesColumn: s, measureColumn: m } = semantics;
     if (verdict.decision === 'reject') {
         return `"${m}" is aggregated across "${s}" series that cannot be added together, so the result is kept as a table and not verified. ${semantics.evidence.summary}`;
@@ -68,10 +79,14 @@ const describeTableOnly = (verdict: SeriesMeasurePlanVerdict, semantics: SeriesM
     return `Record counts per "${s}" or period only show how many periods were published, so they are kept as a table.`;
 };
 
-const buildTableOnlyGate = (verdict: SeriesMeasurePlanVerdict, semantics: SeriesMeasureSemantics): SeriesTableOnlyGate => ({
+const buildTableOnlyGate = (
+    verdict: SeriesMeasurePlanVerdict,
+    semantics: SeriesMeasureSemantics | null | undefined,
+    rowHierarchy: RowHierarchyContract | null | undefined,
+): SeriesTableOnlyGate => ({
     decision: 'table_only',
     reasonCodes: verdict.reasonCodes,
-    detail: describeTableOnly(verdict, semantics),
+    detail: describeTableOnly(verdict, semantics, rowHierarchy),
     querySignature: '',
     semanticSignature: '',
     semanticRisk: 'high',
@@ -80,22 +95,27 @@ const buildTableOnlyGate = (verdict: SeriesMeasurePlanVerdict, semantics: Series
     source: 'evidence_value_gate_v1',
 });
 
-/** Applies the series-measure check to a card plan: pass, keep as a caveated table, or reject with planner feedback. */
+/**
+ * Applies the series-measure and row-hierarchy checks to a card plan: pass,
+ * keep as a caveated table, or reject with planner feedback.
+ */
 export const assessCardSeriesScope = (
     plan: AnalysisPlan | SqlAnalysisPlan,
     semantics: SeriesMeasureSemantics | null | undefined,
+    rowHierarchy?: RowHierarchyContract | null,
 ): CardSeriesScope => {
-    if (!semantics) return { decision: 'pass', evidenceValueGate: null };
-    const verdict = assessSeriesMeasurePlan(toSeriesCheckPlan(plan), semantics);
+    if (!semantics && !rowHierarchy) return { decision: 'pass', evidenceValueGate: null };
+    const checkPlan = toSeriesCheckPlan(plan);
+    const verdict = mergePlanVerdicts(assessSeriesMeasurePlan(checkPlan, semantics), assessRowHierarchyPlan(checkPlan, rowHierarchy));
     if (verdict.decision === 'reject') {
         return {
             decision: 'reject',
-            feedback: verdict.feedback ?? `The plan "${plan.title}" aggregates "${semantics.measureColumn}" across series.`,
-            tableOnlyGate: buildTableOnlyGate(verdict, semantics),
+            feedback: verdict.feedback ?? `The plan "${plan.title}" aggregates "${semantics?.measureColumn ?? 'the measure'}" across rows that cannot be added together.`,
+            tableOnlyGate: buildTableOnlyGate(verdict, semantics, rowHierarchy),
         };
     }
     if (verdict.decision === 'table_only') {
-        return { decision: 'table_only', evidenceValueGate: buildTableOnlyGate(verdict, semantics) };
+        return { decision: 'table_only', evidenceValueGate: buildTableOnlyGate(verdict, semantics, rowHierarchy) };
     }
     return { decision: 'pass', evidenceValueGate: null };
 };

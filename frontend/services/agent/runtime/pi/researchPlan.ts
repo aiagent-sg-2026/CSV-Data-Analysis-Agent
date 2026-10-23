@@ -1,6 +1,12 @@
 import { AGGREGATION_TYPES, isAggregationType } from '../../../../types/analysis';
 import type { AggregationType, ColumnAdditivity, ColumnProfile, DataAnalysisHypothesis, ResearchPlan, ResearchPlanQuestion, SeriesMeasureSemantics } from '../../../../types';
+import { inferLeafAdditivity, isBusinessEntityName, isMoneyMeasureName, splitColumnLayers } from '../../../data/columnNameLeaf';
+import { isNonAdditiveMetricName } from '../../../data/columnRegistry';
+import { isTimeLikeDimensionColumn } from '../../analysisColumnRoles';
+import { isStructuralMetadataColumn } from '../../structuralMetadata';
+import { assessIdentifierGrouping, isIdentifierLikeGrouping } from '../../planning/identifierGrouping';
 import { assessVolumeDependence, describeVolumeDependence, isTimeDimension, isVolumeCheckCancellation, type GroupSumAndCount } from '../../planning/volumeDrivenSum';
+import type { RowHierarchyContract } from '../../planning/rowHierarchyGuard';
 
 export const MIN_PLAN_QUESTIONS = 2;
 export const MAX_PLAN_QUESTIONS = 6;
@@ -196,7 +202,31 @@ export const validateColumnAdditivity = (
         if (column.type === 'percentage') kind = 'non_additive';
         accepted[column.name] = { kind, nature, rationale: readText(item.rationale, MAX_RATIONALE_CHARS) };
     }
-    return { accepted, rejected };
+    return { accepted: applyLeafAdditivityPriors(accepted, columns), rejected };
+};
+
+/**
+ * Corrects the model's judgement where the column's name leaf and table shape settle it, and
+ * fills the same priors for numeric columns the model did not classify. The model reads
+ * "Balance" as a point-in-time stock and "Amount :: Price" like "Amount :: Balance Amount";
+ * the leaf after the layer separator ("Balance Amount", "Price") tells them apart.
+ */
+const applyLeafAdditivityPriors = (
+    accepted: Record<string, ColumnAdditivity>,
+    columns: readonly ColumnProfile[],
+): Record<string, ColumnAdditivity> => {
+    const names = columns.map(column => column.name);
+    const result = { ...accepted };
+    for (const column of columns) {
+        if (!NUMERIC_COLUMN_TYPES.has(column.type) || column.type === 'percentage') continue;
+        const prior = inferLeafAdditivity(column.name, names);
+        if (!prior) continue;
+        const judged = result[column.name] ?? column.additivity;
+        if (!judged || judged.kind !== prior.kind || judged.nature !== prior.nature) {
+            result[column.name] = prior;
+        }
+    }
+    return result;
 };
 
 /** Returns the profiles with the accepted additivity judgements attached; other fields are untouched. */
@@ -299,6 +329,20 @@ export const checkQuestionSeriesScope = (
     return { questions: kept, rejected };
 };
 
+/**
+ * On a hierarchy table the parent rows sit next to their detail rows, so every
+ * question that measures something (a metric or a row count) reads detail rows
+ * only. The filter is written onto the question, so it reaches the topic text
+ * and every planner downstream.
+ */
+export const applyRowHierarchyScope = (
+    questions: readonly ResearchPlanQuestion[],
+    contract: RowHierarchyContract | null | undefined,
+): ResearchPlanQuestion[] => questions.map(question =>
+    contract && !question.filter && (question.metric !== null || question.aggregation !== null)
+        ? { ...question, filter: { column: contract.rowClassColumn, value: contract.detailRowValue } }
+        : question);
+
 /** Reads per-group SUM and row COUNT for one dimension/metric pair; null when the data cannot be read. */
 export type MeasureGroupSumAndCount = (dimension: string, metric: string) => Promise<GroupSumAndCount[] | null>;
 
@@ -343,4 +387,88 @@ export const checkSumVolumeDependence = async (
         });
     }
     return { questions: kept, rejected };
+};
+
+/**
+ * Holds questions to the rule that a group is a category a reader compares: a
+ * question grouped by a column that identifies single records (an invoice
+ * number) is sent back unless the reader asked for a lookup.
+ */
+export const checkQuestionDimensions = (
+    questions: readonly ResearchPlanQuestion[],
+    columns: readonly ColumnProfile[],
+    rowCount: number | null | undefined,
+): ResearchPlanValidation => {
+    const kept: ResearchPlanQuestion[] = [];
+    const rejected: ResearchPlanValidation['rejected'] = [];
+    for (const question of questions) {
+        const assessment = question.dimension
+            ? assessIdentifierGrouping({ groupBy: [question.dimension], profiles: columns, rowCount, requestText: question.title })
+            : null;
+        if (assessment?.decision === 'reject') {
+            rejected.push({ title: question.title, reason: assessment.feedback ?? 'The dimension identifies single records.' });
+            continue;
+        }
+        kept.push(question);
+    }
+    return { questions: kept, rejected };
+};
+
+const isSumOfMetricByCategory = (question: ResearchPlanQuestion, metrics: readonly string[], columns: readonly ColumnProfile[]): boolean =>
+    question.aggregation === 'sum'
+    && question.metric !== null && metrics.some(metric => sameName(question.metric!, metric))
+    && question.dimension !== null
+    && !isTimeDimension(question.dimension, { profiles: columns })
+    && !isTimeLikeDimensionColumn(question.dimension);
+
+/**
+ * Makes the plan lead with the question a business reader opens the report for:
+ * the total of the table's main money amount (an open balance, revenue) by the
+ * business party it belongs to (customer, supplier). The model may already sum
+ * a money amount by a category, in which case that question only moves first; when it asked for medians of the
+ * amount or counts by a date instead, the total is added at the front and the
+ * last question makes room. Without an additive money column nothing changes.
+ */
+export const prioritizeMoneyMeasure = (
+    questions: readonly ResearchPlanQuestion[],
+    columns: readonly ColumnProfile[],
+    additivity: Readonly<Record<string, ColumnAdditivity>>,
+    rowCount: number | null | undefined,
+    maxQuestions = MAX_PLAN_QUESTIONS,
+): ResearchPlanQuestion[] => {
+    const names = columns.map(column => column.name);
+    const isAdditive = (column: ColumnProfile): boolean => {
+        const judged = additivity[column.name] ?? column.additivity ?? inferLeafAdditivity(column.name, names);
+        return judged ? judged.kind === 'additive' : !isNonAdditiveMetricName(column.name);
+    };
+    const measures = columns
+        .filter(column => NUMERIC_COLUMN_TYPES.has(column.type) && column.type !== 'percentage')
+        .filter(column => !isStructuralMetadataColumn(column.name) && isAdditive(column) && isMoneyMeasureName(column.name, names));
+    // An open line value ("Balance Amount") is what such a report is about; other amounts follow in column order.
+    const measure = measures.find(column => inferLeafAdditivity(column.name, names)?.nature === 'flow') ?? measures[0];
+    if (!measure) return [...questions];
+
+    const dimensions = columns
+        .filter(column => column.type === 'categorical' && (column.uniqueValues ?? 0) >= 2)
+        .filter(column => !isStructuralMetadataColumn(column.name) && !isTimeLikeDimensionColumn(column.name))
+        .filter(column => !isIdentifierLikeGrouping(column, rowCount));
+    const dimension = dimensions.find(column => isBusinessEntityName(column.name));
+    // Without a recognizable business party the model's own choice of dimension stands.
+    if (!dimension) return [...questions];
+
+    const existing = questions.find(question => isSumOfMetricByCategory(question, measures.map(column => column.name), columns));
+    if (existing) return [existing, ...questions.filter(question => question !== existing)];
+
+    const measureLabel = splitColumnLayers(measure.name).leaf;
+    const dimensionLabel = splitColumnLayers(dimension.name).leaf;
+    const added: ResearchPlanQuestion = {
+        title: `Total ${measureLabel} by ${dimensionLabel}`,
+        rationale: `${measureLabel} is the main money amount in this table; its total per ${dimensionLabel} shows who accounts for the most.`,
+        dimension: dimension.name,
+        metric: measure.name,
+        aggregation: 'sum',
+        comparison: null,
+        totalIntent: true,
+    };
+    return [added, ...questions].slice(0, maxQuestions);
 };

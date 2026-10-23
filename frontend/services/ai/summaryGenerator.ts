@@ -27,6 +27,8 @@ import { emitSilentFailure } from '../agent/monitoring/silentFailureTracker';
 import type { AnyStoreWithTelemetry } from '../agent/monitoring/silentFailureTracker';
 import { resolveSeriesMeasure } from '../agent/planning/seriesMeasureGuard';
 import { SUMMARY_PLACEHOLDER_TEXTS } from '../../utils/summaryPlaceholders';
+import { polishGeneratedProse } from '../../utils/displayText';
+import { roundRowsToDisplayPrecision } from '../../utils/analysisCardPresentation';
 
 /**
  * Wraps a telemetry target (which may be a full AppStore) as the minimal
@@ -90,10 +92,10 @@ export const generateSummary = async (
                     baseUserText: `Summarize the chart titled "${title}".`,
                     sections: [
                         createContextSection('report_context', `Report context:\n${formatReportContextForPrompt(reportContext)}`, 'high', 'sticky'),
-                        createContextSection('chart_data', `Chart data: ${Math.min(data.length, 24)} of ${data.length} aggregated rows shown.\n${formatRows(trimRawDataSample(data, 24))}`, 'required', 'sticky'),
+                        createContextSection('chart_data', `Chart data: ${Math.min(data.length, 24)} of ${data.length} aggregated rows shown.\n${formatRows(roundRowsToDisplayPrecision(trimRawDataSample(data, 24)))}`, 'required', 'sticky'),
                         ...(scopeNote ? [createContextSection('population_scope', scopeNote, 'required', 'sticky')] : []),
                         createContextSection('dataset_columns', `Dataset columns:\n${formatColumnNames(allColumns)}`, 'medium', 'prunable'),
-                        createContextSection('column_display_hints', `User-facing column label hints:\n${formatColumnDisplayHints(allColumns)}`, 'medium', 'prunable'),
+                        createContextSection('column_display_hints', `User-facing column label hints (write these names in sentences, never the raw column names):\n${formatColumnDisplayHints(allColumns)}`, 'medium', 'prunable'),
                     ],
                     settings,
                     modelId,
@@ -116,7 +118,7 @@ export const generateSummary = async (
 
         return {
             language: settings.language,
-            text: result.text || SUMMARY_PLACEHOLDER_TEXTS.emptyCard,
+            text: polishGeneratedProse(result.text) || SUMMARY_PLACEHOLDER_TEXTS.emptyCard,
         };
     } catch (error) {
         console.error("Error generating summary:", error);
@@ -171,7 +173,7 @@ export const generateCoreAnalysisSummary = async (
                     sections: [
                         createContextSection('report_context', `Report context:\n${formatReportContextForPrompt(reportContext)}`, 'high', 'sticky'),
                         createContextSection('dataset_columns', `Dataset columns:\n${formatColumnNames(columns)}`, 'required', 'sticky'),
-                        createContextSection('column_display_hints', `User-facing column label hints:\n${formatColumnDisplayHints(columns, planHints)}`, 'high', 'sticky'),
+                        createContextSection('column_display_hints', `User-facing column label hints (write these names in sentences, never the raw column names):\n${formatColumnDisplayHints(columns, planHints)}`, 'high', 'sticky'),
                         ...buildSeriesMeasureSummarySections(telemetryTarget),
                         createContextSection('generated_cards', `Generated cards:\n${formatCardContext(displayCardContext)}`, 'required', 'sticky'),
                     ],
@@ -196,7 +198,7 @@ export const generateCoreAnalysisSummary = async (
 
         return {
             language: settings.language,
-            text: result.text || SUMMARY_PLACEHOLDER_TEXTS.emptyCard,
+            text: polishGeneratedProse(result.text) || SUMMARY_PLACEHOLDER_TEXTS.emptyCard,
         };
     } catch (error) {
         console.error("Error generating core analysis summary:", error);
@@ -269,7 +271,7 @@ export const generateFinalSummary = async (
 
         return {
             language: settings.language,
-            text: result.text || SUMMARY_PLACEHOLDER_TEXTS.emptyFinal,
+            text: polishGeneratedProse(result.text) || SUMMARY_PLACEHOLDER_TEXTS.emptyFinal,
         };
     } catch (error) {
         console.error("Error generating final summary:", error);

@@ -14,6 +14,7 @@ import { createPiAppTools } from './piAppTools';
 import { createPiCompactionTelemetry, createPiProviderContextTransform, createPiProviderStream, resolvePiModel, resolvePiThinkingLevel } from './piProvider';
 import { createPiSkillTool } from './piSkillTool';
 import { assessSeriesMeasurePlan, buildSeriesMeasureGuidance, resolveSeriesMeasure } from '../../planning/seriesMeasureGuard';
+import { assessRowHierarchyPlan, buildRowHierarchyGuidance, resolveRowHierarchy, withDetailRowScope } from '../../planning/rowHierarchyGuard';
 
 export const SUBMIT_EVIDENCE_PLAN_TOOL = 'submit_evidence_plan';
 // Tight limits: this runs once per research question inside the initial-analysis time budget.
@@ -82,6 +83,8 @@ export const runPiEvidencePlanner = async (params: {
     const semanticHints = extractSemanticHints(params.datasetContext);
     const seriesMeasure = params.datasetContext?.seriesMeasure
         ?? resolveSeriesMeasure({ canonicalBuildMeta: state.canonicalBuildMeta, columnProfiles: columns });
+    const rowHierarchy = params.datasetContext?.rowHierarchy
+        ?? resolveRowHierarchy({ canonicalBuildMeta: state.canonicalBuildMeta, columnProfiles: columns });
     let accepted: SqlEvidenceQueryPlan | null = null;
     let providerTurns = 0;
 
@@ -114,7 +117,11 @@ export const runPiEvidencePlanner = async (params: {
             if (!validPlan) throw new Error(`The plan is invalid: ${errors.join('; ')}`);
             const seriesCheck = assessSeriesMeasurePlan(validPlan, seriesMeasure);
             if (seriesCheck.decision === 'reject') throw new Error(`The plan is invalid: ${seriesCheck.feedback ?? seriesCheck.reasonCodes.join(', ')}`);
-            accepted = validPlan;
+            // On a hierarchy table every aggregate reads detail rows unless the plan states its own scope.
+            const scopedPlan = withDetailRowScope(validPlan, rowHierarchy);
+            const hierarchyCheck = assessRowHierarchyPlan(scopedPlan, rowHierarchy);
+            if (hierarchyCheck.decision === 'reject') throw new Error(`The plan is invalid: ${hierarchyCheck.feedback ?? hierarchyCheck.reasonCodes.join(', ')}`);
+            accepted = scopedPlan;
             return { details: undefined, content: [{ type: 'text' as const, text: 'Plan accepted.' }], terminate: true };
         },
     } as AgentTool;
@@ -130,7 +137,8 @@ export const runPiEvidencePlanner = async (params: {
         initialState: {
             systemPrompt: buildSystemPrompt({
                 ...params,
-                seriesGuidance: seriesMeasure ? buildSeriesMeasureGuidance(seriesMeasure) : null,
+                seriesGuidance: [seriesMeasure ? buildSeriesMeasureGuidance(seriesMeasure) : null, rowHierarchy ? buildRowHierarchyGuidance(rowHierarchy) : null]
+                    .filter(Boolean).join('\n\n') || null,
             }),
             model: resolvePiModel(settings),
             thinkingLevel: resolvePiThinkingLevel(settings),

@@ -28,12 +28,14 @@ import { resolveEffectiveReportContext } from '../services/agent/reportContext';
 import { getCurrentAnalysisDatasetVersion } from '../services/agent/artifactProvenance';
 import { getCsvDataRowCount } from '../utils/datasetId';
 import { resolveAnalysisCompletionGate } from '../services/agent/analysisCompletionGate';
+import { tallyResearchQuestions } from '../services/agent/runtime/dataResearchContract';
 import { resolveSeriesMeasure } from '../services/agent/planning/seriesMeasureGuard';
 import { DEFAULT_AUTO_ANALYSIS_GOAL } from '../services/agent/analysisDefaults';
 import { hasOpenableLatestReport, isLatestReportPartial, resolveLatestReportBlockedInfo } from '../services/reporting/reportArtifactManifest';
 import { forgetCloudAiConsentDecline } from '../services/privacy/cloudAiConsent';
 
 import { getStructureReviewReasonText, getTranslation } from '../utils/localization';
+import { getActiveSetAsideSections, getSetAsideRowCounts } from '../utils/setAsideTables';
 
 const AnalysisPanelComponent: React.FC = () => {
     const _renderT0 = performance.now(); // PERF-309 diagnostic
@@ -142,6 +144,9 @@ const AnalysisPanelComponent: React.FC = () => {
         [canonicalCsvData, cards, csvData],
     );
 
+    // The Research Run strip reads the same tally, so the banner and the strip never disagree.
+    const researchTally = useMemo(() => tallyResearchQuestions(latestAnalysisSession), [latestAnalysisSession]);
+
     const executiveKpis = useMemo(() => buildExecutiveKpis({
         cards,
         columnProfiles,
@@ -155,6 +160,13 @@ const AnalysisPanelComponent: React.FC = () => {
         currentDatasetVersion: getCurrentAnalysisDatasetVersion({ canonicalCsvData, csvData }),
         columnProfiles,
     }), [canonicalCsvData, cards, columnProfiles, csvData]);
+    const setAsideRowCounts = useMemo(
+        () => getSetAsideRowCounts(getActiveSetAsideSections(
+            rawIntakeIr?.diagnostics?.setAsideSections,
+            reportStructureResolution?.source === 'human_confirmed' ? reportStructureResolution.humanBoundary : null,
+        )),
+        [rawIntakeIr, reportStructureResolution],
+    );
     const reportContext = useMemo(() => resolveEffectiveReportContext(
         reportContextResolution,
         rawCsvData,
@@ -245,6 +257,8 @@ const AnalysisPanelComponent: React.FC = () => {
             && (nextStepKind === 'repair_structure' || nextStepKind === 'retry_analysis'
                 || nextStepKind === 'recover_provider' || nextStepKind === 'enable_cloud_ai');
         const showHeadlineSections = aiTaskDone;
+        // The button counts the cards under review only; a verified card is not one of them.
+        const reviewCardCount = (credibilitySummary?.caveatedCount ?? 0) + (credibilitySummary?.weakCount ?? 0);
         const showAnalystReportAction = analysisComplete && cards.length > 0;
         const isArtifactReportGeneration = reportGenerationProgress?.mode === 'artifact';
         const isSimpleReportBlocked = Boolean(reportBlockedInfo)
@@ -306,6 +320,7 @@ const AnalysisPanelComponent: React.FC = () => {
                             headerDepth={(rawCsvData?.headerDepth ?? csvData!.headerDepth ?? 1)}
                             summaryRowCount={(rawCsvData?.summaryRowCount ?? rawCsvData?.summaryRows?.length ?? csvData!.summaryRowCount ?? csvData!.summaryRows?.length ?? 0)}
                             columnNames={reportColumnNames}
+                            setAsideRowCounts={setAsideRowCounts}
                             language={language}
                         />
                     )}
@@ -340,6 +355,7 @@ const AnalysisPanelComponent: React.FC = () => {
                             headerDepth={(rawCsvData?.headerDepth ?? csvData!.headerDepth ?? 1)}
                             summaryRowCount={(rawCsvData?.summaryRowCount ?? rawCsvData?.summaryRows?.length ?? csvData!.summaryRowCount ?? csvData!.summaryRows?.length ?? 0)}
                             columnNames={reportColumnNames}
+                            setAsideRowCounts={setAsideRowCounts}
                             language={language}
                         />
                     )}
@@ -359,11 +375,20 @@ const AnalysisPanelComponent: React.FC = () => {
                             caveatedCount={credibilitySummary.caveatedCount}
                             weakCount={credibilitySummary.weakCount}
                             hasRunCaveats={initialAnalysisStatus === 'degraded'}
+                            questionCount={researchTally?.total ?? 0}
+                            answeredQuestionCount={researchTally?.supported ?? 0}
+                            unsupportedQuestionCount={researchTally?.notSupported ?? 0}
                             language={language}
                             // The simple view lists verified cards only. With none verified it
                             // would show an empty page under a hint that says "review these cards".
                             {...(resultsViewMode === 'simple' && simpleCardIds.length === 0 && cards.length > 0 ? {
-                                reviewActionLabel: getTranslation('credibility_show_review_cards', language, { count: String(cards.length) }),
+                                reviewActionLabel: reviewCardCount > 0
+                                    ? getTranslation(
+                                        reviewCardCount === 1 ? 'credibility_review_cards_button_one' : 'credibility_review_cards_button_many',
+                                        language,
+                                        { count: String(reviewCardCount) },
+                                    )
+                                    : getTranslation('credibility_show_all_cards', language),
                                 onReviewAction: () => handleResultsViewChange('explore'),
                             } : {})}
                         />

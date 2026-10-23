@@ -5,8 +5,17 @@ import type {
 } from '../../types';
 import { resolveAnalysisArtifactFreshness } from './artifactProvenance';
 
-const buildDetail = (reasonCodes: CardTrustReasonCode[]): string =>
-    reasonCodes.length > 0 ? reasonCodes.join(' | ') : 'verified';
+const formatNumber = (value: number | null) => (value === null ? 'n/a' : String(Math.round(value * 100) / 100));
+
+const describeNumericParseMismatch = (provenance: NonNullable<AnalysisCardData['provenance']>): string =>
+    (provenance.numericParseMismatch?.findings ?? [])
+        .map(finding => `${finding.column} (${finding.kind}): original text ${formatNumber(finding.kind === 'sum' ? finding.sourceSum : finding.sourceMedian)}, loaded ${formatNumber(finding.kind === 'sum' ? finding.loadedSum : finding.loadedMedian)}${finding.ratio === null ? '' : `, ratio ${finding.ratio.toPrecision(4)}`}`)
+        .join('; ');
+
+const buildDetail = (reasonCodes: CardTrustReasonCode[], extra?: string | null): string => {
+    const base = reasonCodes.length > 0 ? reasonCodes.join(' | ') : 'verified';
+    return extra ? `${base} — ${extra}` : base;
+};
 
 export const resolveCardTrustDecision = (
     card: Pick<AnalysisCardData, 'autoAnalysisEvaluation' | 'provenance'>,
@@ -40,7 +49,10 @@ export const resolveCardTrustDecision = (
         if (freshness === 'unverified') {
             reasonCodes.push('dataset_version_missing');
         }
-        if (provenance.evidenceStatus === 'hypothesis') {
+        if (provenance.numericParseMismatch?.columns.length) {
+            // Two independent readings of a column this card aggregates disagree.
+            reasonCodes.push('numeric_parse_mismatch');
+        } else if (provenance.evidenceStatus === 'hypothesis') {
             reasonCodes.push('evidence_hypothesis');
         }
         if (provenance.queryEvidenceRequired === true && !provenance.queryEvidence?.traceId) {
@@ -56,7 +68,7 @@ export const resolveCardTrustDecision = (
         return {
             status: 'unverified',
             reasonCodes,
-            detail: buildDetail(reasonCodes),
+            detail: buildDetail(reasonCodes, provenance && reasonCodes.includes('numeric_parse_mismatch') ? describeNumericParseMismatch(provenance) : null),
         };
     }
 

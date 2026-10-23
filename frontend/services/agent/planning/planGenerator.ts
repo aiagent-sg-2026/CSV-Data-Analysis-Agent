@@ -30,6 +30,9 @@ import {
     createAnalysisTopicsPrompt,
 } from '../../prompts/analysisPrompts';
 import { robustlyParseJsonObject } from '../../../utils/jsonParser';
+import { inferLeafAdditivity, isBusinessEntityName, isMoneyMeasureName } from '../../data/columnNameLeaf';
+import { isNonAdditiveMetric } from '../../data/columnRegistry';
+import { isIdentifierLikeGrouping } from './identifierGrouping';
 import { compileQueryPlanToDuckDbSql } from '../../duckdb/queryCompiler';
 import {
     collectEvidencePlanStabilityReasonCodes,
@@ -59,6 +62,7 @@ import {
 import { createPlannerSections } from './planningContextBuilder';
 import { inferPreferredResultShape, adaptEvidencePlanToSqlAnalysisPlan } from './evidencePlanAdapter';
 import { buildSeriesMeasureFallbackTopics, resolveTopicSeriesFilter } from './seriesMeasureGuard';
+import { rowHierarchyDefaultOptions } from './rowHierarchyGuard';
 
 // --- Merged from sqlAnalysisErrors.ts ---
 
@@ -114,13 +118,20 @@ export const PLAN_GENERATION_TIMEOUT_MS = 30_000;
 
 // Which numeric column leads the fallback topics. This only runs when AI topic planning failed, so it
 // relies on facts and on the AI's earlier semantic understanding (preferred and candidate metrics),
-// not on words in the column name: a currency-typed column leads, then the semantic ranks.
+// plus the leaf of the column name for report layouts ("Amount :: Balance Amount"): an additive money
+// amount leads, a unit price or a row serial number never does. Then a currency-typed column, then the semantic ranks.
 const scoreDeterministicMetric = (
     column: ColumnProfile,
     preferredRank: number | undefined,
     metricRank: number | undefined,
+    siblingNames: readonly string[],
+    /** The column is among the metrics the semantic understanding named, or it named none. */
+    isKnownMetric: boolean,
 ): number => {
     let score = 0;
+    const additivity = column.additivity ?? inferLeafAdditivity(column.name, siblingNames);
+    if (additivity?.kind === 'non_additive') score -= 100;
+    else if (isKnownMetric && ['numerical', 'currency'].includes(column.type) && isMoneyMeasureName(column.name, siblingNames)) score += 100;
     if (column.type === 'currency') score += 80;
     if (preferredRank !== undefined) score += Math.max(1, 30 - preferredRank);
     if (metricRank !== undefined) score += Math.max(1, 15 - metricRank);
@@ -175,7 +186,9 @@ export const buildDeterministicTopics = (
         .filter(c => safeDimensionSet.size === 0 || safeDimensionSet.has(c.name))
         .filter(c => !blockedSet.has(c.name))
         .filter(c => !avoidedDimensions.has(c.name))
-        .filter(c => (c.uniqueValues ?? 2) > 1);
+        .filter(c => (c.uniqueValues ?? 2) > 1)
+        // A column that tells every row apart ranks one-row groups ("Top 8 of 3,200 invoices").
+        .filter(c => !isIdentifierLikeGrouping(c, datasetContext.rowCount));
     const businessDimensionScore = (column: ColumnProfile): number => {
         const preferredRank = preferredDimensionRank.get(column.name);
         const preferredScore = preferredRank === undefined
@@ -189,7 +202,9 @@ export const buildDeterministicTopics = (
                 : cardinality <= 2_000
                     ? 20
                     : 0;
-        return preferredScore + cardinalityScore;
+        // The party a reader asks about (who owes, who buys) leads over other small categories.
+        const entityScore = isBusinessEntityName(column.name) ? 30 : 0;
+        return preferredScore + cardinalityScore + entityScore;
     };
     const timeDimension = dimensionCandidates
         .filter(column =>
@@ -233,6 +248,8 @@ export const buildDeterministicTopics = (
                 column,
                 preferredMetricRank.get(column.name),
                 metricColumnRank.get(column.name),
+                columns.map(candidate => candidate.name),
+                metricColumnRank.size === 0 || metricColumnRank.has(column.name),
             ),
         }))
         .sort((left, right) => right.score - left.score || left.index - right.index)[0]?.column.name;
@@ -258,10 +275,17 @@ export const buildDeterministicTopics = (
                 ? `Record count trend by ${dim.name}`
                 : `Record count by ${dim.name}`);
     }
+    // Say "Total" for an additive money amount so the planner sums it per group instead of averaging it.
+    const metricProfile = columns.find(column => column.name === metric);
+    const sumsAsTotal = metricProfile !== undefined && ['numerical', 'currency'].includes(metricProfile.type)
+        && isMoneyMeasureName(metric, columns.map(column => column.name))
+        && !isNonAdditiveMetric(metric, metricProfile)
+        && inferLeafAdditivity(metric, columns.map(column => column.name))?.kind !== 'non_additive';
+    const metricPhrase = sumsAsTotal ? `Total ${metric}` : metric;
     const topics = dims.map(dim =>
         dim.name === timeDimension?.name
-            ? `${metric} trend by ${dim.name}`
-            : `${metric} by ${dim.name}`);
+            ? `${metricPhrase} trend by ${dim.name}`
+            : `${metricPhrase} by ${dim.name}`);
 
     // When period column families exist (wide-pivot with monthly columns),
     // inject a monthly trend topic so the first auto-analysis round
@@ -271,7 +295,7 @@ export const buildDeterministicTopics = (
         const timeDim = dims.find(d => isTimeLikeDimensionColumn(d.name));
         // A trend topic already exists exactly when the time dimension is one of the chosen dimensions.
         if (timeDim && !dims.some(d => d.name === timeDimension?.name)) {
-            topics.push(`${metric} monthly trend by ${timeDim.name}`);
+            topics.push(`${metricPhrase} monthly trend by ${timeDim.name}`);
         }
     }
 
@@ -702,6 +726,7 @@ export const generateEvidenceQueryPlanWithRetry = async (
                 topic,
                 steering: plannerDatasetContext.analysisSteering ?? null,
                 seriesColumn: plannerDatasetContext.seriesMeasure?.seriesColumn ?? null,
+                ...rowHierarchyDefaultOptions(plannerDatasetContext.rowHierarchy),
             });
             const semanticHints = extractSemanticHints(plannerDatasetContext);
             const { validPlan, errors } = normalizeAndValidateSqlEvidenceQueryPlan(
@@ -1102,6 +1127,7 @@ export const generateEvidenceQueryPlanStepped = async (
         topic,
         steering,
         seriesColumn: seriesMeasure?.seriesColumn ?? null,
+        ...rowHierarchyDefaultOptions(datasetContext?.rowHierarchy),
     });
     const steppedSemanticHints = extractSemanticHints(datasetContext);
     const { validPlan, errors } = normalizeAndValidateSqlEvidenceQueryPlan(semanticDefaultsApplied, columns, {

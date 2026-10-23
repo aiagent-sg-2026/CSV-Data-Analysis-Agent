@@ -367,10 +367,13 @@ describe('visitor arrivals: top 10 of 52 leaf markets (melted, real DuckDB)', ()
             visitors, visitorPlan('avg'), 'DataSeries', { defaultTopN: 8 },
         );
         expect(companionPlans).toHaveLength(0);
-        expect(groupCoverage).toBeNull();
-        expect(card.groupCoverage).toBeUndefined();
+        // The engine reported the matched group count; an average still gets no total and no share.
+        expect(groupCoverage).toEqual({ status: 'partial', groupCount: 52, overallTotal: null });
+        expect(card.groupCoverage).toEqual({ status: 'partial', groupCount: 52, overallTotal: null });
         const { text, tableRows } = renderCard(card);
 
+        expect(text).toContain('Current view shows 8 of 52 groups.');
+        expect(text).toContain('Top 8 of 52 groups');
         expect(text).toContain('these measures cannot be added together');
         expect(text).not.toContain('Overall');
         expect(text).not.toContain('Others');

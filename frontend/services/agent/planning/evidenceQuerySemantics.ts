@@ -10,6 +10,7 @@ import type {
 import { isNonAdditiveMetric, isNonAdditiveMetricName } from '../../data/columnRegistry';
 import { injectDirectivesIntoQueryPlan } from '../../duckdb/directiveInjector';
 import { createEmptyRuntimeDirectives } from '../runtime/investigationTypes';
+import type { RowHierarchyContract } from './rowHierarchyGuard';
 
 const normalizeTopicText = (value: string) =>
     value
@@ -206,6 +207,14 @@ export const applyEvidenceQuerySemanticDefaults = (
         steering?: EvidenceHarnessContext | null;
         /** Series column of a melted period-series table, when the dataset is one. */
         seriesColumn?: string | null;
+        /**
+         * Hierarchy recorded for a row table with parent rows. Its detail-row
+         * filter always applies, whatever the steering says, unless the plan
+         * states its own row scope.
+         */
+        rowHierarchy?: RowHierarchyContract | null;
+        /** Whether the plan already states a row scope (computed by the caller with the hierarchy guard). */
+        statesRowScope?: (plan: SqlEvidenceQueryPlan) => boolean;
     },
 ): SqlEvidenceQueryPlan => {
     const nextPlan: SqlEvidenceQueryPlan = {
@@ -256,14 +265,21 @@ export const applyEvidenceQuerySemanticDefaults = (
         }
     }
 
-    const detailRowFilter = options?.steering?.detailRowFilter
+    const hierarchyFilter = options?.rowHierarchy
+        ? { column: options.rowHierarchy.rowClassColumn, value: options.rowHierarchy.detailRowValue }
+        : null;
+    const detailRowFilter = hierarchyFilter
+        ?? options?.steering?.detailRowFilter
         ?? (options?.steering?.detailRowColumn && options?.steering?.detailRowValue
             ? { column: options.steering.detailRowColumn, value: options.steering.detailRowValue }
             : null);
     const detailRowColumnExists = detailRowFilter?.column
         ? columns.some(col => col.name.toLowerCase() === detailRowFilter.column.toLowerCase())
         : false;
-    const isSummaryRowTopic = SUMMARY_ROW_TOPIC_PATTERN.test(normalizeTopicText(options?.topic ?? ''));
+    // With a verified hierarchy the plan's own row scope decides, not the topic wording.
+    const isSummaryRowTopic = hierarchyFilter
+        ? Boolean(options?.statesRowScope?.(nextPlan))
+        : SUMMARY_ROW_TOPIC_PATTERN.test(normalizeTopicText(options?.topic ?? ''));
     // A plan that names its series reads exactly those rows; a published
     // total or subtotal series would vanish under a detail-row filter.
     const seriesColumn = options?.seriesColumn?.trim().toLowerCase() ?? null;
@@ -292,8 +308,17 @@ export const applyEvidenceQuerySemanticDefaults = (
     // hierarchy candidates can otherwise remove valid fact rows and make cards
     // disagree with fresh data.query results that use the same fact-row scope.
     // Use hierarchy exclusion only when no executable detail-row contract exists.
+    // A plan that states the detail-row scope itself is just as scoped as one that received
+    // the filter here, and a verified hierarchy never takes a label exclusion list.
+    const planStatesDetailScope = Boolean(detailRowFilter?.column) && [
+        ...(nextPlan.preFilter ?? []),
+        ...(nextPlan.query.where?.predicates ?? []),
+    ].some(clause => clause.column.trim().toLowerCase() === detailRowFilter!.column.trim().toLowerCase()
+        && ['eq', 'in'].includes(clause.operator));
     if (
         !detailRowFilterApplied
+        && !hierarchyFilter
+        && !planStatesDetailScope
         && options?.steering?.excludeFromAggregation?.length
         && options.steering.hierarchyColumn
     ) {

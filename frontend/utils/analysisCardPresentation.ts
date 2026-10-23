@@ -89,6 +89,17 @@ export const formatAnalysisMeasureValue = (value: CsvCellValue, fractionDigits =
     });
 };
 
+/**
+ * Rows as the card shows them: non-integer numbers carry the card's precision (2 decimals), so a
+ * sentence written from these rows quotes "832.81", never the unrounded "832.805".
+ */
+export const roundRowsToDisplayPrecision = (rows: CsvRow[], fractionDigits = 2): CsvRow[] =>
+    rows.map(row => Object.fromEntries(Object.entries(row).map(([column, value]) => {
+        if (typeof value !== 'number' || !Number.isFinite(value) || Number.isInteger(value)) return [column, value];
+        const rounded = Number(value.toLocaleString('en-US', { maximumFractionDigits: fractionDigits, useGrouping: false }));
+        return [column, rounded];
+    })));
+
 export const formatAnalysisCellValue = (
     columnName: string,
     value: CsvCellValue,

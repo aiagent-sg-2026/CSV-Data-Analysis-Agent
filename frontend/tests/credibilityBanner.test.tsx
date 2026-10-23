@@ -80,4 +80,95 @@ describe('CredibilityBanner', () => {
 
         expect(screen.queryByRole('button')).toBeNull();
     });
+    it('does not say "all cards passed" when a question could not be answered', () => {
+        render(
+            <CredibilityBanner
+                overallVerdict="trusted"
+                trustedCount={3}
+                caveatedCount={0}
+                weakCount={0}
+                questionCount={4}
+                answeredQuestionCount={3}
+                unsupportedQuestionCount={1}
+                language="English"
+            />,
+        );
+
+        expect(screen.getByText('3 of 4 questions answered')).toBeTruthy();
+        expect(screen.getByText(/1 could not be calculated from this data\./)).toBeTruthy();
+        expect(screen.getByText(/the missing answer is not covered/)).toBeTruthy();
+        expect(screen.queryByText(/All cards passed quality checks/i)).toBeNull();
+        expect(screen.queryByText('Results ready to use')).toBeNull();
+    });
+
+    it('uses plural and singular forms for the unanswered questions', () => {
+        const { rerender } = render(
+            <CredibilityBanner overallVerdict="trusted" trustedCount={2} caveatedCount={0} weakCount={0}
+                questionCount={4} answeredQuestionCount={2} unsupportedQuestionCount={2} language="English" />,
+        );
+        expect(screen.getByText(/2 could not be calculated from this data\..*the missing answers are not covered/)).toBeTruthy();
+
+        rerender(
+            <CredibilityBanner overallVerdict="trusted" trustedCount={0} caveatedCount={0} weakCount={0}
+                questionCount={1} answeredQuestionCount={0} unsupportedQuestionCount={1} language="English" />,
+        );
+        expect(screen.getByText('0 of 1 question answered')).toBeTruthy();
+    });
+
+    it('names the gap next to the review hint when cards also need review', () => {
+        render(
+            <CredibilityBanner overallVerdict="caveated" trustedCount={2} caveatedCount={1} weakCount={0}
+                questionCount={4} answeredQuestionCount={3} unsupportedQuestionCount={1} language="English" />,
+        );
+
+        expect(screen.getByText('2 verified, 1 need review — start with verified cards.')).toBeTruthy();
+        expect(screen.getByText('1 question could not be calculated from this data.')).toBeTruthy();
+    });
+
+    it('keeps the data-quality caveat when the run was degraded and a question is missing', () => {
+        render(
+            <CredibilityBanner overallVerdict="trusted" trustedCount={3} caveatedCount={0} weakCount={0} hasRunCaveats
+                questionCount={4} answeredQuestionCount={3} unsupportedQuestionCount={1} language="English" />,
+        );
+
+        expect(screen.getByText(/Data-quality limitations also remain/)).toBeTruthy();
+    });
+
+    it('states the gap in every language', () => {
+        const expected: Record<string, string> = {
+            English: '3 of 4 questions answered',
+            Mandarin: '4 个问题中已回答 3 个',
+            Japanese: '4 件の質問のうち 3 件に回答しました',
+            Malay: '3 daripada 4 soalan telah dijawab',
+        };
+        for (const [language, title] of Object.entries(expected)) {
+            const { unmount } = render(
+                <CredibilityBanner overallVerdict="trusted" trustedCount={3} caveatedCount={0} weakCount={0}
+                    questionCount={4} answeredQuestionCount={3} unsupportedQuestionCount={1} language={language} />,
+            );
+            expect(screen.getByText(title)).toBeTruthy();
+            unmount();
+        }
+    });
+
+    it('keeps the unconditional green banner when every question was answered', () => {
+        render(
+            <CredibilityBanner overallVerdict="trusted" trustedCount={4} caveatedCount={0} weakCount={0}
+                questionCount={4} answeredQuestionCount={4} unsupportedQuestionCount={0} language="English" />,
+        );
+
+        expect(screen.getByText('Results ready to use')).toBeTruthy();
+    });
+
+    it('makes the review action the filled, primary control of the banner', () => {
+        render(
+            <CredibilityBanner overallVerdict="caveated" trustedCount={1} caveatedCount={4} weakCount={0} language="English"
+                reviewActionLabel="Review the 4 cards" onReviewAction={() => undefined} />,
+        );
+
+        const button = screen.getByRole('button', { name: 'Review the 4 cards' });
+        expect(button.className).toContain('text-white');
+        expect(button.className).toMatch(/\bbg-amber-700\b/);
+        expect(button.className).not.toContain('bg-white');
+    });
 });

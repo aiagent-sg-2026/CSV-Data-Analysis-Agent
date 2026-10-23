@@ -26,10 +26,12 @@
  * | Catch block — generic fallback for unknown failures | userErrorMessage.ts |
  */
 import { AppLanguage, Settings } from '../types';
+import { reviewTrustTranslations } from './localizationReviewTrust';
 
 type Language = AppLanguage | 'Spanish' | 'French';
 
 const translations: Record<string, Partial<Record<Language, string>> & { English: string }> = {
+    ...reviewTrustTranslations,
     'header_analysis_actions': {
         'English': 'Analysis actions',
         'Mandarin': '分析操作',
@@ -364,12 +366,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': '{group} mempunyai nilai terendah dalam paparan ini.',
     },
     'executive_kpi_group_count_label': {
-        'English': '{groups}',
-        'Mandarin': '{groups}',
-        'Spanish': '{groups}',
-        'Japanese': '{groups}',
-        'French': '{groups}',
-        'Malay': '{groups}',
+        'English': 'Distinct {groups}',
+        'Mandarin': '不同{groups}',
+        'Spanish': '{groups} distintos',
+        'Japanese': '異なる{groups}',
+        'French': '{groups} distincts',
+        'Malay': '{groups} berbeza',
     },
     'executive_kpi_inactive_label': {
         'English': 'Inactive {groups}',
@@ -572,7 +574,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'French': '### Note de Fiabilité',
     },
     'reliability_note_body': {
-        'English': '- {count} fallback card(s) were excluded from this narrative because their original topic plans failed.',
+        'English': '- {count} fallback cards were excluded from this narrative because their original topic plans failed.',
         'Mandarin': '- 由于原始主题计划执行失败，已有 {count} 张回退卡片被排除在本次叙述之外。',
         'Malay': '- Sebanyak {count} kad sandaran dikecualikan daripada naratif ini kerana pelan topik asalnya gagal.',
         'Japanese': '- 元のトピック計画が失敗したため、{count} 枚のフォールバックカードはこの叙述から除外されました。',
@@ -603,7 +605,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Japanese': '{group} の{metric}が最も低く、{value} です。',
     },
     'evidence_summary_note': {
-        'English': 'The AI summary could not be generated, so these points are read directly from {count} evidence card(s).',
+        'English': 'The AI summary could not be generated, so these points are read directly from {count} evidence cards.',
         'Mandarin': 'AI 摘要未能生成，以上要点直接取自 {count} 张证据卡片。',
         'Malay': 'Ringkasan AI tidak dapat dijana, jadi perkara ini dibaca terus daripada {count} kad bukti.',
         'Japanese': 'AI 要約を生成できなかったため、上記は {count} 枚のエビデンスカードから直接読み取った内容です。',
@@ -1535,7 +1537,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Japanese': '機密データの可能性を検出しました',
     },
     'cloud_ai_sensitive_detected_detail': {
-        'English': 'The local scan found high-confidence signals in {count} field(s). Confirm this dataset separately before any sample is sent to the provider.',
+        'English': 'The local scan found high-confidence signals in {count} fields. Confirm this dataset separately before any sample is sent to the provider.',
         'Mandarin': '本地扫描在 {count} 个字段中发现高置信信号。在向提供方发送任何样本前，请单独确认此数据集。',
         'Malay': 'Imbasan setempat menemui isyarat keyakinan tinggi dalam {count} medan. Sahkan set data ini secara berasingan sebelum sebarang sampel dihantar.',
         'Japanese': 'ローカルスキャンにより {count} 個のフィールドで信頼度の高い兆候が見つかりました。サンプルを送信する前に、このデータセットを個別に確認してください。',
@@ -2152,6 +2154,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Paparan semasa menunjukkan {visible} daripada {total} kumpulan. Bandingkan setiap nilai secara berasingan; ukuran ini tidak boleh dijumlahkan.',
         'Japanese': '現在のビューでは {total} グループ中 {visible} グループを表示しています。各値を個別に比較してください。これらの指標は合算できません。',
     },
+    'analysis_card_view_line_scope_non_additive_returned': {
+        'English': 'Current view shows {visible} of the {total} groups returned. Compare each value separately; these measures cannot be added together.',
+        'Mandarin': '当前视图显示返回的 {total} 个分组中的 {visible} 个。请逐项比较数值；这些指标不能相加。',
+        'Malay': 'Paparan semasa menunjukkan {visible} daripada {total} kumpulan yang dikembalikan. Bandingkan setiap nilai secara berasingan; ukuran ini tidak boleh dijumlahkan.',
+        'Japanese': '現在のビューでは、取得した {total} グループ中 {visible} グループを表示しています。各値を個別に比較してください。これらの指標は合算できません。',
+    },
     'analysis_card_view_line_scope_unknown': {
         'English': 'Current view shows {visible} of {total} groups. The aggregation type is unavailable, so no combined total is shown.',
         'Mandarin': '当前视图显示 {visible}/{total} 个分组。聚合类型未记录，因此不显示合计。',
@@ -2273,7 +2281,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Japanese': '信頼性に関する注記',
     },
     'summary_reliability_note_body': {
-        'English': '{count} fallback card(s) were excluded from this narrative because their original topic plans failed.',
+        'English': '{count} fallback cards were excluded from this narrative because their original topic plans failed.',
         'Mandarin': '有 {count} 张回退卡片未纳入这段叙述，因为它们原始的主题计划执行失败。',
         'Malay': '{count} kad fallback telah dikecualikan daripada naratif ini kerana pelan topik asalnya gagal.',
         'Japanese': '元のトピック計画が失敗したため、この説明から {count} 枚のフォールバックカードを除外しました。',
@@ -3169,7 +3177,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Jana set hipotesis analisis berkeutamaan tinggi yang terhad.',
     },
     'analysis_trace_propose_hypotheses_output_success': {
-        'English': 'Proposed {count} hypothesis candidate(s).',
+        'English': 'Proposed {count} hypothesis candidates.',
         'Mandarin': '已提出 {count} 个假设。',
         'Japanese': '{count}件の仮説候補を提案しました。',
         'Malay': '{count} calon hipotesis dicadangkan.',
@@ -3395,8 +3403,8 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'ai_task_analysis_ready': { 'English': 'Analysis ready', 'Mandarin': '分析就绪', 'Japanese': '分析完了', 'Malay': 'Analisis sedia' },
     'ai_task_analysis_ready_caveats': { 'English': 'Analysis ready with caveats', 'Mandarin': '分析就绪（有注意事项）', 'Japanese': '分析完了（注意事項あり）', 'Malay': 'Analisis sedia dengan batasan' },
     'ai_task_analysis_ready_subtitle': { 'English': '{cardCount} SQL-first cards generated{traceQualifier}{rejectionQualifier}', 'Mandarin': '已生成 {cardCount} 张 SQL 优先卡片{traceQualifier}{rejectionQualifier}', 'Japanese': 'SQLファーストカード {cardCount} 枚生成{traceQualifier}{rejectionQualifier}', 'Malay': '{cardCount} kad berasaskan SQL dijana{traceQualifier}{rejectionQualifier}' },
-    'ai_task_analysis_ready_trace': { 'English': '; {count} analysis step(s) recorded', 'Mandarin': '；记录了 {count} 个分析步骤', 'Japanese': '；分析ステップ {count} 件記録', 'Malay': '; {count} langkah analisis direkodkan' },
-    'ai_task_analysis_ready_rejections': { 'English': '; {count} low-value or duplicate output(s) were rejected', 'Mandarin': '；{count} 个低价值或重复输出已被拒绝', 'Japanese': '；低品質・重複 {count} 件を除外', 'Malay': '; {count} hasil bernilai rendah atau pendua ditolak' },
+    'ai_task_analysis_ready_trace': { 'English': '; {count} analysis steps recorded', 'Mandarin': '；记录了 {count} 个分析步骤', 'Japanese': '；分析ステップ {count} 件記録', 'Malay': '; {count} langkah analisis direkodkan' },
+    'ai_task_analysis_ready_rejections': { 'English': '; {count} low-value or duplicate outputs were rejected', 'Mandarin': '；{count} 个低价值或重复输出已被拒绝', 'Japanese': '；低品質・重複 {count} 件を除外', 'Malay': '; {count} hasil bernilai rendah atau pendua ditolak' },
     'ai_task_analysis_ready_none_trusted': { 'English': ', but none are trusted enough for a definitive answer', 'Mandarin': '，但均未达到可信标准', 'Japanese': 'ですが信頼度が不十分です', 'Malay': ', tetapi tiada yang cukup dipercayai untuk jawapan muktamad' },
     'ai_task_analysis_ready_mixed': { 'English': '; {trusted} trusted, {review} need review', 'Mandarin': '；{trusted} 个可信，{review} 个需审查', 'Japanese': '；信頼済み {trusted}、要確認 {review}', 'Malay': '; {trusted} dipercayai, {review} perlu disemak' },
     'ai_task_fallback_ready': { 'English': 'Showing simplified insights while deeper SQL analysis is unavailable', 'Mandarin': '深度 SQL 分析暂不可用，显示简化洞察', 'Japanese': 'SQL分析が利用不可のため簡易結果を表示', 'Malay': 'Memaparkan cerapan ringkas sementara analisis SQL yang lebih mendalam tidak tersedia' },
@@ -3443,6 +3451,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'verdict_reason_query_trace_missing': { 'English': 'Query trace is missing', 'Mandarin': '缺少查询轨迹', 'Japanese': 'クエリ履歴がありません', 'Malay': 'Jejak pertanyaan tiada' },
     'verdict_reason_quality_evaluation_missing': { 'English': 'Quality evaluation is missing', 'Mandarin': '缺少质量评估', 'Japanese': '品質評価がありません', 'Malay': 'Penilaian kualiti tiada' },
     'verdict_reason_quality_caveat': { 'English': 'Quality review found caveats', 'Mandarin': '质量评估发现注意事项', 'Japanese': '品質上の注意があります', 'Malay': 'Semakan kualiti menemui batasan' },
+    'verdict_reason_numeric_parse_mismatch': { 'English': 'The numbers in a column this card uses could not be read consistently, so the result is not verified', 'Mandarin': '此卡片使用的某一列数字无法被一致地读取，因此结果未经验证', 'Japanese': 'このカードが使う列の数値を一貫して読み取れなかったため、結果は検証されていません', 'Malay': 'Nombor dalam lajur yang digunakan kad ini tidak dapat dibaca secara konsisten, jadi keputusan tidak disahkan' },
     'verdict_reason_quality_weak': { 'English': 'Quality evidence is weak', 'Mandarin': '质量证据不足', 'Japanese': '品質証拠が弱いです', 'Malay': 'Bukti kualiti lemah' },
 
     // --- Verdict explainer modal ---
@@ -3482,9 +3491,10 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     // --- Data quality warnings ---
     'data_warnings_title': { 'English': 'Data Warnings', 'Mandarin': '数据警告', 'Japanese': 'データ警告', 'Malay': 'Amaran data' },
     'data_warnings_intake_label': { 'English': 'CSV Structure Warnings', 'Mandarin': 'CSV 结构警告', 'Japanese': 'CSV構造警告', 'Malay': 'Amaran struktur CSV' },
-    'data_warnings_intake_reported': { 'English': 'CSV structure check found {count} issue(s) during import.', 'Mandarin': 'CSV 结构检查在导入时发现 {count} 个问题。', 'Japanese': 'CSVインポート時に {count} 件の構造問題が見つかりました。', 'Malay': 'Semakan struktur CSV menemui {count} isu semasa import.' },
+    'data_warnings_intake_reported': { 'English': 'CSV structure check found {count} issues during import.', 'Mandarin': 'CSV 结构检查在导入时发现 {count} 个问题。', 'Japanese': 'CSVインポート時に {count} 件の構造問題が見つかりました。', 'Malay': 'Semakan struktur CSV menemui {count} isu semasa import.' },
     'data_warnings_intake_not_delimited_split': { 'English': 'This file is a text report with space-aligned columns, not a delimited CSV. The app split the columns by character position, so please check them.', 'Mandarin': '该文件是用空格对齐列的文本报表，而不是带分隔符的 CSV。系统按字符位置拆分了列，请检查结果。', 'Japanese': 'このファイルは区切り文字付きのCSVではなく、空白で桁を揃えたテキストレポートです。文字位置で列を分割したため、結果を確認してください。', 'Malay': 'Fail ini ialah laporan teks dengan lajur yang dijajarkan menggunakan ruang, bukan CSV berpemisah. Aplikasi memisahkan lajur mengikut kedudukan aksara, jadi sila semak lajur tersebut.' },
     'data_warnings_intake_not_delimited_unsplit': { 'English': 'This file is a text report with space-aligned columns, not a delimited CSV. The columns could not be separated reliably, so the imported table is probably wrong.', 'Mandarin': '该文件是用空格对齐列的文本报表，而不是带分隔符的 CSV。无法可靠地拆分列，因此导入的表格很可能不正确。', 'Japanese': 'このファイルは区切り文字付きのCSVではなく、空白で桁を揃えたテキストレポートです。列を確実に分割できなかったため、取り込んだ表は正しくない可能性があります。', 'Malay': 'Fail ini ialah laporan teks dengan lajur yang dijajarkan menggunakan ruang, bukan CSV berpemisah. Lajur tidak dapat dipisahkan dengan pasti, jadi jadual yang diimport mungkin tidak betul.' },
+    'data_warnings_numeric_parse_mismatch': { 'English': 'The numbers in column {columns} could not be read consistently, so results using it are not verified.', 'Mandarin': '无法一致地读取 {columns} 列中的数字，因此使用该列的结果未经验证。', 'Japanese': '{columns} 列の数値を一貫して読み取れなかったため、この列を使う結果は検証されていません。', 'Malay': 'Nombor dalam lajur {columns} tidak dapat dibaca secara konsisten, jadi keputusan yang menggunakannya tidak disahkan.' },
     'data_warnings_technical_toggle': { 'English': 'Show technical details', 'Mandarin': '查看技术详情', 'Japanese': '技術的詳細を表示', 'Malay': 'Tunjukkan butiran teknikal' },
     'data_warnings_footer': { 'English': 'Full diagnostics are available in the Data Preparation Workflow.', 'Mandarin': '完整诊断信息可在数据准备工作流中查看。', 'Japanese': '詳細な診断情報はデータ準備ワークフローで確認できます。', 'Malay': 'Diagnostik penuh tersedia dalam Aliran Kerja Penyediaan Data.' },
 
@@ -3515,7 +3525,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Laporan anda disimpan tanpa penyulitan dalam pelayar ini.',
         'Japanese': 'レポートは、このブラウザに暗号化されず保存されます。',
     },
-    'history_older_versions': { 'English': '+{count} previous version(s)', 'Mandarin': '+{count} 个历史版本', 'Malay': '+{count} versi terdahulu', 'Japanese': '+{count} 件の以前のバージョン' },
+    'history_older_versions': { 'English': '+{count} previous versions', 'Mandarin': '+{count} 个历史版本', 'Malay': '+{count} versi terdahulu', 'Japanese': '+{count} 件の以前のバージョン' },
     'history_created_label': { 'English': 'Created', 'Mandarin': '创建于', 'Japanese': '作成', 'Malay': 'Dicipta' },
     'history_modified_label': { 'English': 'Modified', 'Mandarin': '修改于', 'Japanese': '更新', 'Malay': 'Diubah suai' },
     'history_loading': { 'English': 'Loading...', 'Mandarin': '加载中…', 'Japanese': '読み込み中…', 'Malay': 'Sedang memuatkan...' },
@@ -3914,7 +3924,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Hasil analisis',
     },
     'spreadsheet_preview_rows': {
-        'English': 'Showing {count} preview row(s).',
+        'English': 'Showing {count} preview rows.',
         'Mandarin': '正在显示 {count} 行预览。',
         'Japanese': '{count} 行のプレビューを表示しています。',
         'Malay': 'Memaparkan {count} baris pratonton.',
@@ -4131,7 +4141,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Analisis taburan selesai: {column} mempunyai min {mean}, median {median} dan sisihan piawai {stddev}.',
     },
     'skill_outlier_complete': {
-        'English': 'Completed outlier scan: {column} has {count} significant outlier(s) at threshold |z| >= 2.5.',
+        'English': 'Completed outlier scan: {column} has {count} significant outliers at threshold |z| >= 2.5.',
         'Mandarin': '已完成异常值扫描：{column} 共识别到 {count} 个显著异常值，阈值为 |z| >= 2.5。',
         'Japanese': '外れ値スキャンが完了しました：{column} で {count} 個の有意な外れ値を検出しました（閾値 |z| >= 2.5）。',
         'Malay': 'Imbasan pencilan selesai: {column} mempunyai {count} pencilan ketara pada ambang |z| >= 2.5.',
@@ -4143,7 +4153,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Analisis trend selesai: carta trend siri masa dijana berdasarkan {count} sela masa.',
     },
     'skill_pivot_complete': {
-        'English': 'Generated pivot matrix: summarized by {rows} with {columnCount} column group(s).',
+        'English': 'Generated pivot matrix: summarized by {rows} with {columnCount} column groups.',
         'Mandarin': '已生成透视矩阵：按 {rows} 汇总，并输出 {columnCount} 个列分组。',
         'Japanese': 'ピボットマトリクスを生成しました：{rows} で集計し、{columnCount} 個の列グループを出力しました。',
         'Malay': 'Matriks pivot dijana: diringkaskan mengikut {rows} dengan {columnCount} kumpulan lajur.',
@@ -4155,7 +4165,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Perbandingan tempoh selesai: {current} berbanding {previous}, jumlah perbezaan ialah {variance} dan kadar perbezaan ialah {variancePct}.',
     },
     'skill_cohort_complete': {
-        'English': 'Completed {label} analysis: generated {count} cohort(s) with periods 0 to {maxPeriods}.',
+        'English': 'Completed {label} analysis: generated {count} cohorts with periods 0 to {maxPeriods}.',
         'Mandarin': '已完成 {label} 分析：共生成 {count} 个 cohort，并输出 0 到 {maxPeriods} 期的矩阵结果。',
         'Japanese': '{label}分析が完了しました：{count} 個のコホートを生成し、0 から {maxPeriods} 期までのマトリクス結果を出力しました。',
         'Malay': 'Analisis {label} selesai: {count} kohort dijana untuk tempoh 0 hingga {maxPeriods}.',
@@ -4219,7 +4229,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Lapisan pengepala',
     },
     'boundary_confirm_header_depth_unit': {
-        'English': '{count} layer(s)',
+        'English': '{count} layers',
         'Mandarin': '{count} 层',
         'Japanese': '{count} 層',
         'Malay': '{count} lapisan',
@@ -4381,7 +4391,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Perkara yang dicuba oleh aplikasi',
     },
     'guided_repair_attempt_count': {
-        'English': 'Ran {count} governed cleaning and verification attempt(s).',
+        'English': 'Ran {count} governed cleaning and verification attempts.',
         'Mandarin': '已运行 {count} 次受治理的清洗与验证。',
         'Japanese': '管理されたクリーニングと検証を {count} 回実行しました。',
         'Malay': '{count} percubaan pembersihan dan pengesahan terkawal telah dijalankan.',
@@ -5501,6 +5511,69 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
 
     // ── AI prompt language instruction ──
     'ai_prompt_reply_language': { 'English': 'Reply in English.', 'Mandarin': '请用简体中文回答。', 'Malay': 'Sila jawab dalam Bahasa Melayu.', 'Japanese': '日本語で回答してください。' },
+
+    // ── Data quality notes: one plain sentence per kind of import issue ──
+    'dq_note_thousands': {
+        'English': 'Some numbers contain thousands separators; we read them correctly.',
+        'Mandarin': '部分数字带有千位分隔符，我们已正确读取。',
+        'Japanese': '一部の数値に桁区切りが含まれていますが、正しく読み取っています。',
+        'Malay': 'Sesetengah nombor mengandungi pemisah ribuan; kami membacanya dengan betul.',
+    },
+    'dq_note_decimal_comma': {
+        'English': 'Some numbers use a decimal comma (such as 1.234,56); we read them correctly.',
+        'Mandarin': '部分数字使用小数逗号（如 1.234,56），我们已正确读取。',
+        'Japanese': '一部の数値は小数点にカンマを使っています（例：1.234,56）。正しく読み取っています。',
+        'Malay': 'Sesetengah nombor menggunakan koma perpuluhan (seperti 1.234,56); kami membacanya dengan betul.',
+    },
+    'dq_note_apostrophe': {
+        'English': 'Some numbers start with an apostrophe (a spreadsheet text marker); we read them correctly.',
+        'Mandarin': '部分数字以撇号开头（电子表格的文本标记），我们已正确读取。',
+        'Japanese': '一部の数値の先頭にアポストロフィ（表計算の文字列マーカー）がありますが、正しく読み取っています。',
+        'Malay': 'Sesetengah nombor bermula dengan apostrof (penanda teks hamparan); kami membacanya dengan betul.',
+    },
+    'dq_note_mostly_empty': {
+        'English': '{count} columns are mostly empty and will be ignored unless needed.',
+        'Mandarin': '{count} 列大部分为空，除非需要，否则不会使用。',
+        'Japanese': '{count} 列はほとんど空のため、必要な場合を除いて使用しません。',
+        'Malay': '{count} lajur kebanyakannya kosong dan akan diabaikan kecuali diperlukan.',
+    },
+    'dq_note_other': {
+        'English': '{count} other data quality issues were found; the analysis takes them into account.',
+        'Mandarin': '还发现 {count} 个其他数据质量问题，分析时会将其考虑在内。',
+        'Japanese': 'その他のデータ品質の問題が {count} 件見つかりました。分析ではこれらを考慮します。',
+        'Malay': '{count} isu kualiti data lain ditemui; analisis mengambilnya kira.',
+    },
+    'dq_note_columns': {
+        'English': 'Columns: {columns}',
+        'Mandarin': '涉及的列：{columns}',
+        'Japanese': '対象の列：{columns}',
+        'Malay': 'Lajur: {columns}',
+    },
+};
+
+/**
+ * English wording for {count} === 1. Only English inflects for number, so the other languages keep
+ * their single wording. The plural wording stays in `translations`.
+ */
+const ENGLISH_SINGULAR_WORDING: Readonly<Record<string, string>> = {
+    reliability_note_body: '- {count} fallback card was excluded from this narrative because its original topic plan failed.',
+    summary_reliability_note_body: '{count} fallback card was excluded from this narrative because its original topic plan failed.',
+    evidence_summary_note: 'The AI summary could not be generated, so these points are read directly from {count} evidence card.',
+    cloud_ai_sensitive_detected_detail: 'The local scan found high-confidence signals in {count} field. Confirm this dataset separately before any sample is sent to the provider.',
+    analysis_trace_propose_hypotheses_output_success: 'Proposed {count} hypothesis candidate.',
+    ai_task_analysis_ready_trace: '; {count} analysis step recorded',
+    ai_task_analysis_ready_rejections: '; {count} low-value or duplicate output was rejected',
+    data_warnings_intake_reported: 'CSV structure check found {count} issue during import.',
+    data_warnings_compact_summary: '{count} data quality note · The AI accounts for it and your file is not changed.',
+    history_older_versions: '+{count} previous version',
+    spreadsheet_preview_rows: 'Showing {count} preview row.',
+    skill_outlier_complete: 'Completed outlier scan: {column} has {count} significant outlier at threshold |z| >= 2.5.',
+    skill_pivot_complete: 'Generated pivot matrix: summarized by {rows} with {count} column group.',
+    skill_cohort_complete: 'Completed {label} analysis: generated {count} cohort with periods 0 to {maxPeriods}.',
+    boundary_confirm_header_depth_unit: '{count} layer',
+    guided_repair_attempt_count: 'Ran {count} governed cleaning and verification attempt.',
+    dq_note_mostly_empty: '{count} column is mostly empty and will be ignored unless needed.',
+    dq_note_other: '{count} other data quality issue was found; the analysis takes it into account.',
 };
 
 export const getTranslationEntries = (): ReadonlyArray<readonly [string, Readonly<Partial<Record<Language, string>> & { English: string }>]> =>
@@ -5512,7 +5585,15 @@ export const getTranslation = (
     params?: Record<string, string | number>,
 ): string => {
     const lang = language as Language;
-    const template = translations[key]?.[lang] || translations[key]?.['English'] || key;
+    // Mandarin, Japanese and Malay do not inflect for number; English does. A key listed in
+    // ENGLISH_SINGULAR_WORDING reads in the singular when {count} is exactly 1, so the UI never
+    // shows "1 cards" or "1 data quality notes" (nor the "card(s)" hedge).
+    const rawCount = params?.count;
+    const countValue = typeof rawCount === 'number' ? rawCount : Number(String(rawCount ?? '').replace(/,/g, ''));
+    const singular = countValue === 1 && (lang === 'English' || !translations[key]?.[lang])
+        ? ENGLISH_SINGULAR_WORDING[key]
+        : undefined;
+    const template = singular || translations[key]?.[lang] || translations[key]?.['English'] || key;
     if (!params) {
         return template;
     }

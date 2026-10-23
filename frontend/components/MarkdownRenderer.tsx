@@ -213,7 +213,21 @@ const parseMarkdown = (markdownText: string): MarkdownBlock[] => {
 
         if (!trimmed) {
             flushParagraph();
-            flushList();
+            // A blank line between numbered findings does not end the list: the next item (or an
+            // indented line under the last one) belongs to it, so numbering continues 1, 2, 3.
+            const upcoming = lines.slice(index + 1).find(candidate => candidate.trim());
+            const continuesList = Boolean(listBuffer && upcoming && (
+                (listBuffer.ordered ? /^\d+\.\s+/ : /^[-*]\s+/).test(upcoming)
+                || /^\s+\S/.test(upcoming)
+            ));
+            if (!continuesList) flushList();
+            continue;
+        }
+
+        // An indented line under a list item (for example "   → Recommended Action: ...") is part of
+        // that item. Treated as a paragraph it was flushed before the list and printed above its finding.
+        if (listBuffer && listBuffer.items.length > 0 && /^\s+\S/.test(line) && !/^\s*(?:[-*]\s+|\d+\.\s+)/.test(line)) {
+            listBuffer.items[listBuffer.items.length - 1] += `\n${trimmed}`;
             continue;
         }
 
@@ -366,9 +380,19 @@ const MarkdownRendererComponent: React.FC<MarkdownRendererProps> = ({
                     const listClass = block.ordered ? 'list-decimal' : 'list-disc';
                     return (
                         <ListTag key={`list-${index}`} className={`${listClass} space-y-1 pl-6`}>
-                            {block.items.map((item, itemIndex) => (
-                                <li key={`list-${index}-${itemIndex}`}>{renderInline(item, `list-${index}-${itemIndex}`, resolvedTone)}</li>
-                            ))}
+                            {block.items.map((item, itemIndex) => {
+                                const [firstLine, ...continuation] = item.split('\n');
+                                return (
+                                    <li key={`list-${index}-${itemIndex}`}>
+                                        {renderInline(firstLine, `list-${index}-${itemIndex}`, resolvedTone)}
+                                        {continuation.map((line, lineIndex) => (
+                                            <span key={`list-${index}-${itemIndex}-line-${lineIndex}`} className="mt-0.5 block">
+                                                {renderInline(line, `list-${index}-${itemIndex}-line-${lineIndex}`, resolvedTone)}
+                                            </span>
+                                        ))}
+                                    </li>
+                                );
+                            })}
                         </ListTag>
                     );
                 }

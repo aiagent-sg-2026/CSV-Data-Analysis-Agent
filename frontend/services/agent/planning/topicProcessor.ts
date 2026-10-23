@@ -35,6 +35,9 @@ import { describeVolumeDependence, measureEvidenceVolumeDependence } from './vol
 import { measureLeadingGroupSampleSize } from './groupSampleSize';
 import { measureGroupCoverage, SERIES_NON_ADDITIVE_REASON_CODES } from './groupCoverage';
 import { assessSeriesMeasurePlan, resolveSeriesMeasure } from './seriesMeasureGuard';
+import { assessRowHierarchyPlan, mergePlanVerdicts, resolveRowHierarchy, withDetailRowScope, withRowHierarchyDetailFilter } from './rowHierarchyGuard';
+import { assessIdentifierGrouping } from './identifierGrouping';
+import { getCsvDataRowCount } from '../../../utils/datasetId';
 
 type StoreApi = {
     getState: () => AppStore;
@@ -175,6 +178,10 @@ export const processSingleTopic = async (
         if (seriesMeasure && !datasetContext.seriesMeasure) {
             datasetContext.seriesMeasure = seriesMeasure;
         }
+        const rowHierarchy = resolveRowHierarchy(getState());
+        if (rowHierarchy && !datasetContext.rowHierarchy) {
+            datasetContext.rowHierarchy = rowHierarchy;
+        }
         const semanticUnderstanding = options?.semanticUnderstanding ?? buildRuntimeSemanticUnderstanding({
             columns: getState().columnProfiles,
             analysisBrief: buildAnalysisIntentBrief({
@@ -239,6 +246,9 @@ export const processSingleTopic = async (
             } else {
                 datasetContext.analysisSteering = harness;
             }
+        }
+        if (datasetContext.analysisSteering && rowHierarchy) {
+            datasetContext.analysisSteering = withRowHierarchyDetailFilter(datasetContext.analysisSteering, rowHierarchy);
         }
         let escalatedToFull = false;
         const emitPlannerEscalation = (reason: string, attempt: number, detail?: Record<string, unknown>) => {
@@ -321,6 +331,9 @@ export const processSingleTopic = async (
                     { abortSignal: options?.abortSignal,skillStore:store },
                 );
             }
+            // A plan from any planner (parallel batch, stepped, retry) reads detail rows
+            // only on a hierarchy table, unless it states its own row scope.
+            evidencePlan = withDetailRowScope(evidencePlan, rowHierarchy);
             console.log(_elapsed('plan_generated'));
             // PERF-307: Yield after AI plan generation callback — break the
             // continuous chain between plan JSON parse and dedup/SQL execution.
@@ -442,7 +455,10 @@ export const processSingleTopic = async (
             // A plan that aggregates a series-dependent measure across series of
             // different meaning is replanned with the reason before it runs; the
             // evidence gate rejects it again if it ever reaches execution.
-            const seriesCheck = assessSeriesMeasurePlan(evidencePlan, seriesMeasure);
+            const seriesCheck = mergePlanVerdicts(
+                assessSeriesMeasurePlan(evidencePlan, seriesMeasure),
+                assessRowHierarchyPlan(evidencePlan, rowHierarchy),
+            );
             if (seriesCheck.decision === 'reject') {
                 if (attempt < MAX_EXECUTION_ATTEMPTS) {
                     emitPlannerEscalation('cross_series_replan', attempt, { reasonCodes: seriesCheck.reasonCodes });
@@ -497,6 +513,82 @@ export const processSingleTopic = async (
                     sourceStepIds,
                     rejectionReason: seriesCheck.feedback ?? seriesCheck.reasonCodes.join(', '),
                     valueReasonCodes: seriesCheck.reasonCodes,
+                };
+                break;
+            }
+
+            // Ranking or counting by a column that identifies single records (an invoice
+            // number, a product code) gives one-row groups and no finding. Replan with the
+            // reason, and reject it when the planner insists.
+            // The distinct share is measured over the whole table; a plan that filters rows (a hierarchy
+            // level, one year) works on an unknown, smaller population, so it is not judged here.
+            const filtersRows = Boolean(
+                evidencePlan.query.where?.predicates?.length
+                || evidencePlan.query.where?.groups?.length
+                || evidencePlan.preFilter?.length,
+            );
+            const identifierCheck = evidencePlan.queryMode === 'aggregate' && !filtersRows
+                ? assessIdentifierGrouping({
+                    groupBy: evidencePlan.query.groupBy ?? [],
+                    profiles: getState().columnProfiles ?? [],
+                    rowCount: getCsvDataRowCount(data),
+                    requestText: topic,
+                })
+                : null;
+            if (identifierCheck?.decision === 'reject') {
+                if (attempt < MAX_EXECUTION_ATTEMPTS) {
+                    emitPlannerEscalation('identifier_grouping_replan', attempt, { reasonCodes: identifierCheck.reasonCodes });
+                    plannerFeedback = identifierCheck.feedback ?? undefined;
+                    recordStep({
+                        type: 'refine_hypothesis',
+                        status: 'succeeded',
+                        inputSummary: `Evidence plan for "${topic}" groups by an identifier column; retrying with category guidance.`,
+                        inputSummaryI18n: {
+                            key: 'analysis_trace_refine_hypothesis_input',
+                            vars: { topic },
+                        },
+                        outputSummary: identifierCheck.feedback ?? 'Identifier grouping - replanning.',
+                        outputSummaryI18n: {
+                            key: 'analysis_trace_refine_hypothesis_output_feedback',
+                            vars: { message: 'Grouping by a record identifier - replanning.' },
+                        },
+                        decision: 'plan_probe_query',
+                        hypothesisId: options?.hypothesisId ?? null,
+                        reasonCodes: ['identifier_grouping_replan', ...identifierCheck.reasonCodes],
+                        queryTitle: evidencePlan.title,
+                        queryMode: evidencePlan.queryMode,
+                    });
+                    continue;
+                }
+                recordStep({
+                    type: 'evaluate_evidence',
+                    status: 'rejected',
+                    inputSummary: `Assess whether evidence query "${evidencePlan.title}" is worth presenting.`,
+                    inputSummaryI18n: {
+                        key: 'analysis_trace_evaluate_evidence_input',
+                        vars: { title: evidencePlan.title },
+                    },
+                    outputSummary: `Evidence gate decision: reject (${identifierCheck.reasonCodes.join(', ')} after ${attempt} attempts).`,
+                    outputSummaryI18n: {
+                        key: 'analysis_trace_evaluate_evidence_output',
+                        vars: { decision: 'reject' },
+                    },
+                    decision: 'reject_hypothesis',
+                    hypothesisId: options?.hypothesisId ?? null,
+                    reasonCodes: identifierCheck.reasonCodes,
+                    queryTitle: evidencePlan.title,
+                    queryMode: evidencePlan.queryMode,
+                });
+                completedResult = {
+                    status: 'completed',
+                    cardCreated: false,
+                    tableFirst: false,
+                    accepted: false,
+                    valueDecision: 'reject',
+                    evidenceLoopState: null,
+                    sourceStepIds,
+                    rejectionReason: identifierCheck.feedback ?? identifierCheck.reasonCodes.join(', '),
+                    valueReasonCodes: identifierCheck.reasonCodes,
                 };
                 break;
             }
@@ -705,7 +797,9 @@ export const processSingleTopic = async (
                 }
                 // AI evidence evaluation — runs in parallel with nothing, but
                 // gracefully falls back to deterministic if the call fails.
-                const harnessContext = options?.harnessContext ?? null;
+                const harnessContext = options?.harnessContext && rowHierarchy
+                    ? withRowHierarchyDetailFilter(options.harnessContext, rowHierarchy)
+                    : options?.harnessContext ?? null;
                 // PERF-201 Step 3: deterministic safety floor + quality gate is sufficient.
                 // Skipping AI evidence evaluation saves 5 calls + ~1000 tokens/run.
                 const aiEvaluation = null;
@@ -745,6 +839,7 @@ export const processSingleTopic = async (
                     } : null,
                     sampleSizeCaveat,
                     seriesMeasure,
+                    rowHierarchy,
                 });
                 console.log(_elapsed(`value_gate=${valueGate.decision}`));
                 // PERF-307: Yield after value gate — break the chain between

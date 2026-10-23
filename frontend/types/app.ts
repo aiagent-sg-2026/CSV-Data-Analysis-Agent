@@ -3,7 +3,7 @@ import type { CsvRow, CsvData, ReportIntakeIr } from './intake';
 import type { DataPreparationPlan, DataOperation } from './operations';
 import type { ActiveDataQuery, QueryTraceEntry, DuckDbSessionStatus } from './querying';
 import type { ReportContextResolution, DatasetSemanticSnapshot, SemanticSnapshotStatus } from './semantics';
-import { AnalysisArtifactProvenance, AnalysisCardData, AnalysisPlan, ColumnProfile, ResearchPlan } from './analysis';
+import { AnalysisArtifactProvenance, AnalysisCardData, AnalysisPlan, ColumnProfile, NumericParseCheck, ResearchPlan } from './analysis';
 import { ColumnRegistry } from './columns';
 import { ChatMessage, ClarificationRequest, PendingMutationConfirmation, QueuedChatTurn, ResolvedClarification } from './chat';
 import { AiTaskStatusMessage, CleaningRun, RuntimeAccessControlSettings, WorkspaceActionHistoryEntry } from './ai';
@@ -231,6 +231,8 @@ export interface AppState {
     /** Metadata-only graph; table rows remain in memory, DuckDB, or OPFS backing. */
     datasetBundle: DatasetBundle | null;
     dataQualityIssues: string[] | null;
+    /** Reconciliation of the loaded numeric columns against the original text; see numericParseGuard. */
+    numericParseCheck?: NumericParseCheck | null;
     isChangingGoal: boolean;
     planQueue: AnalysisPlan[];
     contextualSummary: string | null;

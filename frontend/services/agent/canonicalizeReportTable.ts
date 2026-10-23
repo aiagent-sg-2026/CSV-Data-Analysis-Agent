@@ -26,6 +26,9 @@ import { PERIOD_WIDE_OUTPUT_COLUMNS } from './reportShapePeriodWide';
 import { computeRowRoleSignals, type RowRoleSignalBundle } from './runtime/rowRoleSignals';
 import { recoverMisalignedSectionDimensions } from './sectionDimensionRecovery';
 import { withoutBodyNoise, type BodyRowFinding } from '../data/reportBodyRows';
+import { robustParseFloat } from '../data/dataProfiler';
+import { classifyNumberCell } from '../data/numberLocale';
+import { formatCount, formatCountNoun, pluralizeCount } from '../../utils/displayText';
 
 const UNNAMED_COLUMN_PATTERN = /^_?unnamed_column_/i;
 const DATE_LIKE_PATTERN = /^(?:\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})$/;
@@ -126,6 +129,12 @@ const parseNumericCandidate = (value: unknown): number | null => {
     }
     if (DATE_LIKE_PATTERN.test(normalized)) {
         return null;
+    }
+    // A cell only valid as a European number (161,30 or 1.234,56) keeps its decimal comma;
+    // the symbol strip below would read it as 16130 or 1.23456.
+    if (classifyNumberCell(normalized) === 'decimal_comma') {
+        const european = robustParseFloat(normalized);
+        if (european !== null) return european;
     }
     // Whole-string parse after stripping symbols, mirroring isNumericCandidate
     // in columnRoleClassifier: a prefix parse turned the month "2010-01" into
@@ -601,7 +610,7 @@ const buildPreparedRowTableFallback = (
             rowCount: canonicalRows.length,
             columnCount: Object.keys(canonicalRows[0] ?? {}).length,
             lineageColumns: ['SourceRowIndex', 'ResolvedRowRole', 'SectionLabel', 'HeaderPath', 'CarryForwardAppliedColumns'],
-            summary: `Retained ${canonicalRows.length} detail row(s) from the prepared dataset.`,
+            summary: `Retained ${formatCount(canonicalRows.length)} detail ${pluralizeCount(canonicalRows.length, 'row')} from the prepared dataset.`,
             excludedRowCounts: {},
             carryForwardAppliedCounts: sectionDimensionRecovery.recoveredCounts,
             footerTotalsMatched: null,
@@ -624,6 +633,33 @@ const ROW_HIERARCHY_COLUMNS = {
  * Accepted only when the published parents equal the sum of their children
  * (see resolveIndentHierarchy); otherwise the table is returned untouched.
  */
+/**
+ * Names the ancestor-level columns of an indentation hierarchy. A label header
+ * such as "Region / Country / Customer" names its levels; otherwise they are
+ * "Level 1", "Level 2"... The deepest level is the label column itself.
+ */
+const nameHierarchyLevelColumns = (labelColumn: string, levels: number, existingHeaders: string[]): string[] => {
+    const count = Math.max(0, levels - 1);
+    if (count === 0) return [];
+    const taken = new Set([
+        ...existingHeaders.map(header => header.trim().toLowerCase()),
+        ...Object.values(ROW_HIERARCHY_COLUMNS).map(column => column.toLowerCase()),
+        'sourcerowindex', 'rowrole', 'resolvedrowrole', 'sectionlabel', 'headerpath', 'carryforwardappliedcolumns',
+    ]);
+    const segments = labelColumn.split(/\s*[/>|]\s*/).map(segment => segment.trim()).filter(Boolean);
+    const named = segments.length === levels && new Set(segments.map(segment => segment.toLowerCase())).size === levels;
+    const used = new Set<string>();
+    return Array.from({ length: count }, (_, level) => {
+        const base = named ? segments[level] : `Level ${level + 1}`;
+        let candidate = base;
+        for (let suffix = 2; taken.has(candidate.toLowerCase()) || used.has(candidate.toLowerCase()); suffix += 1) {
+            candidate = `${base} (level ${suffix})`;
+        }
+        used.add(candidate.toLowerCase());
+        return candidate;
+    });
+};
+
 const applyRowIndentHierarchy = (params: {
     rows: CsvRow[];
     rawRows: string[][];
@@ -664,6 +700,7 @@ const applyRowIndentHierarchy = (params: {
     });
     if (!resolved) return null;
     const entryBySource = new Map(labelledIndexes.map((rowIndex, position) => [rowIndex, resolved.entries[position]]));
+    const levelColumns = nameHierarchyLevelColumns(labelColumn, resolved.evidence.levels, headers);
 
     let parentRows = 0;
     const nextRows = rows.map(row => {
@@ -673,6 +710,8 @@ const applyRowIndentHierarchy = (params: {
         const nextRow: CsvRow = {};
         Object.entries(row).forEach(([column, value]) => {
             if (column === 'SourceRowIndex') {
+                // One column per ancestor level, so a level can be grouped over detail rows.
+                levelColumns.forEach((levelColumn, level) => { nextRow[levelColumn] = entry.path[level] ?? null; });
                 nextRow[ROW_HIERARCHY_COLUMNS.parent] = entry.parentKey;
                 nextRow[ROW_HIERARCHY_COLUMNS.depth] = entry.level;
                 nextRow[ROW_HIERARCHY_COLUMNS.rowClass] = entry.rowClass;
@@ -691,6 +730,7 @@ const applyRowIndentHierarchy = (params: {
             parentColumn: ROW_HIERARCHY_COLUMNS.parent,
             depthColumn: ROW_HIERARCHY_COLUMNS.depth,
             rowClassColumn: ROW_HIERARCHY_COLUMNS.rowClass,
+            levelColumns,
             detailRowValue: 'fact',
             levels: resolved.evidence.levels,
             parentRows,
@@ -1074,8 +1114,8 @@ const buildRowTableFromRawBoundary = (params: {
                 columnCount: Object.keys(finalRows[0] ?? {}).length,
                 lineageColumns: ['SourceRowIndex', 'ResolvedRowRole', 'SectionLabel', 'HeaderPath', 'CarryForwardAppliedColumns'],
                 summary: hierarchy
-                    ? `Retained ${hierarchy.meta.detailRows} detail row(s) and ${hierarchy.meta.parentRows} parent row(s) from raw report rows; indentation hierarchy verified against parent sums.`
-                    : `Retained ${compactRows.length} canonical detail row(s) from raw report rows.`,
+                    ? `Retained ${formatCount(hierarchy.meta.detailRows)} detail ${pluralizeCount(hierarchy.meta.detailRows, 'row')} and ${formatCount(hierarchy.meta.parentRows)} parent ${pluralizeCount(hierarchy.meta.parentRows, 'row')} from raw report rows; indentation hierarchy verified against parent sums.`
+                    : `Retained ${formatCount(compactRows.length)} canonical detail ${pluralizeCount(compactRows.length, 'row')} from raw report rows.`,
                 excludedRowCounts,
                 carryForwardAppliedCounts,
                 footerTotalsMatched: footerVerification.footerTotalsMatched,
@@ -1126,7 +1166,7 @@ const buildPeriodWideCanonicalTable = (
             rowCount: canonicalRows.length,
             columnCount: Object.keys(canonicalRows[0] ?? {}).length,
             lineageColumns: ['SourceRowIndex', 'SourceColumnName', 'ResolvedRowRole', 'HeaderPath', 'CarryForwardAppliedColumns'],
-            summary: `Melted ${reshape.sourceRows.length} series across ${reshape.detection.periodColumns.length} ${reshape.detection.grain} periods into ${canonicalRows.length} row(s).`,
+            summary: `Melted ${reshape.sourceRows.length} series across ${reshape.detection.periodColumns.length} ${reshape.detection.grain} periods into ${formatCountNoun(canonicalRows.length, 'row')}.`,
             excludedRowCounts,
             carryForwardAppliedCounts: {},
             footerTotalsMatched: null,
@@ -1381,7 +1421,7 @@ const buildReshapedTable = (
             rowCount: canonicalRows.length,
             columnCount: Object.keys(canonicalRows[0] ?? {}).length,
             lineageColumns: ['SourceRowIndex', 'SourceColumnName', 'ResolvedRowRole', 'HeaderPath', 'CarryForwardAppliedColumns'],
-            summary: `Canonicalized ${canonicalRows.length} row(s) into ${structure.decision.targetShape}.`,
+            summary: `Canonicalized ${formatCountNoun(canonicalRows.length, 'row')} into ${structure.decision.targetShape}.`,
             excludedRowCounts,
             carryForwardAppliedCounts: carryForward.appliedCounts,
             footerTotalsMatched: null,

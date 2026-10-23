@@ -19,6 +19,7 @@ import { getLocalizedText } from '../../utils/localizedText';
 import { getTranslation } from '../../utils/localization';
 import { getBarChartReadabilityHints, getPivotCardQualitySummary, isAdditiveAggregation } from '../../utils/analysisCardPresentation';
 import { resolvePlanGroupLabel, resolvePlanMetricLabel } from '../../services/dashboard/businessLabelResolver';
+import { formatCount } from '../../utils/displayText';
 import { buildStackedPivotChartPlan } from '../../utils/pivotMatrixCharting';
 
 import { evaluateChartPresentation } from '../../services/ai/visualPresentationEvaluator';
@@ -127,8 +128,8 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
         }
         if (!groupsComplete) {
             // The query limit cut groups off: an export must not claim the whole card aggregation.
-            scopeParts.push(matchedGroupCount !== null && overallTotalValue !== null
-                ? `${totalRowCount} of ${matchedGroupCount} groups returned`
+            scopeParts.push(matchedGroupCount !== null && (overallTotalValue !== null || !hasAdditiveMeasure)
+                ? `${formatCount(totalRowCount)} of ${formatCount(matchedGroupCount)} groups returned`
                 : 'Only the groups returned');
         }
         if (cardData?.filter?.column && cardData.filter.values.length > 0) {
@@ -456,7 +457,7 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
                     totalRowCount={!groupsComplete && overallTotalValue !== null && matchedGroupCount !== null ? matchedGroupCount : totalRowCount}
                     summaryText={summary?.text ?? null}
                     aggregation={plan.aggregation}
-                    valueColumn={plan.valueColumn}
+                    valueColumn={plan.valueColumn ? displayMetricLabel : undefined}
                     onExpand={onToggleExpand}
                     language={language}
                 />

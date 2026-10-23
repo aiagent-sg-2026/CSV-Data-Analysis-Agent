@@ -23,6 +23,7 @@ import {
 } from '../data/importCapacity';
 import { buildCsvDataFromIntakeIr } from '../data/reportCsvIntake';
 import { buildSchemaSnapshot, summarizeDataQualityIssues } from '../data/dataProfiler';
+import { summarizeDataQualityForEndUser } from '../data/dataQualityNotes';
 import type { FileOrchestrationUpdate } from './orchestration/fileOrchestrator';
 import { agentMemoryCollector } from './memory/agentMemoryCollector';
 import { emitAgentEvent } from './monitoring/agentMonitor';
@@ -412,13 +413,16 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
     });
 
     if (issues.length > 0) {
-        const warningSummary = summarizeDataQualityIssues(issues) ?? getTranslation('file_processor_quality_warning_fallback', store.getState().settings.language);
-        console.warn(`${LOG_PREFIX} ${warningSummary}`, {
+        // The model-facing summary (it names tools like replace_values) goes to the log; the person
+        // watching the progress list reads plain sentences in their language.
+        const modelSummary = summarizeDataQualityIssues(issues) ?? getTranslation('file_processor_quality_warning_fallback', store.getState().settings.language);
+        console.warn(`${LOG_PREFIX} ${modelSummary}`, {
             fileName: file.name,
             issueCount: issues.length,
             issues,
         });
-        yield { type: 'progress', message: warningSummary, messageType: 'warning' };
+        const userSummary = summarizeDataQualityForEndUser(issues, store.getState().settings.language)?.userSummary;
+        yield { type: 'progress', message: userSummary || modelSummary, messageType: 'warning' };
     }
 
     const dataPrepPlan: DataPreparationPlan = {

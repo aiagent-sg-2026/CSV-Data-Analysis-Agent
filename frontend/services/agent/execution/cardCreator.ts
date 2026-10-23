@@ -120,6 +120,8 @@ export const createNewCard = async (
         qualityWarnings: annotations?.qualityWarnings,
         evidenceGateDecision: annotations?.evidenceValueGate?.decision ?? null,
     });
+    // The provenance can carry a numeric-parse mismatch, which limits the card to a table.
+    plan = resolveCardPresentationPlan({ plan, evidenceValueGate: annotations?.evidenceValueGate, provenance });
     const semanticFingerprint = buildCardSemanticFingerprint(plan, provenance.datasetVersion);
     const duplicateCard = semanticFingerprint
         ? getState().analysisCards.find(card =>

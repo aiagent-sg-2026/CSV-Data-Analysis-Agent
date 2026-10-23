@@ -419,7 +419,7 @@ export const generateAllSummaries = async (
             aiCoreAnalysisSummary: fallbackCoreSummary,
             finalSummary: fallbackFinalSummary,
             aiCoreAnalysisSummaryProvenance: narrativeProvenance,
-            finalSummaryProvenance: narrativeProvenance,
+            finalSummaryProvenance: { ...narrativeProvenance, narrativeSource: 'deterministic' as const },
             chatHistory: [...prev.chatHistory, createChatMessage({ sender: 'ai', text: fallbackCoreSummary.text, timestamp: new Date(), type: 'ai_thinking' })],
         }));
         return;
@@ -447,7 +447,7 @@ export const generateAllSummaries = async (
             aiCoreAnalysisSummary: deterministicSummaries.core,
             finalSummary: deterministicSummaries.final,
             aiCoreAnalysisSummaryProvenance: narrativeProvenance,
-            finalSummaryProvenance: narrativeProvenance,
+            finalSummaryProvenance: { ...narrativeProvenance, narrativeSource: 'deterministic' as const },
             chatHistory: [
                 ...prev.chatHistory,
                 createChatMessage({
@@ -477,7 +477,7 @@ export const generateAllSummaries = async (
             const evidenceSummary = buildEvidenceFinalSummary(summaryCards, settings.language);
             setState({
                 finalSummary: evidenceSummary ? appendReliabilityNote(evidenceSummary, fallbackCards) : null,
-                finalSummaryProvenance: evidenceSummary ? narrativeProvenance : null,
+                finalSummaryProvenance: evidenceSummary ? { ...narrativeProvenance, narrativeSource: 'evidence_fallback' as const } : null,
             });
             getState().addProgress(
                 evidenceSummary
@@ -495,7 +495,7 @@ export const generateAllSummaries = async (
             }
             setState({
                 finalSummary: appendReliabilityNote(generated, fallbackCards),
-                finalSummaryProvenance: narrativeProvenance,
+                finalSummaryProvenance: { ...narrativeProvenance, narrativeSource: 'ai_summary' as const },
             });
             // PERF-304: Yield after final summary setState
             await new Promise<void>(resolve => setTimeout(resolve, 0));
