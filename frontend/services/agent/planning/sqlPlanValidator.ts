@@ -24,7 +24,7 @@ import {
     isObject, normalizeAggregateAliases, normalizeOutputKey,
     splitAggregateSourceExpression,
     repairAggregateAliasConflicts, repairEvidenceQuerySelectAlignment,
-    normalizeQuery, normalizeEvidenceQuery,
+    normalizeQuery, normalizeEvidenceQuery, liftEvidenceAggregateFilters,
 } from './queryRepair';
 
 /** Semantic role hints from the dataset context, used for fallback validation
@@ -738,10 +738,11 @@ export const normalizeAndValidateSqlEvidenceQueryPlan = (
         return { validPlan: null, errors: ['Evidence query plan must include an object-shaped query field.'] };
     }
 
+    const liftedQuery = liftEvidenceAggregateFilters(rawPlan.query);
     const plan: SqlEvidenceQueryPlan = {
         title: normalizeString(rawPlan.title),
         queryMode: normalizeString(rawPlan.queryMode) === 'rowset' ? 'rowset' : 'aggregate',
-        query: rawPlan.query as QueryPlan,
+        query: liftedQuery.query as QueryPlan,
         intentSummary: normalizeString(rawPlan.intentSummary),
         preferredResultShape: normalizeString(rawPlan.preferredResultShape) as SqlEvidenceQueryPlan['preferredResultShape'],
         preFilter: normalizeEvidencePreFilter(rawPlan.preFilter),
@@ -749,6 +750,9 @@ export const normalizeAndValidateSqlEvidenceQueryPlan = (
 
     const errors: string[] = [];
     if (!plan.title) errors.push("Evidence plan is missing required field: 'title'.");
+    liftedQuery.unresolvedAliases.forEach(alias => {
+        errors.push(`query.aggregateFilters references "${alias}", which is not the "as" alias of any aggregate.`);
+    });
 
     plan.query = normalizeEvidenceQuery(plan);
 

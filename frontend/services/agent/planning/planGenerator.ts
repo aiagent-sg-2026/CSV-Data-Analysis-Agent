@@ -11,7 +11,8 @@ import {
     type SqlAnalysisPlan,
     type SqlEvidenceQueryPlan,
 } from '../../../types';
-import { createAnalysisTopicsSchema, createSqlEvidenceQueryPlanSchema } from '../../ai/schemas/analysisSchemas';
+import { createAnalysisTopicsSchema, createSqlEvidenceQueryPlanOutputSchema } from '../../ai/schemas/analysisSchemas';
+import { liftEvidencePlanAggregateFilters } from './queryRepair';
 import { createProviderModel } from '../../ai/providerConfig';
 import { withTransientRetry } from '../../ai/transientRetry';
 import {
@@ -670,7 +671,7 @@ export const generateEvidenceQueryPlanWithRetry = async (
                                 },
                             ],
                             abortSignal,
-                            output: Output.object({ schema: jsonSchema(prepareSchemaForProvider(createSqlEvidenceQueryPlanSchema(allColumnNames), settings.provider) as Parameters<typeof jsonSchema>[0]) }),
+                            output: Output.object({ schema: jsonSchema(prepareSchemaForProvider(createSqlEvidenceQueryPlanOutputSchema(allColumnNames), settings.provider) as Parameters<typeof jsonSchema>[0]) }),
                             activityTimeoutMs: effectiveTimeout,
                         }),
                         { settings, primaryModelId: modelId, label: 'planGenerator.plan', abortSignal },
@@ -678,9 +679,11 @@ export const generateEvidenceQueryPlanWithRetry = async (
                 },
             });
 
-            const rawPlan = result.output !== undefined
+            // Fold the flat aggregateFilters list into aggregates[].where before
+            // semantic defaults may rename the aliases it refers to.
+            const rawPlan = liftEvidencePlanAggregateFilters(result.output !== undefined
                 ? result.output
-                : robustlyParseJsonObject(result.text);
+                : robustlyParseJsonObject(result.text));
             console.debug(`${LOG_PREFIX} Raw evidence plan from AI for "${topic}":`, rawPlan);
 
             const semanticDefaultsApplied = applyEvidenceQuerySemanticDefaults({

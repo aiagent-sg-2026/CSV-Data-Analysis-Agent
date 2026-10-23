@@ -372,6 +372,53 @@ export const createSqlEvidenceQueryPlanSchema = (columnNames: string[]) => ({
   additionalProperties: false,
 } as const);
 
+/** Key of the flat per-aggregate filter list used by the structured-output evidence schema. */
+export const EVIDENCE_AGGREGATE_FILTERS_KEY = 'aggregateFilters';
+
+/**
+ * Structured-output (`Output.object`) variant of the evidence plan schema.
+ *
+ * The Default demo gateway rejects a `text.format` schema whose objects nest
+ * five levels deep (root > query > aggregates[] > where > predicates[]) with
+ * HTTP 400 DEMO_SCHEMA_UNSUPPORTED "JSON Schema is too deep or complex". Here
+ * per-aggregate filters move to the flat `query.aggregateFilters[]` list, keyed
+ * by aggregate alias, which keeps every object within four levels. The plan
+ * validator folds that list back into `aggregates[].where`
+ * (liftEvidenceAggregateFilters), so the plan contract does not change.
+ */
+export const createSqlEvidenceQueryPlanOutputSchema = (columnNames: string[]) => {
+  const schema = createSqlEvidenceQueryPlanSchema(columnNames);
+  const query = schema.properties.query;
+  const aggregates = query.properties.aggregates;
+  const { where: aggregateWhere, ...aggregateProperties } = aggregates.items.properties;
+  const predicate = aggregateWhere.properties.predicates.items;
+  return {
+    ...schema,
+    properties: {
+      ...schema.properties,
+      query: {
+        ...query,
+        properties: {
+          ...query.properties,
+          aggregates: { ...aggregates, items: { ...aggregates.items, properties: aggregateProperties } },
+          [EVIDENCE_AGGREGATE_FILTERS_KEY]: {
+            type: 'array',
+            description: 'Filters that apply to one aggregate only (a conditional aggregate). Each entry names the aggregate by its exact "as" alias; entries for the same alias are ANDed. Use query.where for filters shared by every aggregate.',
+            items: {
+              ...predicate,
+              properties: {
+                aggregate: { type: 'string', description: 'The "as" alias of the aggregate this filter applies to.' },
+                ...predicate.properties,
+              },
+              required: ['aggregate', ...predicate.required],
+            },
+          },
+        },
+      },
+    },
+  };
+};
+
 export const createSqlPresentationPlanSchema = (columnNames: string[]) => ({
   type: 'object',
   properties: {

@@ -84,6 +84,7 @@ vi.mock('../services/prompts/analysisPrompts', () => ({
 vi.mock('../services/ai/schemas/analysisSchemas', () => ({
     createAnalysisTopicsSchema: vi.fn().mockReturnValue({}),
     createSqlEvidenceQueryPlanSchema: vi.fn().mockReturnValue({}),
+    createSqlEvidenceQueryPlanOutputSchema: vi.fn().mockReturnValue({}),
 }));
 
 vi.mock('../utils/jsonParser', () => ({
