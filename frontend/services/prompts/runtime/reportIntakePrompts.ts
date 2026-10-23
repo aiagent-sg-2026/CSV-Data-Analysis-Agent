@@ -133,6 +133,7 @@ Decision contract:
 - The header row is the row whose cells should become body column names.
 - Title, subtitle, metadata, and footer rows are not headers.
 - A year, period code, or category code may appear in the header row.
+- A row that follows the body pattern (same kind of key values as the rows below, with measure cells that are numbers, empty, or missing markers such as na, n.a., or -) is a body row, never a header layer.
 - Parameter rows are optional and should only be returned when directly supported.
 - If a matching header line appears both before and after a parameter block, choose the later line immediately above the body as headerRowIndex and mark the earlier line as repeatedHeaderRowIndexes.
 - Repeated headers should only be returned when they match the main header.

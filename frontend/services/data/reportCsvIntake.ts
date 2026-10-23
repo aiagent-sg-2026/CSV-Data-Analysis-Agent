@@ -17,6 +17,7 @@ import {
     FOOTER_PATTERN,
     SUMMARY_LABEL_PATTERN,
     SUMMARY_TOKEN_PATTERN,
+    isMissingValueMarker,
     isNumericLike,
 } from '../agent/reportShapeUtils';
 import { buildMergedBoundaryHeaders } from '../agent/reportStructureNormalization';
@@ -265,6 +266,60 @@ const isCodeSeriesHeaderRow = (row: RawCsvRow, followingRow: RawCsvRow | undefin
     return labelLikeCount >= Math.max(3, Math.floor(detailValues.length * 0.25));
 };
 
+const DATA_PATTERN_SAMPLE_ROWS = 6;
+const DATA_PATTERN_LOOKAHEAD_ROWS = 12;
+
+/**
+ * Detects a candidate header-continuation row that is really the first body
+ * row. Public datasets often begin with rows whose measure is missing
+ * ("2011-Q2,ANG MO KIO,1-RM,na"), which removes the numeric evidence that
+ * isLikelyDataRow relies on. A genuine header layer carries labels in the
+ * measure columns ("Net Sales", "Qty"), while a data row only carries numbers
+ * or missing markers there. The row must also tie itself to the rows below:
+ * either an explicit missing marker in a measure column or a shared value in
+ * a categorical key column, so a sub-header that only labels the descriptor
+ * columns ("Country,State,City,,") is still kept as a header layer.
+ */
+const findContinuedDataPatternRow = (rows: RawCsvRow[], candidateIndex: number): RawCsvRow | null => {
+    const candidate = rows[candidateIndex];
+    if (!candidate) return null;
+
+    const sampleRows: RawCsvRow[] = [];
+    const lookaheadEnd = Math.min(rows.length, candidateIndex + 1 + DATA_PATTERN_LOOKAHEAD_ROWS);
+    for (let index = candidateIndex + 1; index < lookaheadEnd && sampleRows.length < DATA_PATTERN_SAMPLE_ROWS; index += 1) {
+        const row = rows[index];
+        if (isBlankRow(row)) continue;
+        if (isLikelyDataRow(row)) sampleRows.push(row);
+    }
+    if (sampleRows.length === 0) return null;
+
+    const columnCount = Math.max(candidate.length, ...sampleRows.map(row => row.length));
+    const majority = Math.floor(sampleRows.length / 2) + 1;
+    let measureColumnCount = 0;
+    let explicitMissingMarkerCount = 0;
+    let sharedKeyValueCount = 0;
+    for (let column = 0; column < columnCount; column += 1) {
+        const sampleValues = sampleRows.map(row => String(row[column] ?? '').trim());
+        const numericCount = countMatches(sampleValues, isNumericLike);
+        const textCount = sampleValues.filter(value => value && !isNumericLike(value) && !isMissingValueMarker(value)).length;
+        const candidateValue = String(candidate[column] ?? '').trim();
+        if (numericCount >= majority) {
+            measureColumnCount += 1;
+            if (!candidateValue || isNumericLike(candidateValue)) continue;
+            if (!isMissingValueMarker(candidateValue)) return null;
+            explicitMissingMarkerCount += 1;
+        } else if (textCount >= majority && candidateValue && sampleValues.includes(candidateValue)) {
+            sharedKeyValueCount += 1;
+        }
+    }
+    return measureColumnCount > 0 && (explicitMissingMarkerCount > 0 || sharedKeyValueCount > 0)
+        ? sampleRows[0]
+        : null;
+};
+
+const continuesFollowingDataPattern = (rows: RawCsvRow[], candidateIndex: number) =>
+    findContinuedDataPatternRow(rows, candidateIndex) !== null;
+
 const areRowsEquivalent = (left: RawCsvRow, right: RawCsvRow) =>
     left.length === right.length
     && left.every((value, index) => String(value ?? '').trim() === String(right[index] ?? '').trim());
@@ -465,6 +520,18 @@ const findBodyStartAfterHeader = (
                 bodyEvidenceKind: 'hierarchical_sequence' as const,
             };
         }
+        // A leading body row whose measure is missing ("…,1-RM,na") has no
+        // numeric evidence of its own; it starts the body when it continues
+        // the data pattern below it, instead of being dropped as metadata.
+        const continuedDataRow = findContinuedDataPatternRow(rows, index);
+        if (continuedDataRow) {
+            return {
+                bodyStartIndex: index,
+                parameterRowIndexes: skippedParameterRows,
+                repeatedHeaderRowIndexes: repeatedHeaderRows,
+                bodyEvidenceKind: detectBodyEvidenceKind(continuedDataRow),
+            };
+        }
         if (isLikelyMetadataPairRow(row) || isLikelyParameterLabelRow(row) || isSparseLongTextRow(row)) {
             skippedParameterRows.push(index);
             continue;
@@ -602,6 +669,7 @@ const selectReportHeader = (rows: RawCsvRow[]): HeaderSelection | null => {
                 continue;
             }
             if (!isHeaderContinuationRow(candidate) || isLikelyDataRow(candidate)) break;
+            if (continuesFollowingDataPattern(rows, nextIndex)) break;
             blockIndexes.push(nextIndex);
         }
 
@@ -1105,6 +1173,14 @@ export const validateAiBoundary = (
     for (const idx of boundary.headerLayerIndexes ?? []) {
         if (!Number.isInteger(idx) || idx < 0 || idx >= boundary.bodyStartIndex) {
             return { valid: false, rejectionReason: `headerLayerIndex ${idx} out of valid range [0, ${boundary.bodyStartIndex})` };
+        }
+    }
+    // The same data-pattern guard as deterministic intake: a row that
+    // continues the body below it (for example a first record whose measure
+    // is "na") must not become a column name or a header layer.
+    for (const idx of [boundary.headerRowIndex, ...(boundary.headerLayerIndexes ?? [])]) {
+        if (continuesFollowingDataPattern(rows, idx)) {
+            return { valid: false, rejectionReason: `Header row ${idx} continues the data pattern of the body rows below it` };
         }
     }
     for (const idx of boundary.parameterRowIndexes ?? []) {

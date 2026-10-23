@@ -51,6 +51,14 @@ export const normalizeText = (value: string) => value.trim().toLowerCase();
 
 export const isNumericLike = (value: string) => /^-?\d[\d,]*(?:\.\d+)?$/.test(value.trim());
 
+// Explicit "no value" tokens that public and exported datasets place in
+// measure cells (for example "na" or "-" for a suppressed median). An empty
+// cell is deliberately excluded: emptiness is also normal in band, heading and
+// group rows, so callers decide separately how much weight it carries.
+export const MISSING_VALUE_MARKER_PATTERN = /^'?\s*(?:-+|[–—]|n\/?a|n\.a\.?|nan|null|\.{2,3})$/i;
+
+export const isMissingValueMarker = (value: string) => MISSING_VALUE_MARKER_PATTERN.test(value.trim());
+
 export const isCodeLike = (value: string) => CODE_LIKE_PATTERN.test(value.trim());
 
 export const isSummaryLike = (value: string) => SUMMARY_LABEL_PATTERN.test(value.trim());
