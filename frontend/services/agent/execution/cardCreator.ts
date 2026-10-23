@@ -95,7 +95,7 @@ export const createNewCard = async (
     plan: AnalysisPlan,
     aggregatedData: CsvRow[],
     store: StoreApi,
-    annotations?: Pick<AnalysisCardData, 'sourceTopic' | 'sourceStepIds' | 'analysisSessionRunId' | 'autoAnalysisEvaluation' | 'evidenceValueGate' | 'qualityWarnings' | 'provenance'> & {
+    annotations?: Pick<AnalysisCardData, 'sourceTopic' | 'sourceStepIds' | 'analysisSessionRunId' | 'autoAnalysisEvaluation' | 'evidenceValueGate' | 'qualityWarnings' | 'provenance' | 'groupCoverage'> & {
         queryTrace?: QueryTraceEntry | null;
     },
 ): Promise<AnalysisCardData> => {
@@ -199,6 +199,7 @@ export const createNewCard = async (
         id: `card-${Date.now()}-${Math.random()}`,
         plan,
         aggregatedData,
+        ...(annotations?.groupCoverage ? { groupCoverage: annotations.groupCoverage } : {}),
         summary,
         displayChartType: resolveDisplayChartType(plan, aggregatedData),
         isDataVisible: isTableOnlyPresentation(plan) || (plan.defaultDataVisible ?? false),

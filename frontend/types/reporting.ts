@@ -2,6 +2,7 @@ import type {
     AggregationType,
     AnalysisArtifactEvidenceRef,
     AnalysisArtifactEvidenceStatus,
+    AnalysisCardGroupCoverage,
     CardTrustReasonCode,
     CardTrustStatus,
     DatasetQualitySignal,
@@ -77,6 +78,8 @@ export interface ReportCardEvidence {
     summary: LocalizedText | null;
     aggregatedDataSample: CsvRow[];
     reportChartRows: CsvRow[];
+    /** What the rows cover when the evidence query returned only the top of a ranking; absent when they are every group. */
+    groupCoverage?: AnalysisCardGroupCoverage | null;
     semanticRole: DisplayAnalysisIrSemanticRole | null;
     helperExposureLevel: DisplayAnalysisIrHelperExposureLevel | null;
     businessMeaningConfidence: number | null;

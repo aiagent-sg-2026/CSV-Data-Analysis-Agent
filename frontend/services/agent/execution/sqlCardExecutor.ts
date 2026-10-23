@@ -4,6 +4,7 @@ import {
     isAggregationType,
     type ActiveDataQuery,
     type AnalysisCardData,
+    type AnalysisCardGroupCoverage,
     type AnalysisPlan,
     type ColumnProfile,
     type CsvData,
@@ -27,6 +28,7 @@ import { emitAgentEvent } from '../monitoring/agentMonitor';
 import { agentMemoryCollector } from '../memory/agentMemoryCollector';
 import { SqlAutoAnalysisError } from '../planning/planGenerator';
 import { mergeEvidencePreFilterIntoQuery } from '../planning/evidenceQuerySemantics';
+import { measureGroupCoverage, SERIES_NON_ADDITIVE_REASON_CODES } from '../planning/groupCoverage';
 import { tryChronologicalSort } from '../../../utils/chronologicalSort';
 import { resolveRankDirectionFromQuery } from '../../../utils/rankedPresentation';
 import { isStructuralMetadataColumn } from '../structuralMetadata';
@@ -443,6 +445,8 @@ export const executePresentationPlanAndCreateCard = async (
         sourceStepIds?: string[];
         analysisSessionRunId?: string | null;
         existingAcceptedOutputs?: ExistingAcceptedEvidence[];
+        /** What the evidence rows cover of the query's groups, measured before the card is built. */
+        groupCoverage?: AnalysisCardGroupCoverage | null;
     },
 ): Promise<SqlPresentationExecutionResult> => {
     const { getState } = store;
@@ -567,6 +571,7 @@ export const executePresentationPlanAndCreateCard = async (
             : null,
         autoAnalysisEvaluation: null,
         queryTrace: executionResult.queryTrace,
+        groupCoverage: options?.groupCoverage ?? null,
     });
     console.log(`[Perf:CardExec] createNewCard: ${Math.round(performance.now() - _cardT0)}ms | "${normalizedPlan.title?.slice(0, 40)}"`);
     const cardEvaluation = evaluateAutoAnalysisCards([card]).cards[0] ?? null;
@@ -630,7 +635,22 @@ export const executeSqlPlanAndCreateCard = async (
             });
         }
 
-        const insights = evaluateAggregationQuality(uiPlan, result.rows);
+        // The rows may be only the head of the ranking; measure the total over every group so
+        // concentration claims and the card's shares are not relative to the returned rows.
+        const evidencePlan: SqlEvidenceQueryPlan = {
+            title: plan.title,
+            queryMode: plan.queryMode,
+            query: plan.query,
+            intentSummary: plan.description,
+            preFilter: plan.preFilter,
+        };
+        const groupCoverage = await measureGroupCoverage(
+            evidencePlan,
+            result,
+            checkPlan => executeEvidenceQuery(checkPlan, store, binding, { topic: options?.topic, suppressQueryStateUpdates: true }),
+            { valueColumn: uiPlan.valueColumn, totalSuppressed: options?.evidenceValueGate?.reasonCodes.some(code => SERIES_NON_ADDITIVE_REASON_CODES.has(code)) },
+        );
+        const insights = evaluateAggregationQuality(uiPlan, result.rows, groupCoverage);
         emitAgentEvent(store, {
             phase: 'evaluation',
             step: 'aggregation_result',
@@ -677,6 +697,7 @@ export const executeSqlPlanAndCreateCard = async (
             autoAnalysisEvaluation: null,
             qualityWarnings,
             queryTrace: execution.queryTrace,
+            groupCoverage,
             ...(options?.evidenceValueGate ? { evidenceValueGate: options.evidenceValueGate } : {}),
         });
         const cardEvaluation = evaluateAutoAnalysisCards([card]).cards[0] ?? null;

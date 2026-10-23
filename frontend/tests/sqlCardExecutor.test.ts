@@ -346,6 +346,81 @@ describe('sqlCardExecutor', () => {
         expect(card).toBeDefined();
     });
 
+    it('records what a cut-off ranking covers and measures the total over every group with one ungrouped query', async () => {
+        const csvData = { fileName: 'sales.csv', data: [{ Region: 'East', Revenue: 60 }] };
+        const datasetVersion = buildSemanticDatasetVersion(csvData as never);
+        executeCompiledQueryMock
+            .mockResolvedValueOnce({
+                rows: [{ Region: 'East', Revenue: 60 }, { Region: 'West', Revenue: 40 }],
+                totalMatchedRows: 8,
+                returnedRows: 2,
+                truncated: true,
+                selectedColumns: ['Region', 'Revenue'],
+                appliedOrderBy: [{ column: 'Revenue', direction: 'desc' }],
+                appliedLimit: 2,
+                durationMs: 9,
+            })
+            .mockResolvedValueOnce({
+                rows: [{ group_coverage_total: 400 }],
+                totalMatchedRows: 1,
+                returnedRows: 1,
+                truncated: false,
+                selectedColumns: ['group_coverage_total'],
+                appliedOrderBy: [],
+                appliedLimit: 1,
+                durationMs: 3,
+            });
+
+        const { executeSqlPlanAndCreateCard } = await import('../services/agent/execution/sqlCardExecutor');
+        const state = {
+            csvData,
+            columnProfiles: [
+                { name: 'Region', type: 'categorical', uniqueValues: 8 },
+                { name: 'Revenue', type: 'numerical' },
+            ],
+            queryHistory: [],
+            logAgentToolUsage: vi.fn(),
+            recordAgentEvent: vi.fn(),
+            datasetSemanticSnapshot: null,
+            semanticDatasetVersion: null,
+        } as any;
+        const store = {
+            getState: () => state,
+            setState: (partial: any) => Object.assign(state, typeof partial === 'function' ? partial(state) : partial),
+        };
+
+        await executeSqlPlanAndCreateCard({
+            chartType: 'bar',
+            title: 'Revenue by Region',
+            description: 'Compare revenue by region.',
+            queryMode: 'aggregate',
+            aggregation: 'sum',
+            bindings: { groupByColumn: 'Region', valueColumn: 'Revenue' },
+            query: {
+                groupBy: ['Region'],
+                aggregates: [{ function: 'sum', column: 'Revenue', as: 'Revenue' }],
+                orderBy: [{ column: 'Revenue', direction: 'desc' }],
+                limit: 2,
+            },
+        }, store, {
+            tableName: 'session_clean_dataset',
+            loadVersion: datasetVersion,
+        });
+
+        expect(executeCompiledQueryMock).toHaveBeenCalledTimes(2);
+        const companionSql = executeCompiledQueryMock.mock.calls[1][0].sql as string;
+        expect(companionSql).toMatch(/SUM/i);
+        expect(companionSql).not.toMatch(/GROUP BY/i);
+        expect(createNewCardMock.mock.calls[0][3]).toMatchObject({
+            groupCoverage: { status: 'partial', groupCount: 8, overallTotal: 400 },
+        });
+        // The two rows hold 25% of the real total; against their own sum they would be 100%.
+        expect(state.recordAgentEvent).toHaveBeenCalledWith(expect.objectContaining({
+            step: 'insight_evaluation',
+            message: expect.stringContaining('25.0% of the total'),
+        }));
+    });
+
     it('creates a card with quality warning for zero-total aggregate results', async () => {
         const csvData = { fileName: 'sales.csv', data: [{ Region: 'East', Revenue: 0 }, { Region: 'West', Revenue: 0 }] };
         const datasetVersion = buildSemanticDatasetVersion(csvData as never);

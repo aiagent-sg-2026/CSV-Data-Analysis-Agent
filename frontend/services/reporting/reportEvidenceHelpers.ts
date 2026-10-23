@@ -293,6 +293,7 @@ export const buildCardEvidence = (
         summary: card.summary ?? null,
         aggregatedDataSample: card.aggregatedData.slice(0, MAX_CARD_SAMPLE_ROWS),
         reportChartRows: card.aggregatedData.slice(0, MAX_REPORT_CHART_ROWS),
+        ...(card.groupCoverage ? { groupCoverage: card.groupCoverage } : {}),
         semanticRole: ir?.semanticRole ?? null,
         helperExposureLevel: ir?.helperExposureLevel ?? null,
         businessMeaningConfidence: typeof ir?.businessMeaningConfidence === 'number'

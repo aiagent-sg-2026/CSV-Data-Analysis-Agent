@@ -10,9 +10,15 @@ interface AnalysisCardSummaryProps {
     cardId: string;
     plan: AnalysisPlan;
     totalValue: number;
-    overallTotalValue: number;
+    /** Total over every matched group; null when a cut-off ranking could not be measured. */
+    overallTotalValue: number | null;
     displayedRowCount: number;
+    /** Rows the card holds. */
     totalRowCount: number;
+    /** Groups the query matched when it returned only some of them; null when unknown. */
+    totalGroupCount?: number | null;
+    /** False when the query limit cut groups off, so the rows are only the top of the ranking. */
+    groupsComplete?: boolean;
     displayedMetricLabel: string;
     displayedGroupLabel: string;
     topN: number | null;
@@ -34,6 +40,8 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
     overallTotalValue,
     displayedRowCount,
     totalRowCount,
+    totalGroupCount = null,
+    groupsComplete = true,
     displayedMetricLabel,
     displayedGroupLabel,
     topN,
@@ -75,11 +83,21 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
         ? getTranslation('summary_generated_in', language, { language: summary?.language ?? 'English' })
         : null;
     const scopeLabel = useMemo(() => {
+        const lowest = rankDirection === 'asc';
+        if (!groupsComplete) {
+            // The query returned only the head of its ranking: say how much of it, never "Full dataset".
+            const params = { count: String(Math.min(topN ?? totalRowCount, totalRowCount)), total: String(totalGroupCount ?? '') };
+            // Without a measured total only the groups returned are described, not the ones beyond them.
+            if (totalGroupCount !== null && overallTotalValue !== null) {
+                return getTranslation(lowest ? 'analysis_card_scope_bottom_n_of' : 'analysis_card_scope_top_n_of', language, params);
+            }
+            return getTranslation(lowest ? 'analysis_card_scope_bottom_n_returned' : 'analysis_card_scope_top_n_returned', language, params);
+        }
         if (topN) {
-            return getTranslation(rankDirection === 'asc' ? 'analysis_card_scope_bottom_n' : 'analysis_card_scope_top_n', language, { count: String(topN) });
+            return getTranslation(lowest ? 'analysis_card_scope_bottom_n' : 'analysis_card_scope_top_n', language, { count: String(topN) });
         }
         return getTranslation('analysis_card_scope_full', language);
-    }, [language, rankDirection, topN]);
+    }, [groupsComplete, language, overallTotalValue, rankDirection, topN, totalGroupCount, totalRowCount]);
     const filterLabel = useMemo(() => {
         if (!filter || !filter.column || filter.values.length === 0) return null;
         const values = filter.values.map(value => normalizeCategoryLabel(value)).join(', ');
@@ -88,16 +106,25 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
     const formatSummaryMeasure = plan.aggregation === 'count'
         ? formatAnalysisValue
         : formatAnalysisMeasureValue;
-    const hasFoldedGroups = topN !== null && displayedRowCount < totalRowCount;
+    // Groups the card stands for: every matched group, which can exceed the rows a cut-off ranking returned.
+    const matchedGroupCount = groupsComplete ? totalRowCount : (totalGroupCount ?? totalRowCount);
+    const hasMeasuredTotal = overallTotalValue !== null;
+    const hasFoldedGroups = topN !== null && displayedRowCount < matchedGroupCount;
     const showsHiddenOthers = hasAdditiveMeasure && hasFoldedGroups && hideOthers;
     const previewLines = useMemo(() => {
         const lines = [
-            hasAdditiveMeasure
+            hasAdditiveMeasure && hasMeasuredTotal
                 ? getTranslation('analysis_card_view_line_scope', language, {
+                    visible: displayedRowCount.toLocaleString(),
+                    total: matchedGroupCount.toLocaleString(),
+                    shown: formatSummaryMeasure(totalValue),
+                    overall: formatSummaryMeasure(overallTotalValue),
+                })
+                : hasAdditiveMeasure
+                ? getTranslation('analysis_card_view_line_scope_partial', language, {
                     visible: displayedRowCount.toLocaleString(),
                     total: totalRowCount.toLocaleString(),
                     shown: formatSummaryMeasure(totalValue),
-                    overall: formatSummaryMeasure(overallTotalValue),
                 })
                 : getTranslation(plan.aggregation
                     ? 'analysis_card_view_line_scope_non_additive'
@@ -111,7 +138,7 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
             }),
         ];
 
-        if (topN || hiddenLabelCount > 0 || filterLabel) {
+        if (topN || !groupsComplete || hiddenLabelCount > 0 || filterLabel) {
             const params = {
                 scope: scopeLabel,
                 hidden: hiddenLabelCount > 0
@@ -142,7 +169,10 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
         hideOthers,
         hasAdditiveMeasure,
         hasFoldedGroups,
+        hasMeasuredTotal,
+        groupsComplete,
         language,
+        matchedGroupCount,
         overallTotalValue,
         plan.aggregation,
         plan.presentationMode,
@@ -238,9 +268,11 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
                             <p>
                                 {showingLabel}: <span className="font-bold text-base text-slate-800">{formatSummaryMeasure(totalValue)}</span>
                             </p>
-                            <p>
-                                {overallLabel}: <span className="font-semibold text-slate-700">{formatSummaryMeasure(overallTotalValue)}</span>
-                            </p>
+                            {overallTotalValue !== null && (
+                                <p>
+                                    {overallLabel}: <span className="font-semibold text-slate-700">{formatSummaryMeasure(overallTotalValue)}</span>
+                                </p>
+                            )}
                         </div>
                     )}
                 </div>

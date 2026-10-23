@@ -131,4 +131,39 @@ describe('reportEvidenceHarness', () => {
             }),
         ]));
     });
+
+    describe('a ranking the query limit cut off', () => {
+        const cutOff = (groupCoverage: ReportCardEvidence['groupCoverage']) => createCard({
+            rowCount: 3,
+            reportChartRows: [
+                { Segment: 'A', 'Net Exposure': 6000 },
+                { Segment: 'B', 'Net Exposure': 3000 },
+                { Segment: 'C', 'Net Exposure': 1000 },
+            ],
+            groupCoverage,
+        });
+
+        it('takes the total, the group count and every share from the measured total over all groups', () => {
+            const result = runReportEvidenceHarness(createBundle({ cards: [cutOff({ status: 'partial', groupCount: 25, overallTotal: 40_000 })] }));
+
+            expect(result.metricProfiles[0]).toMatchObject({ total: 40_000, groupCount: 25 });
+            // 6,000 of 40,000, not of the 10,000 in the three returned rows.
+            expect(result.concentration?.topGroupShare).toBeCloseTo(0.15);
+            expect(result.concentration?.top3Share).toBeCloseTo(0.25);
+        });
+
+        it('states no total and no share when the total over all groups could not be measured', () => {
+            const result = runReportEvidenceHarness(createBundle({ cards: [cutOff({ status: 'partial', groupCount: 25, overallTotal: null })] }));
+
+            expect(result.metricProfiles).toEqual([]);
+            expect(result.concentration).toBeNull();
+        });
+
+        it('leaves a complete card as it was', () => {
+            const result = runReportEvidenceHarness(createBundle({ cards: [cutOff({ status: 'complete', groupCount: 3, overallTotal: 10_000 })] }));
+
+            expect(result.metricProfiles[0]).toMatchObject({ total: 10_000, groupCount: 3 });
+            expect(result.concentration?.topGroupShare).toBeCloseTo(0.6);
+        });
+    });
 });

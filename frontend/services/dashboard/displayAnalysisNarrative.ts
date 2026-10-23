@@ -5,6 +5,7 @@ import type {
 } from '../../types';
 import { buildDisplayAnalysisIrList } from './displayAnalysisIr';
 import { formatPeriodRowsForDisplay } from '../../utils/temporalDisplay';
+import { describeCardGroupCoverage } from '../../utils/cardGroupTotals';
 
 const sortByNarrativePriority = (left: DisplayAnalysisNarrativeInput, right: DisplayAnalysisNarrativeInput) => {
     const trustRank = {
@@ -38,6 +39,9 @@ export const buildNarrativeAnalysisIrInputList = (
 
     return cards.map(card => {
         const ir = irList.find(candidate => candidate.cardId === card.id);
+        // Rows that are only the top of a ranking must not be read as the whole population.
+        const scopeNote = describeCardGroupCoverage(card);
+        const scopeField = scopeNote ? { scopeNote } : {};
         if (!ir) {
             return {
                 cardId: card.id,
@@ -59,6 +63,7 @@ export const buildNarrativeAnalysisIrInputList = (
                 summary: card.summary.text,
                 aggregatedDataSample: formatPeriodRowsForDisplay(card.aggregatedData.slice(0, maxRows), card.plan.periodSeries),
                 aggregatedRowCount: card.aggregatedData.length,
+                ...scopeField,
                 isFallback: Boolean(card.plan.isFallback),
             };
         }
@@ -80,6 +85,7 @@ export const buildNarrativeAnalysisIrInputList = (
             // Periods reach the narrative at their grain ("2025"), as the card shows them.
             aggregatedDataSample: formatPeriodRowsForDisplay(ir.aggregatedData.slice(0, maxRows), card.plan.periodSeries),
             aggregatedRowCount: ir.aggregatedData.length,
+            ...scopeField,
             isFallback: ir.isFallback,
         };
     }).sort(sortByNarrativePriority);

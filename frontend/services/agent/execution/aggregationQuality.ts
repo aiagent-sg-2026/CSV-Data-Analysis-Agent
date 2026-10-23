@@ -1,4 +1,4 @@
-import type { AnalysisPlan, CsvRow } from '../../../types';
+import type { AnalysisCardGroupCoverage, AnalysisPlan, CsvRow } from '../../../types';
 import { parseNullableNumericValue, parseNumericValue } from '../../../utils/dataHelpers';
 
 export type AggregationQualityDropReason = 'flat_metric' | 'no_total' | 'low_value';
@@ -74,6 +74,8 @@ const toNumber = parseNumericValue;
 const generateAggregationCommentary = (
     groupKey: string,
     metrics: Pick<AggregationQualityMetrics, 'groups' | 'topRows' | 'topShare' | 'uniqueValues' | 'valueKey'>,
+    /** What the shares are relative to; "the groups returned" when the query was cut off and its total unmeasured. */
+    base = 'the total',
 ) => {
     if (metrics.topShare === null) {
         return {
@@ -116,7 +118,7 @@ const generateAggregationCommentary = (
 
     if (concentration >= 0.7) {
         return {
-            commentary: `Key Insight: The top ${metrics.topRows} '${groupKey}' categories are dominant, capturing ${concentrationPercent}% of the total.`,
+            commentary: `Key Insight: The top ${metrics.topRows} '${groupKey}' categories are dominant, capturing ${concentrationPercent}% of ${base}.`,
             qualityWarning: null,
             verdict: 'useful' as const,
         };
@@ -124,20 +126,30 @@ const generateAggregationCommentary = (
 
     if (concentration >= 0.4) {
         return {
-            commentary: `The top ${metrics.topRows} '${groupKey}' categories represent ${concentrationPercent}% of the total, showing a moderate distribution.`,
+            commentary: `The top ${metrics.topRows} '${groupKey}' categories represent ${concentrationPercent}% of ${base}, showing a moderate distribution.`,
             qualityWarning: null,
             verdict: 'useful' as const,
         };
     }
 
     return {
-        commentary: `The top ${metrics.topRows} '${groupKey}' categories cover ${concentrationPercent}% of the total. The distribution is relatively flat.`,
+        commentary: `The top ${metrics.topRows} '${groupKey}' categories cover ${concentrationPercent}% of ${base}. The distribution is relatively flat.`,
         qualityWarning: null,
         verdict: 'useful' as const,
     };
 };
 
-export const evaluateAggregationQuality = (plan: AnalysisPlan, rows: CsvRow[]): AggregationQualityAssessment => {
+/**
+ * `coverage` says whether `rows` are every group of the query. When the query
+ * was cut off and its overall total was measured, shares are relative to that
+ * total (the first rows cover X% of the real total, not of the rows returned);
+ * when it could not be measured the wording names the groups returned instead.
+ */
+export const evaluateAggregationQuality = (
+    plan: AnalysisPlan,
+    rows: CsvRow[],
+    coverage?: AnalysisCardGroupCoverage | null,
+): AggregationQualityAssessment => {
     const tablePreview = rows.slice(0, Math.min(5, rows.length));
     const columns = tablePreview.length > 0 ? Object.keys(tablePreview[0]) : [];
     const groupKey = plan.groupByColumn || columns[0] || 'group';
@@ -149,9 +161,12 @@ export const evaluateAggregationQuality = (plan: AnalysisPlan, rows: CsvRow[]): 
     const numericCols = detectNumericColumns(tablePreview[0], groupKey);
     const useMultiColumnTotal = numericCols.length >= 3;
 
-    const total = useMultiColumnTotal
+    const rowsTotal = useMultiColumnTotal
         ? rows.reduce((acc, row) => acc + numericCols.reduce((s, col) => s + toNumber(row[col]), 0), 0)
         : rows.reduce((acc, row) => acc + toNumber(row[valueKey]), 0);
+    const measuredOverall = !useMultiColumnTotal && coverage?.status === 'partial' ? coverage.overallTotal : null;
+    const total = measuredOverall ?? rowsTotal;
+    const sharesNameReturnedGroups = !useMultiColumnTotal && coverage?.status === 'partial' && measuredOverall === null;
 
     const topRows = rows.slice(0, Math.min(5, rows.length));
     const topValue = useMultiColumnTotal
@@ -181,10 +196,10 @@ export const evaluateAggregationQuality = (plan: AnalysisPlan, rows: CsvRow[]): 
         uniqueValues: uniqueValueCount,
     };
     const description = share !== null
-        ? `Grouped by ${groupKey} (${rows.length} buckets). Top ${topRows.length} cover ${(share * 100).toFixed(1)}% of ${valueKey}.`
+        ? `Grouped by ${groupKey} (${rows.length} buckets${coverage?.status === 'partial' && coverage.groupCount ? ` of ${coverage.groupCount}` : ''}). Top ${topRows.length} cover ${(share * 100).toFixed(1)}% of ${sharesNameReturnedGroups ? `the returned ${valueKey}` : valueKey}.`
         : `Grouped by ${groupKey} (${rows.length} buckets).`;
 
-    const evaluation = generateAggregationCommentary(groupKey, metrics);
+    const evaluation = generateAggregationCommentary(groupKey, metrics, sharesNameReturnedGroups ? 'the groups returned' : 'the total');
 
     return {
         tablePreview,

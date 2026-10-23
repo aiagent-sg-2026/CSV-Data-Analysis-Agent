@@ -284,4 +284,93 @@ describe('AnalysisCardSummary', () => {
         expect(screen.getByText('Current view shows 2 of 3 groups. The aggregation type is unavailable, so no combined total is shown.')).toBeInTheDocument();
         expect(container.textContent).not.toContain('cannot be added together');
     });
+
+    describe('a ranking the query limit cut off', () => {
+        const cutOff = {
+            plan: { ...plan, groupByColumn: 'Market' },
+            totalValue: 163_114_689,
+            displayedRowCount: 8,
+            totalRowCount: 10,
+            displayedMetricLabel: 'Arrivals',
+            displayedGroupLabel: 'Market',
+            topN: 8,
+            hideOthers: true,
+            hiddenLabelCount: 0,
+            language: 'English' as const,
+        };
+
+        it('states the real overall total, the real group count and a "Top N of M" scope', () => {
+            const { container } = render(<AnalysisCardSummary
+                cardId="cut-off"
+                {...cutOff}
+                overallTotalValue={244_299_398}
+                totalGroupCount={52}
+                groupsComplete={false}
+            />);
+
+            expect(screen.getByText('Current view shows 8 of 52 entries and 163,114,689.00 of 244,299,398.00.')).toBeInTheDocument();
+            expect(screen.getByText('Top 8 of 52 groups')).toBeInTheDocument();
+            expect(screen.getByText('Scope: Top 8 of 52 groups; "Others" hidden; No hidden labels.')).toBeInTheDocument();
+            expect(container.textContent).toContain('Overall: 244,299,398.00');
+            expect(container.textContent).not.toContain('Full dataset');
+        });
+
+        it('labels a lowest-first cut-off ranking as the lowest groups', () => {
+            render(<AnalysisCardSummary
+                cardId="cut-off-asc"
+                {...cutOff}
+                rankDirection="asc"
+                overallTotalValue={244_299_398}
+                totalGroupCount={52}
+                groupsComplete={false}
+            />);
+
+            expect(screen.getByText('Lowest 8 of 52 groups')).toBeInTheDocument();
+        });
+
+        it('shows the whole returned window as "Top 10 of 52" when no top-N fold is applied', () => {
+            render(<AnalysisCardSummary
+                cardId="cut-off-all"
+                {...cutOff}
+                topN={null}
+                displayedRowCount={10}
+                hideOthers={false}
+                overallTotalValue={244_299_398}
+                totalGroupCount={52}
+                groupsComplete={false}
+            />);
+
+            expect(screen.getByText('Top 10 of 52 groups')).toBeInTheDocument();
+            expect(screen.queryByText('Full dataset')).not.toBeInTheDocument();
+        });
+
+        it('shows no overall total and names only the groups returned when the total was not measured', () => {
+            const { container } = render(<AnalysisCardSummary
+                cardId="unmeasured"
+                {...cutOff}
+                overallTotalValue={null}
+                totalGroupCount={52}
+                groupsComplete={false}
+            />);
+
+            expect(screen.getByText('Top 8 of the groups returned')).toBeInTheDocument();
+            expect(screen.getByText('Current view shows 8 of the 10 groups returned and 163,114,689.00. The total over all groups could not be measured, so no overall total or share is shown.')).toBeInTheDocument();
+            expect(container.textContent).not.toContain('Overall:');
+            expect(container.textContent).not.toContain('Full dataset');
+            expect(container.textContent).not.toContain('52');
+        });
+
+        it('translates the cut-off scope', () => {
+            render(<AnalysisCardSummary
+                cardId="cut-off-zh"
+                {...cutOff}
+                language="Mandarin"
+                overallTotalValue={244_299_398}
+                totalGroupCount={52}
+                groupsComplete={false}
+            />);
+
+            expect(screen.getByText('前 8 个分组（共 52 个）')).toBeInTheDocument();
+        });
+    });
 });

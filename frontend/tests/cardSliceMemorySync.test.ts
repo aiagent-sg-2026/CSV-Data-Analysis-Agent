@@ -188,4 +188,20 @@ describe('card slice memory sync', () => {
         }));
         expect(state.analysisCards[0]?.plan.valueColumn).toBe('Profit');
     });
+
+    it('drops the measured overall total of a cut-off ranking when a calculated column replaces its measure', async () => {
+        let state = createState();
+        (state.analysisCards[0] as any).groupCoverage = { status: 'partial', groupCount: 40, overallTotal: 9000 };
+        const set = vi.fn((updater: any) => {
+            const next = typeof updater === 'function' ? updater(state) : updater;
+            state = { ...state, ...next };
+        });
+        const get = () => state as any;
+        const slice = createCardSlice(set as never, get as never, {} as never);
+
+        slice.addCalculatedColumnToCard('card-1', 'Profit', "'Revenue' - 'Cost'");
+
+        // The total belongs to Revenue; Profit has none, but the card is still a cut-off ranking.
+        expect((state.analysisCards[0] as any).groupCoverage).toEqual({ status: 'partial', groupCount: 40, overallTotal: null });
+    });
 });

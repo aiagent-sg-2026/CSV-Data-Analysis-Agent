@@ -3,6 +3,7 @@ import { useAppStore } from '../store/useAppStore';
 import { applyTopNWithOthers, parseNullableNumericValue, parseNumericValue } from '../utils/dataHelpers';
 import { CsvRow, AnalysisCardData, AnalysisPlan } from '../types';
 import { isAdditiveAggregation, normalizeCategoryLabel } from '../utils/analysisCardPresentation';
+import { resolveCardGroupTotals } from '../utils/cardGroupTotals';
 import { buildPivotStackedChartState, DEFAULT_STACKED_PIVOT_COLUMN_TOP_N } from '../utils/pivotMatrixCharting';
 import { formatTemporalDisplayValue, getTemporalSortTimestamp, resolvePeriodGrain } from '../utils/temporalDisplay';
 import { detectTiedLeadingWindow, isRankedMeasureView, rankRowsByValue, resolveCardValueKey } from '../utils/rankedPresentation';
@@ -23,6 +24,7 @@ export const useAnalysisCardData = (cardId: string) => {
         filter,
         hiddenLabels,
         tableSort,
+        groupCoverage,
     } = (cardData || {}) as Partial<AnalysisCardData> & { plan?: AnalysisPlan };
     
     const valueKey = useMemo(() => resolveCardValueKey(plan, aggregatedData), [plan, aggregatedData]);
@@ -68,18 +70,40 @@ export const useAnalysisCardData = (cardId: string) => {
         [dataAfterFilter, isRankedNonAdditive, rankDirection, valueKey],
     );
 
+    const totalValue = useMemo(() => {
+        return dataAfterFilter.reduce((sum, row) => sum + parseNumericValue(row[valueKey]), 0);
+    }, [dataAfterFilter, valueKey]);
+
+    // The rows of a ranked card can be a cut-off of the query's groups; shares and
+    // "Overall" use the measured total over all of them, never the sum of the rows.
+    const filterActive = Boolean(filter && filter.column && filter.values.length > 0);
+    const groupTotals = useMemo(() => resolveCardGroupTotals({
+        additive: isAdditiveAggregation(plan?.aggregation),
+        coverage: groupCoverage,
+        rowsTotal: totalValue,
+        rowCount: dataAfterFilter.length,
+        filterActive,
+    }), [dataAfterFilter.length, filterActive, groupCoverage, plan?.aggregation, totalValue]);
+
     const dataForLegend = useMemo(() => {
         if (!plan) return [];
         if (appliesTopN && topN) {
             if (isAdditiveAggregation(plan.aggregation)) {
-                return applyTopNWithOthers(dataAfterFilter, groupByKey, valueKey, topN, rankDirection);
+                return applyTopNWithOthers(
+                    dataAfterFilter,
+                    groupByKey,
+                    valueKey,
+                    topN,
+                    rankDirection,
+                    groupTotals.complete ? null : groupTotals.overallTotal,
+                );
             }
             // The window keeps the query's ranking direction: an ascending
             // evidence query shows its lowest groups, not the largest values.
             return rankRowsByValue(rankedNonAdditiveRows, valueKey, rankDirection).slice(0, topN);
         }
         return rankedNonAdditiveRows;
-    }, [appliesTopN, dataAfterFilter, plan, groupByKey, topN, valueKey, rankDirection, rankedNonAdditiveRows]);
+    }, [appliesTopN, dataAfterFilter, plan, groupByKey, topN, valueKey, rankDirection, rankedNonAdditiveRows, groupTotals]);
 
     const tiedLeadingWindow = useMemo(
         () => (appliesTopN && isRankedNonAdditive ? detectTiedLeadingWindow(rankedNonAdditiveRows, valueKey, topN) : null),
@@ -152,10 +176,6 @@ export const useAnalysisCardData = (cardId: string) => {
         return tableDataForDisplay.filter(row => parseNullableNumericValue(row[valueKey]) === 0).length;
     }, [plan?.artifactType, tableDataForDisplay, valueKey]);
 
-    const totalValue = useMemo(() => {
-        return dataAfterFilter.reduce((sum, row) => sum + parseNumericValue(row[valueKey]), 0);
-    }, [dataAfterFilter, valueKey]);
-
     const displayedTotalValue = useMemo(() => {
         return tableDataForDisplay.reduce((sum, row) => sum + parseNumericValue(row[valueKey]), 0);
     }, [tableDataForDisplay, valueKey]);
@@ -178,6 +198,9 @@ export const useAnalysisCardData = (cardId: string) => {
         chartDataForDisplay: chartRowDataForDisplay,
         dataForLegend,
         totalValue,
+        overallTotalValue: groupTotals.overallTotal,
+        groupsComplete: groupTotals.complete,
+        matchedGroupCount: groupTotals.matchedGroupCount,
         displayedTotalValue,
         totalRowCount: dataAfterFilter.length,
         displayedRowCount: tableDataForDisplay.length,

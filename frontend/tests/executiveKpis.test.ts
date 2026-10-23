@@ -658,4 +658,53 @@ describe('buildExecutiveKpis', () => {
             label: '前 2 占比',
         });
     });
+
+    describe('a ranking the query limit cut off (4 of 20 groups returned)', () => {
+        const kpiById = (card: AnalysisCardData) => Object.fromEntries(buildExecutiveKpis({
+            cards: [card],
+            columnProfiles: buildColumnProfiles(),
+            csvData: buildCsvData([{ Project: '36 TUAS ROAD', Spend: 1200 }]),
+            language: 'English',
+        }).map(kpi => [kpi.id, kpi]));
+
+        it('computes the leader share, concentration and totals against the real total over all groups', () => {
+            const kpis = kpiById(buildCard({ groupCoverage: { status: 'partial', groupCount: 20, overallTotal: 10_000 } }));
+
+            // 1,200 and 2,400 (top 3) of 10,000, not of the 2,600 in the four returned rows.
+            expect(kpis['top-group'].detail).toBe('36 TUAS ROAD holds 12% of spend.');
+            expect(kpis['top-share'].value).toBe('24%');
+            expect(kpis['total-metric'].value).toBe('10,000');
+            expect(kpis['group-count'].value).toBe('20');
+            expect(kpis['total-metric'].scope.kind).toBe('dataset');
+        });
+
+        it('shows no share and no full-dataset scope when the real total could not be measured', () => {
+            const kpis = kpiById(buildCard({ groupCoverage: { status: 'partial', groupCount: 20, overallTotal: null } }));
+
+            expect(kpis['top-share']).toBeUndefined();
+            expect(kpis['top-group'].detail).not.toContain('%');
+            expect(kpis['top-group'].scope).toMatchObject({ kind: 'top_n', label: 'Top 4 Projects' });
+            expect(kpis['total-metric'].scope.kind).toBe('top_n');
+            expect(kpis['total-metric'].label).toBe('Top 4 Projects · Total Spend');
+            expect(kpis['total-metric'].value).toBe('2,600');
+            expect(kpis['total-metric'].delta?.kind).not.toBe('distribution');
+            expect(kpis['group-count'].value).toBe('4');
+        });
+
+        it('keeps the shown total for a top-N scope but still takes shares from the real total', () => {
+            const kpis = kpiById(buildCard({ topN: 2, hideOthers: true, groupCoverage: { status: 'partial', groupCount: 20, overallTotal: 10_000 } }));
+
+            expect(kpis['total-metric'].value).toBe('2,000');
+            expect(kpis['total-metric'].scope).toMatchObject({ kind: 'top_n', topN: 2 });
+            expect(kpis['top-group'].detail).toContain('12%');
+        });
+
+        it('leaves a complete card as it was', () => {
+            const kpis = kpiById(buildCard({ groupCoverage: { status: 'complete', groupCount: 4, overallTotal: 2600 } }));
+
+            expect(kpis['top-group'].detail).toContain('46%');
+            expect(kpis['total-metric'].value).toBe('2,600');
+            expect(kpis['group-count'].value).toBe('4');
+        });
+    });
 });

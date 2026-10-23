@@ -2050,6 +2050,30 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Paparan {count} terendah',
         'Japanese': '下位 {count} 件ビュー',
     },
+    'analysis_card_scope_top_n_of': {
+        'English': 'Top {count} of {total} groups',
+        'Mandarin': '前 {count} 个分组（共 {total} 个）',
+        'Malay': '{count} kumpulan teratas daripada {total}',
+        'Japanese': '全 {total} グループ中の上位 {count} 件',
+    },
+    'analysis_card_scope_bottom_n_of': {
+        'English': 'Lowest {count} of {total} groups',
+        'Mandarin': '最低 {count} 个分组（共 {total} 个）',
+        'Malay': '{count} kumpulan terendah daripada {total}',
+        'Japanese': '全 {total} グループ中の下位 {count} 件',
+    },
+    'analysis_card_scope_top_n_returned': {
+        'English': 'Top {count} of the groups returned',
+        'Mandarin': '返回分组中的前 {count} 个',
+        'Malay': '{count} teratas daripada kumpulan yang dikembalikan',
+        'Japanese': '取得したグループのうち上位 {count} 件',
+    },
+    'analysis_card_scope_bottom_n_returned': {
+        'English': 'Lowest {count} of the groups returned',
+        'Mandarin': '返回分组中最低的 {count} 个',
+        'Malay': '{count} terendah daripada kumpulan yang dikembalikan',
+        'Japanese': '取得したグループのうち下位 {count} 件',
+    },
     'analysis_card_caveat_small_group': {
         'English': '{label} (rank {rank}) is based on only {rows} rows.',
         'Mandarin': '{label}（排名 {rank}）仅基于 {rows} 行数据。',
@@ -2115,6 +2139,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Mandarin': '当前视图显示 {visible}/{total} 条记录，合计为 {shown}，整体总计为 {overall}。',
         'Malay': 'Paparan semasa menunjukkan {visible} daripada {total} entri dan {shown} daripada {overall}.',
         'Japanese': '現在のビューでは {total} 件中 {visible} 件を表示し、{shown} / {overall} をカバーしています。',
+    },
+    'analysis_card_view_line_scope_partial': {
+        'English': 'Current view shows {visible} of the {total} groups returned and {shown}. The total over all groups could not be measured, so no overall total or share is shown.',
+        'Mandarin': '当前视图显示返回的 {total} 个分组中的 {visible} 个，合计为 {shown}。无法测得全部分组的总计，因此不显示整体总计和占比。',
+        'Malay': 'Paparan semasa menunjukkan {visible} daripada {total} kumpulan yang dikembalikan dan {shown}. Jumlah bagi semua kumpulan tidak dapat diukur, jadi jumlah keseluruhan dan peratusan tidak dipaparkan.',
+        'Japanese': '現在のビューでは、取得した {total} グループ中 {visible} グループを表示し、合計は {shown} です。全グループの合計を測定できなかったため、全体の合計と構成比は表示しません。',
     },
     'analysis_card_view_line_scope_non_additive': {
         'English': 'Current view shows {visible} of {total} groups. Compare each value separately; these measures cannot be added together.',

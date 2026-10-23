@@ -126,6 +126,26 @@ describe('generateCoreAnalysisSummary', () => {
         expect(request.messages[0].content).toContain('Do not introduce unsupported business causes');
     });
 
+    it('puts the scope note into the card summary prompt, so shares are not taken from the shown rows', async () => {
+        generateTextMock.mockResolvedValue({ text: 'Card summary' });
+
+        await generateSummary(
+            'Revenue by Region',
+            [{ Region: 'East', Revenue: 20 }],
+            settings,
+            columns,
+            undefined,
+            'Scope: these 1 rows are only the top of a ranking of 40 groups. The total over all groups is 200.',
+        );
+        const withNote = generateTextMock.mock.calls[0][0] as { messages: Array<{ content: string }> };
+        expect(withNote.messages[1].content).toContain('The total over all groups is 200.');
+
+        generateTextMock.mockClear();
+        await generateSummary('Revenue by Region', [{ Region: 'East', Revenue: 20 }], settings, columns);
+        const withoutNote = generateTextMock.mock.calls[0][0] as { messages: Array<{ content: string }> };
+        expect(withoutNote.messages[1].content).not.toContain('total over all groups');
+    });
+
     it('shows aggregate-series coverage in card and executive prompts', async () => {
         const rows = Array.from({ length: 30 }, (_, index) => ({
             Region: `Period-${index + 1}`,
