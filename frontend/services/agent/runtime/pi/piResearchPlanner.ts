@@ -12,6 +12,7 @@ import {
     applyColumnAdditivity,
     buildResearchPlan,
     checkQuestionMethods,
+    applyRowHierarchyScope,
     checkQuestionSeriesScope,
     checkSumVolumeDependence,
     MAX_PLAN_QUESTIONS,
@@ -25,6 +26,7 @@ import { createPiSkillTool } from './piSkillTool';
 import { executeEvidenceQuery } from '../../execution/sqlCardExecutor';
 import { buildVolumeCheckQuery, readVolumeCheckRows } from '../../planning/volumeDrivenSum';
 import { buildSeriesMeasureGuidance, resolveSeriesMeasure } from '../../planning/seriesMeasureGuard';
+import { buildRowHierarchyGuidance, resolveRowHierarchy, type RowHierarchyContract } from '../../planning/rowHierarchyGuard';
 
 export const SUBMIT_RESEARCH_PLAN_TOOL = 'submit_research_plan';
 const PLANNER_MAX_PROVIDER_TURNS = 9;
@@ -48,6 +50,7 @@ const buildPlannerSystemPrompt = (params: {
     rowCount: number | null;
     columns: ColumnProfile[];
     seriesMeasure?: SeriesMeasureSemantics | null;
+    rowHierarchy?: RowHierarchyContract | null;
 }): string => [
     'You plan the first analysis of a CSV dataset for a business reader. You decide which questions are worth answering and how to measure them; the app then runs the queries and verifies the numbers.',
     `File: ${params.fileName}${params.rowCount !== null ? ` (${params.rowCount.toLocaleString()} rows)` : ''}`,
@@ -58,6 +61,9 @@ const buildPlannerSystemPrompt = (params: {
             `Series table:\n${buildSeriesMeasureGuidance(params.seriesMeasure)}`,
             `For a question about one series, set \`series\` to its exact ${params.seriesMeasure.seriesColumn} value and use ${params.seriesMeasure.periodColumn} as the dimension, e.g. a trend of one series over time. Compare series only by using ${params.seriesMeasure.seriesColumn} as the dimension.`,
         ]
+        : []),
+    ...(params.rowHierarchy
+        ? [`Hierarchy table:\n${buildRowHierarchyGuidance(params.rowHierarchy)}`]
         : []),
     'How to work:',
     '1. Read the choose-metric-and-aggregation skill first, and any other listed skill that matches.',
@@ -75,6 +81,7 @@ const optionalString = (description: string) => Type.Optional(Type.Union([Type.S
 const buildSubmitTool = (params: {
     columns: ColumnProfile[];
     seriesMeasure?: SeriesMeasureSemantics | null;
+    rowHierarchy?: RowHierarchyContract | null;
     datasetVersion: string;
     measureGroups: MeasureGroupSumAndCount;
     signal: AbortSignal;
@@ -117,7 +124,9 @@ const buildSubmitTool = (params: {
             const methods = checkQuestionMethods(validation.questions, { ...readProfileAdditivity(params.columns), ...additivity.accepted });
             // A melted series table's value only has meaning per series.
             const scoped = checkQuestionSeriesScope(methods.questions, params.seriesMeasure);
-            const volume = await checkSumVolumeDependence(scoped.questions, params.measureGroups, { profiles: params.columns, signal: params.signal });
+            // A hierarchy table's parent rows never take part in a measure.
+            const scopedQuestions = applyRowHierarchyScope(scoped.questions, params.rowHierarchy);
+            const volume = await checkSumVolumeDependence(scopedQuestions, params.measureGroups, { profiles: params.columns, signal: params.signal });
             const methodRejections = [...methods.rejected, ...scoped.rejected, ...volume.rejected];
             const checked = { questions: volume.questions, rejected: [...validation.rejected, ...methodRejections] };
             // A method problem is worth a corrected resubmission rather than silently dropping the question.
@@ -184,6 +193,7 @@ export const runPiResearchPlanner = async (params: {
     const columns = (state.columnProfiles ?? []) as ColumnProfile[];
     if (!dataset || columns.length === 0) return null;
     const seriesMeasure = resolveSeriesMeasure({ canonicalBuildMeta: state.canonicalBuildMeta, columnProfiles: columns });
+    const rowHierarchy = resolveRowHierarchy({ canonicalBuildMeta: state.canonicalBuildMeta, columnProfiles: columns });
     const datasetVersion = getCurrentAnalysisDatasetVersion(state) ?? params.datasetVersionFallback;
 
     let accepted: ResearchPlan | null = null;
@@ -207,6 +217,7 @@ export const runPiResearchPlanner = async (params: {
         buildSubmitTool({
             columns,
             seriesMeasure,
+            rowHierarchy,
             datasetVersion,
             measureGroups: params.measureGroups ?? createEvidenceQueryMeasure(store, planningController.signal),
             signal: planningController.signal,
@@ -223,6 +234,7 @@ export const runPiResearchPlanner = async (params: {
                 rowCount: state.csvData?.backing?.rowCount ?? dataset.data?.length ?? null,
                 columns,
                 seriesMeasure,
+                rowHierarchy,
             }),
             model: resolvePiModel(settings),
             thinkingLevel: resolvePiThinkingLevel(settings),

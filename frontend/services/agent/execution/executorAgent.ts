@@ -32,6 +32,7 @@ import { executeSqlPlanAndCreateCard, mapSqlAnalysisPlanToAnalysisPlan } from '.
 import { assessCardSeriesScope } from './cardSeriesScope';
 import { PlanExecutionSoftError } from './planExecutionErrors';
 import { resolveSeriesMeasure } from '../planning/seriesMeasureGuard';
+import { resolveRowHierarchy } from '../planning/rowHierarchyGuard';
 import { resolveCurrentDuckDbBinding } from '../datasetBinding';
 import { validateClarification } from '../tools/toolManifestSupport';
 import { createChatMessage } from '../../../utils/messageState';
@@ -420,7 +421,7 @@ export const executePlanAction = async (
         const normalizedPlan = isSqlAnalysisPlanLike(plan)
             ? mapSqlAnalysisPlanToAnalysisPlan(plan)
             : plan as AnalysisPlan;
-        const seriesScope = assessCardSeriesScope(plan as AnalysisPlan | SqlAnalysisPlan, resolveSeriesMeasure(getState()));
+        const seriesScope = assessCardSeriesScope(plan as AnalysisPlan | SqlAnalysisPlan, resolveSeriesMeasure(getState()), resolveRowHierarchy(getState()));
         if (seriesScope.decision === 'reject') return rejectSeriesScope(seriesScope.feedback, plan.title, store, options);
         return seriesScope.evidenceValueGate
             ? createNewCard(normalizedPlan, precomputed, store, { evidenceValueGate: seriesScope.evidenceValueGate })
@@ -429,7 +430,7 @@ export const executePlanAction = async (
 
     if (isSqlAnalysisPlanLike(plan)) {
         // The AnalysisPlan path runs the same check inside executePlanAndCreateCard.
-        const seriesScope = assessCardSeriesScope(plan, resolveSeriesMeasure(getState()));
+        const seriesScope = assessCardSeriesScope(plan, resolveSeriesMeasure(getState()), resolveRowHierarchy(getState()));
         if (seriesScope.decision === 'reject') return rejectSeriesScope(seriesScope.feedback, plan.title, store, options);
         const binding = resolveSqlBinding(store);
         return seriesScope.evidenceValueGate

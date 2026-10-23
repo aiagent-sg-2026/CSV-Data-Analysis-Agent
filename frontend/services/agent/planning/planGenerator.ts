@@ -59,6 +59,7 @@ import {
 import { createPlannerSections } from './planningContextBuilder';
 import { inferPreferredResultShape, adaptEvidencePlanToSqlAnalysisPlan } from './evidencePlanAdapter';
 import { buildSeriesMeasureFallbackTopics, resolveTopicSeriesFilter } from './seriesMeasureGuard';
+import { rowHierarchyDefaultOptions } from './rowHierarchyGuard';
 
 // --- Merged from sqlAnalysisErrors.ts ---
 
@@ -702,6 +703,7 @@ export const generateEvidenceQueryPlanWithRetry = async (
                 topic,
                 steering: plannerDatasetContext.analysisSteering ?? null,
                 seriesColumn: plannerDatasetContext.seriesMeasure?.seriesColumn ?? null,
+                ...rowHierarchyDefaultOptions(plannerDatasetContext.rowHierarchy),
             });
             const semanticHints = extractSemanticHints(plannerDatasetContext);
             const { validPlan, errors } = normalizeAndValidateSqlEvidenceQueryPlan(
@@ -1102,6 +1104,7 @@ export const generateEvidenceQueryPlanStepped = async (
         topic,
         steering,
         seriesColumn: seriesMeasure?.seriesColumn ?? null,
+        ...rowHierarchyDefaultOptions(datasetContext?.rowHierarchy),
     });
     const steppedSemanticHints = extractSemanticHints(datasetContext);
     const { validPlan, errors } = normalizeAndValidateSqlEvidenceQueryPlan(semanticDefaultsApplied, columns, {

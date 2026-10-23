@@ -1,6 +1,7 @@
 import { AGGREGATION_TYPES, isAggregationType } from '../../../../types/analysis';
 import type { AggregationType, ColumnAdditivity, ColumnProfile, DataAnalysisHypothesis, ResearchPlan, ResearchPlanQuestion, SeriesMeasureSemantics } from '../../../../types';
 import { assessVolumeDependence, describeVolumeDependence, isTimeDimension, isVolumeCheckCancellation, type GroupSumAndCount } from '../../planning/volumeDrivenSum';
+import type { RowHierarchyContract } from '../../planning/rowHierarchyGuard';
 
 export const MIN_PLAN_QUESTIONS = 2;
 export const MAX_PLAN_QUESTIONS = 6;
@@ -298,6 +299,20 @@ export const checkQuestionSeriesScope = (
     }
     return { questions: kept, rejected };
 };
+
+/**
+ * On a hierarchy table the parent rows sit next to their detail rows, so every
+ * question that measures something (a metric or a row count) reads detail rows
+ * only. The filter is written onto the question, so it reaches the topic text
+ * and every planner downstream.
+ */
+export const applyRowHierarchyScope = (
+    questions: readonly ResearchPlanQuestion[],
+    contract: RowHierarchyContract | null | undefined,
+): ResearchPlanQuestion[] => questions.map(question =>
+    contract && !question.filter && (question.metric !== null || question.aggregation !== null)
+        ? { ...question, filter: { column: contract.rowClassColumn, value: contract.detailRowValue } }
+        : question);
 
 /** Reads per-group SUM and row COUNT for one dimension/metric pair; null when the data cannot be read. */
 export type MeasureGroupSumAndCount = (dimension: string, metric: string) => Promise<GroupSumAndCount[] | null>;

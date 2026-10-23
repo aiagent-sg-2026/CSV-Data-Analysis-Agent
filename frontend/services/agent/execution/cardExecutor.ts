@@ -16,6 +16,7 @@ import { agentMemoryCollector } from '../memory/agentMemoryCollector';
 import { PlanExecutionSoftError } from './planExecutionErrors';
 import { assessCardSeriesScope } from './cardSeriesScope';
 import { resolveSeriesMeasure } from '../planning/seriesMeasureGuard';
+import { resolveRowHierarchy } from '../planning/rowHierarchyGuard';
 
 type StoreApi = {
     getState: () => AppStore;
@@ -51,7 +52,7 @@ export const executePlanAndCreateCard = async (
         console.log(`${LOG_PREFIX} Plan validated for "${plan.title}".`);
 
         // A melted period table's value means something different per series.
-        const seriesScope = assessCardSeriesScope(validPlan, resolveSeriesMeasure(getState()));
+        const seriesScope = assessCardSeriesScope(validPlan, resolveSeriesMeasure(getState()), resolveRowHierarchy(getState()));
         if (seriesScope.decision === 'reject') {
             getState().addProgress(seriesScope.feedback, 'error');
             if (options?.throwOnSoftFailure) {

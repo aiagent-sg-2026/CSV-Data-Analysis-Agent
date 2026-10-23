@@ -128,6 +128,8 @@ export interface IndentHierarchyEntry {
     key: string;
     level: number;
     parentKey: string | null;
+    /** Keys from the top-level ancestor down to this row itself. */
+    path: string[];
     rowClass: PeriodWideRowClass;
 }
 
@@ -179,11 +181,19 @@ export const resolveIndentHierarchy = (params: {
     if (parentsChecked === 0 || parentsVerified / parentsChecked < MIN_VERIFIED_PARENT_SHARE) return null;
 
     const keys = buildUniqueSeriesKeys(labels.map(label => label.trim()), hierarchy);
+    const pathOf = (index: number): string[] => {
+        const path: string[] = [];
+        for (let current: number | null = index; current !== null; current = hierarchy[current].parentIndex) {
+            path.unshift(keys[current]);
+        }
+        return path;
+    };
     return {
         entries: hierarchy.map((entry, index) => ({
             key: keys[index],
             level: entry.level,
             parentKey: entry.parentIndex === null ? null : keys[entry.parentIndex],
+            path: pathOf(index),
             rowClass: entry.rowClass,
         })),
         evidence: {

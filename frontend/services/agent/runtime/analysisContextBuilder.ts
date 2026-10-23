@@ -15,6 +15,7 @@ import type { DataInvestigationFindings } from './dataInvestigationHarness';
 import type { StoreApi, DuckDbAnalysisBinding } from './analysisSessionHelpers';
 import { requireDuckDbBinding } from './analysisSessionHelpers';
 import { resolveSeriesMeasure } from '../planning/seriesMeasureGuard';
+import { resolveRowHierarchy, withRowHierarchyDetailFilter } from '../planning/rowHierarchyGuard';
 
 export type RefreshedAnalysisContext = {
     inputData: CsvData;
@@ -152,8 +153,11 @@ export const applyInvestigationSteering = (
                 inferredColumnLabels: d.inferredColumnLabels,
             },
         });
-    datasetContext.analysisSteering = cloneAnalysisSteering(steering);
-    return steering;
+    // A verified row hierarchy fixes the detail-row contract whatever the harness
+    // detected: every query path then injects the same RowClass filter.
+    const hierarchySteering = withRowHierarchyDetailFilter(steering, datasetContext.rowHierarchy);
+    datasetContext.analysisSteering = cloneAnalysisSteering(hierarchySteering);
+    return hierarchySteering;
 };
 
 export const refreshAnalysisContext = async (
@@ -202,6 +206,10 @@ export const refreshAnalysisContext = async (
         store.getState().rawCsvData ?? inputData,
     );
     datasetContext.seriesMeasure = resolveSeriesMeasure({
+        canonicalBuildMeta: store.getState().canonicalBuildMeta,
+        columnProfiles,
+    });
+    datasetContext.rowHierarchy = resolveRowHierarchy({
         canonicalBuildMeta: store.getState().canonicalBuildMeta,
         columnProfiles,
     });

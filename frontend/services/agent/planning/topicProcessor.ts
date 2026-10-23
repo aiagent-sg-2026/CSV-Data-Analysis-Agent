@@ -35,6 +35,7 @@ import { describeVolumeDependence, measureEvidenceVolumeDependence } from './vol
 import { measureLeadingGroupSampleSize } from './groupSampleSize';
 import { measureGroupCoverage, SERIES_NON_ADDITIVE_REASON_CODES } from './groupCoverage';
 import { assessSeriesMeasurePlan, resolveSeriesMeasure } from './seriesMeasureGuard';
+import { assessRowHierarchyPlan, mergePlanVerdicts, resolveRowHierarchy, withDetailRowScope, withRowHierarchyDetailFilter } from './rowHierarchyGuard';
 
 type StoreApi = {
     getState: () => AppStore;
@@ -175,6 +176,10 @@ export const processSingleTopic = async (
         if (seriesMeasure && !datasetContext.seriesMeasure) {
             datasetContext.seriesMeasure = seriesMeasure;
         }
+        const rowHierarchy = resolveRowHierarchy(getState());
+        if (rowHierarchy && !datasetContext.rowHierarchy) {
+            datasetContext.rowHierarchy = rowHierarchy;
+        }
         const semanticUnderstanding = options?.semanticUnderstanding ?? buildRuntimeSemanticUnderstanding({
             columns: getState().columnProfiles,
             analysisBrief: buildAnalysisIntentBrief({
@@ -239,6 +244,9 @@ export const processSingleTopic = async (
             } else {
                 datasetContext.analysisSteering = harness;
             }
+        }
+        if (datasetContext.analysisSteering && rowHierarchy) {
+            datasetContext.analysisSteering = withRowHierarchyDetailFilter(datasetContext.analysisSteering, rowHierarchy);
         }
         let escalatedToFull = false;
         const emitPlannerEscalation = (reason: string, attempt: number, detail?: Record<string, unknown>) => {
@@ -321,6 +329,9 @@ export const processSingleTopic = async (
                     { abortSignal: options?.abortSignal,skillStore:store },
                 );
             }
+            // A plan from any planner (parallel batch, stepped, retry) reads detail rows
+            // only on a hierarchy table, unless it states its own row scope.
+            evidencePlan = withDetailRowScope(evidencePlan, rowHierarchy);
             console.log(_elapsed('plan_generated'));
             // PERF-307: Yield after AI plan generation callback — break the
             // continuous chain between plan JSON parse and dedup/SQL execution.
@@ -442,7 +453,10 @@ export const processSingleTopic = async (
             // A plan that aggregates a series-dependent measure across series of
             // different meaning is replanned with the reason before it runs; the
             // evidence gate rejects it again if it ever reaches execution.
-            const seriesCheck = assessSeriesMeasurePlan(evidencePlan, seriesMeasure);
+            const seriesCheck = mergePlanVerdicts(
+                assessSeriesMeasurePlan(evidencePlan, seriesMeasure),
+                assessRowHierarchyPlan(evidencePlan, rowHierarchy),
+            );
             if (seriesCheck.decision === 'reject') {
                 if (attempt < MAX_EXECUTION_ATTEMPTS) {
                     emitPlannerEscalation('cross_series_replan', attempt, { reasonCodes: seriesCheck.reasonCodes });
@@ -705,7 +719,9 @@ export const processSingleTopic = async (
                 }
                 // AI evidence evaluation — runs in parallel with nothing, but
                 // gracefully falls back to deterministic if the call fails.
-                const harnessContext = options?.harnessContext ?? null;
+                const harnessContext = options?.harnessContext && rowHierarchy
+                    ? withRowHierarchyDetailFilter(options.harnessContext, rowHierarchy)
+                    : options?.harnessContext ?? null;
                 // PERF-201 Step 3: deterministic safety floor + quality gate is sufficient.
                 // Skipping AI evidence evaluation saves 5 calls + ~1000 tokens/run.
                 const aiEvaluation = null;
@@ -745,6 +761,7 @@ export const processSingleTopic = async (
                     } : null,
                     sampleSizeCaveat,
                     seriesMeasure,
+                    rowHierarchy,
                 });
                 console.log(_elapsed(`value_gate=${valueGate.decision}`));
                 // PERF-307: Yield after value gate — break the chain between

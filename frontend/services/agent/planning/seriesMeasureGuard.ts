@@ -67,7 +67,7 @@ const intersect = (left: string[] | null, right: string[] | null): string[] | nu
  * Values of `column` a WHERE clause admits: top-level predicates are ANDed and
  * groups are ORed, so a group set only restricts when every group restricts.
  */
-const restrictedValues = (where: QueryWhereClause | undefined, column: string): string[] | null => {
+export const restrictedValues = (where: QueryWhereClause | undefined, column: string): string[] | null => {
     let allowed: string[] | null = null;
     for (const predicate of where?.predicates ?? []) {
         allowed = intersect(allowed, predicateValues(predicate, column));

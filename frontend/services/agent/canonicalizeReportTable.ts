@@ -624,6 +624,33 @@ const ROW_HIERARCHY_COLUMNS = {
  * Accepted only when the published parents equal the sum of their children
  * (see resolveIndentHierarchy); otherwise the table is returned untouched.
  */
+/**
+ * Names the ancestor-level columns of an indentation hierarchy. A label header
+ * such as "Region / Country / Customer" names its levels; otherwise they are
+ * "Level 1", "Level 2"... The deepest level is the label column itself.
+ */
+const nameHierarchyLevelColumns = (labelColumn: string, levels: number, existingHeaders: string[]): string[] => {
+    const count = Math.max(0, levels - 1);
+    if (count === 0) return [];
+    const taken = new Set([
+        ...existingHeaders.map(header => header.trim().toLowerCase()),
+        ...Object.values(ROW_HIERARCHY_COLUMNS).map(column => column.toLowerCase()),
+        'sourcerowindex', 'rowrole', 'resolvedrowrole', 'sectionlabel', 'headerpath', 'carryforwardappliedcolumns',
+    ]);
+    const segments = labelColumn.split(/\s*[/>|]\s*/).map(segment => segment.trim()).filter(Boolean);
+    const named = segments.length === levels && new Set(segments.map(segment => segment.toLowerCase())).size === levels;
+    const used = new Set<string>();
+    return Array.from({ length: count }, (_, level) => {
+        const base = named ? segments[level] : `Level ${level + 1}`;
+        let candidate = base;
+        for (let suffix = 2; taken.has(candidate.toLowerCase()) || used.has(candidate.toLowerCase()); suffix += 1) {
+            candidate = `${base} (level ${suffix})`;
+        }
+        used.add(candidate.toLowerCase());
+        return candidate;
+    });
+};
+
 const applyRowIndentHierarchy = (params: {
     rows: CsvRow[];
     rawRows: string[][];
@@ -664,6 +691,7 @@ const applyRowIndentHierarchy = (params: {
     });
     if (!resolved) return null;
     const entryBySource = new Map(labelledIndexes.map((rowIndex, position) => [rowIndex, resolved.entries[position]]));
+    const levelColumns = nameHierarchyLevelColumns(labelColumn, resolved.evidence.levels, headers);
 
     let parentRows = 0;
     const nextRows = rows.map(row => {
@@ -673,6 +701,8 @@ const applyRowIndentHierarchy = (params: {
         const nextRow: CsvRow = {};
         Object.entries(row).forEach(([column, value]) => {
             if (column === 'SourceRowIndex') {
+                // One column per ancestor level, so a level can be grouped over detail rows.
+                levelColumns.forEach((levelColumn, level) => { nextRow[levelColumn] = entry.path[level] ?? null; });
                 nextRow[ROW_HIERARCHY_COLUMNS.parent] = entry.parentKey;
                 nextRow[ROW_HIERARCHY_COLUMNS.depth] = entry.level;
                 nextRow[ROW_HIERARCHY_COLUMNS.rowClass] = entry.rowClass;
@@ -691,6 +721,7 @@ const applyRowIndentHierarchy = (params: {
             parentColumn: ROW_HIERARCHY_COLUMNS.parent,
             depthColumn: ROW_HIERARCHY_COLUMNS.depth,
             rowClassColumn: ROW_HIERARCHY_COLUMNS.rowClass,
+            levelColumns,
             detailRowValue: 'fact',
             levels: resolved.evidence.levels,
             parentRows,

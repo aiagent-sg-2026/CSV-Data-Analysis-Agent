@@ -21,6 +21,7 @@ import { isTechnicalHelperDimensionColumn } from './analysisColumnRoles';
 import type { VolumeDependence } from './planning/volumeDrivenSum';
 import { describeSmallGroupLeaders } from './planning/groupSampleSize';
 import { assessSeriesMeasurePlan, selectsSingleSeries } from './planning/seriesMeasureGuard';
+import { assessRowHierarchyPlan, mergePlanVerdicts, type RowHierarchyContract } from './planning/rowHierarchyGuard';
 import { mergeEvidencePreFilterIntoQuery } from './planning/evidenceQuerySemantics';
 
 const LOG_PREFIX = '[EvidenceValueGate]';
@@ -843,6 +844,8 @@ export const evaluateEvidenceValue = (params: {
     sampleSizeCaveat?: EvidenceSampleSizeCaveat | null;
     /** Meaning of the value column of a melted period-series table, recorded at intake. */
     seriesMeasure?: SeriesMeasureSemantics | null;
+    /** Hierarchy of a row table whose parent rows are tagged subtotal: aggregates must read detail rows only. */
+    rowHierarchy?: RowHierarchyContract | null;
 }): EvidenceValueGateResult => {
     const {
         semanticUnderstanding,
@@ -884,7 +887,10 @@ export const evaluateEvidenceValue = (params: {
     // A series-dependent measure aggregated across series that measure
     // different things has no meaning, so it is rejected before any quality
     // judgement; series-scoped but mixed-unit views stay table-only.
-    const seriesVerdict = assessSeriesMeasurePlan(evidencePlan, params.seriesMeasure);
+    const seriesVerdict = mergePlanVerdicts(
+        assessSeriesMeasurePlan(evidencePlan, params.seriesMeasure),
+        assessRowHierarchyPlan(evidencePlan, params.rowHierarchy),
+    );
     if (seriesVerdict.decision === 'reject') {
         const reasonCodes = [...new Set([...safetyFloor.reasonCodes, ...seriesVerdict.reasonCodes])];
         return {

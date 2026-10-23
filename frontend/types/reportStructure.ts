@@ -279,6 +279,8 @@ export interface CanonicalBuildMeta {
         parentColumn: string;
         depthColumn: string;
         rowClassColumn: string;
+        /** One column per ancestor level above the label's own level, top level first (for example Region, Country). */
+        levelColumns: string[];
         detailRowValue: string;
         levels: number;
         parentRows: number;
