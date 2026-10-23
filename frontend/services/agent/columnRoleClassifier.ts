@@ -9,7 +9,7 @@
 // (getColumnStats for value/descriptor detection).
 // ---------------------------------------------------------------------------
 
-import { isCodeLike, isNumericLike } from './reportShapeUtils';
+import { isCodeLike, isMissingValueMarker, isNumericLike } from './reportShapeUtils';
 
 const UNNAMED_COLUMN_PATTERN = /^_?unnamed_column_/i;
 const DATE_LIKE_PATTERN = /^(?:\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})$/;
@@ -96,6 +96,7 @@ export const computeColumnStatistics = (
     let lenientTextualCount = 0;
     let codeLikeCount = 0;
     let blankRunCount = 0;
+    let markerCount = 0;
     let prevNonBlank = false;
     const distinctSet = new Set<string>();
 
@@ -109,6 +110,14 @@ export const computeColumnStatistics = (
         nonEmptyCount++;
         prevNonBlank = true;
         distinctSet.add(raw.toLowerCase());
+        // An explicit missing marker ("n.a.", "na", "-") is the absence of a
+        // value in a measure column, not text: counting "n.a." as textual made
+        // a sparse numeric column look like a text column.
+        if (isMissingValueMarker(raw)) {
+            markerCount++;
+            softNumericCount++;
+            continue;
+        }
 
         const lenientNumeric = isNumericCandidate(raw);
         const strictNumeric = isNumericLike(raw);
@@ -124,6 +133,7 @@ export const computeColumnStatistics = (
     }
 
     const totalBlanks = sampleSize - nonEmptyCount;
+    const valueCount = nonEmptyCount - markerCount;
     const structuralIdentifierHint = /\b(?:code|id)\b/i.test(column);
 
     return {
@@ -132,12 +142,14 @@ export const computeColumnStatistics = (
         nonEmptyCount,
         sampleSize,
         fillRate: nonEmptyCount / sampleSize,
-        numericRatio: nonEmptyCount > 0 ? numericCount / nonEmptyCount : 0,
+        // Ratios over real values only; strict/soft keep every filled cell as
+        // their denominator (they already count markers as soft numeric).
+        numericRatio: valueCount > 0 ? numericCount / valueCount : 0,
         strictNumericRatio: nonEmptyCount > 0 ? strictNumericCount / nonEmptyCount : 0,
         softNumericRatio: nonEmptyCount > 0 ? softNumericCount / nonEmptyCount : 0,
-        textualRatio: nonEmptyCount > 0 ? textualCount / nonEmptyCount : 0,
-        lenientTextualRatio: nonEmptyCount > 0 ? lenientTextualCount / nonEmptyCount : 0,
-        codeLikeDensity: nonEmptyCount > 0 ? codeLikeCount / nonEmptyCount : 0,
+        textualRatio: valueCount > 0 ? textualCount / valueCount : 0,
+        lenientTextualRatio: valueCount > 0 ? lenientTextualCount / valueCount : 0,
+        codeLikeDensity: valueCount > 0 ? codeLikeCount / valueCount : 0,
         structuralIdentifierHint,
         blankRatio: totalBlanks / sampleSize,
         blankRunCount,

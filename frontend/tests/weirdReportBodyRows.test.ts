@@ -149,6 +149,36 @@ describe('w2 indented hierarchy: parents are subtotals, leaves are the detail ro
     });
 });
 
+describe('w5 aging report: continuation lines, repeated headers, missing markers', () => {
+    it('drops the Continued lines and repeated header rows and keeps measures numeric', async () => {
+        const { csvData, canonical, artifacts } = await runIntake('w5_aging_meta_footnotes.csv', readFixture('w5_aging_meta_footnotes.csv'));
+        expect(csvData.data.some(row => Object.values(row).some(value => /^continued/i.test(String(value).trim())))).toBe(false);
+        expect(csvData.data.some(row => row.Customer === 'Customer')).toBe(false);
+        expect(artifacts.canonicalizationStatus).toBe('ready');
+        const rows = canonical.data;
+        expect(rows).toHaveLength(truth.f5.rows);
+        expect(sumBy(rows, 'Balance')).toBe(truth.f5.total_balance);
+        const measures = ['Current', '1-30', '31-60', '61-90', '90+', 'Balance'];
+        // "n.a.", "-" and empty cells are missing values, not text; "5853*" keeps its number.
+        expect(rows.every(row => measures.every(column => row[column] === null || typeof row[column] === 'number'))).toBe(true);
+        expect(rows.some(row => row.Current === null)).toBe(true);
+    });
+});
+
+describe('w6 grouped header: category carried forward and values parsed after the melt', () => {
+    it('gives every melted row its category and a numeric value', async () => {
+        const { canonical } = await runIntake('w6_grouped_header_carryforward.csv', readFixture('w6_grouped_header_carryforward.csv'));
+        const rows = canonical.data;
+        expect(rows.every(row => String(row.Category).trim() !== '')).toBe(true);
+        expect(new Set(rows.map(row => `${row.Category}|${row.Product}`)).size).toBe(truth.f6.rows);
+        expect(rows.every(row => row.Value === null || typeof row.Value === 'number')).toBe(true);
+        expect(sumBy(rows, 'Value')).toBe(truth.f6.total);
+        expect(rows.some(row => String(row.CarryForwardAppliedColumns).includes('Category'))).toBe(true);
+        // The FY layer survives the melt.
+        expect(new Set(rows.map(row => row.SeriesLabelL1))).toEqual(new Set(['FY2025', 'FY2026']));
+    });
+});
+
 describe('inline variants of the body rules', () => {
     // A small printed report: title block, header, order lines. The layout is
     // wide enough for the deterministic header detection to take it as a report.

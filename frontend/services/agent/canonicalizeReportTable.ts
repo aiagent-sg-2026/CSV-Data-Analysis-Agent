@@ -213,8 +213,8 @@ const overlayPreparedSharedValues = (
             if (typeof nextRow[column] === 'number' && typeof value === 'string') {
                 return;
             }
-            // A missing marker normalised to null must not come back as text.
-            if (nextRow[column] === null && typeof value === 'string' && isMissingValueMarker(value)) {
+            // A missing marker or empty cell normalised to null must not come back as text.
+            if (nextRow[column] === null && typeof value === 'string' && (value.trim() === '' || isMissingValueMarker(value))) {
                 return;
             }
             // Preserve carry-forward filled values — do not overwrite a non-empty
@@ -883,7 +883,7 @@ const buildRowTableFromRawBoundary = (params: {
                     const numeric = parseNumericCandidate(rawValue);
                     // An explicit missing marker ("n.a.", "na", "-") is no value, not text:
                     // keeping it as a string would turn the whole measure column into text.
-                    canonicalRow[header] = numeric ?? (isMissingValueMarker(raw) ? null : rawValue);
+                    canonicalRow[header] = numeric ?? (rawValue === '' || isMissingValueMarker(raw) ? null : rawValue);
                 }
                 return;
             }
@@ -1002,7 +1002,7 @@ const buildRowTableFromRawBoundary = (params: {
                 if (factColumns.includes(header)) {
                     const raw = String(rawValue ?? '');
                     if (/[A-Za-z]/.test(raw) && !isMissingValueMarker(raw)) { canonicalRow[header] = rawValue; }
-                    else { const numeric = parseNumericCandidate(rawValue); canonicalRow[header] = numeric ?? (isMissingValueMarker(raw) ? null : rawValue); }
+                    else { const numeric = parseNumericCandidate(rawValue); canonicalRow[header] = numeric ?? (rawValue === '' || isMissingValueMarker(raw) ? null : rawValue); }
                     return;
                 }
                 canonicalRow[header] = rawValue;
@@ -1135,6 +1135,63 @@ const buildPeriodWideCanonicalTable = (
     };
 };
 
+/**
+ * Fills carry-forward dimensions (a category printed once per group) down the
+ * body rows of a still-wide table before it is melted, so every melted row
+ * carries its group. Blank rows are skipped, not treated as group ends.
+ */
+const fillCarryForwardColumns = (
+    rows: CsvRow[],
+    columns: string[],
+): { rows: CsvRow[]; appliedByRow: Map<number, string[]>; appliedCounts: Record<string, number> } => {
+    const appliedByRow = new Map<number, string[]>();
+    const appliedCounts: Record<string, number> = {};
+    const present = columns.filter(column => rows.some(row => Object.prototype.hasOwnProperty.call(row, column)));
+    if (present.length === 0) return { rows, appliedByRow, appliedCounts };
+    const last = new Map<string, string>();
+    const filled = rows.map((row, rowIndex) => {
+        if (Object.values(row).every(value => normalizeReportCellText(value) === '')) return row;
+        let next: CsvRow | null = null;
+        present.forEach(column => {
+            const text = normalizeReportCellText(row[column]);
+            if (text) {
+                last.set(column, text);
+                return;
+            }
+            const carried = last.get(column);
+            if (!carried) return;
+            next = next ?? { ...row };
+            next[column] = carried;
+            appliedByRow.set(rowIndex, [...(appliedByRow.get(rowIndex) ?? []), column]);
+            appliedCounts[column] = (appliedCounts[column] ?? 0) + 1;
+        });
+        return next ?? row;
+    });
+    return { rows: filled, appliedByRow, appliedCounts };
+};
+
+// A melted value column is turned into numbers only when nearly every filled
+// cell reads as a number or an explicit missing marker, so a text measure is
+// never coerced.
+const MIN_NUMERIC_VALUE_SHARE = 0.9;
+
+const coerceMeltedValueColumn = (rows: CsvRow[], valueColumn: string): CsvRow[] => {
+    const cells = rows
+        .map(row => row[valueColumn])
+        .filter(value => typeof value === 'string' && normalizeReportCellText(value) !== '') as string[];
+    if (cells.length === 0) return rows;
+    const readable = cells.filter(value => isMissingValueMarker(value) || (!/[A-Za-z]/.test(value) && parseNumericCandidate(value) !== null)).length;
+    if (readable / cells.length < MIN_NUMERIC_VALUE_SHARE) return rows;
+    return rows.map(row => {
+        const value = row[valueColumn];
+        if (typeof value !== 'string') return row;
+        if (isMissingValueMarker(value)) return { ...row, [valueColumn]: null };
+        if (/[A-Za-z]/.test(value)) return row;
+        const numeric = parseNumericCandidate(value);
+        return numeric === null ? row : { ...row, [valueColumn]: numeric };
+    });
+};
+
 const buildReshapedTable = (
     sourceData: CsvData,
     structure: ReportStructureResolution,
@@ -1238,7 +1295,18 @@ const buildReshapedTable = (
         }];
     }
 
-    const result = applyDataOperations(sourceData.data, operations, { allowEmptyResult: false });
+    // Group labels printed once per group are filled down before the melt.
+    const carryForward = fillCarryForwardColumns(
+        sourceData.data,
+        structure.normalizationPlan.carryForwardColumns.map(policy => policy.columnName),
+    );
+    const result = applyDataOperations(carryForward.rows, operations, { allowEmptyResult: false });
+    const meltValueColumn = [...operations].reverse().find(operation => operation.type === 'unpivot_columns');
+    if (meltValueColumn && meltValueColumn.type === 'unpivot_columns') {
+        result.data = coerceMeltedValueColumn(result.data, meltValueColumn.valueColumn);
+    }
+    const appliedCarryForward = (row: CsvRow) =>
+        (carryForward.appliedByRow.get(Number(row.SourceRowIndex)) ?? []).join(', ');
     const excludedRowCounts: CanonicalDatasetArtifact['canonicalBuildMeta']['excludedRowCounts'] = {};
     let canonicalRows = result.data.flatMap(row => {
         const rowRole = row.RowClass ?? row.RowRole ?? 'detail';
@@ -1257,7 +1325,7 @@ const buildReshapedTable = (
             RowRole: recoverBusinessIdentity ? 'fact' : rowRole,
             ResolvedRowRole: recoverBusinessIdentity ? 'fact' : rowRole,
             HeaderPath: buildHeaderPath(typeof row.SourceColumnName === 'string' ? row.SourceColumnName : null),
-            CarryForwardAppliedColumns: '',
+            CarryForwardAppliedColumns: appliedCarryForward(row),
         }];
     });
 
@@ -1289,7 +1357,7 @@ const buildReshapedTable = (
                 RowRole: 'detail',
                 ResolvedRowRole: 'detail',
                 HeaderPath: buildHeaderPath(typeof row.SourceColumnName === 'string' ? row.SourceColumnName : null),
-                CarryForwardAppliedColumns: '',
+                CarryForwardAppliedColumns: appliedCarryForward(row),
             }];
         });
         console.log(`[Canonicalize] Reshape relaxation result: ${canonicalRows.length}/${totalReshaped} rows retained.`);
@@ -1315,7 +1383,7 @@ const buildReshapedTable = (
             lineageColumns: ['SourceRowIndex', 'SourceColumnName', 'ResolvedRowRole', 'HeaderPath', 'CarryForwardAppliedColumns'],
             summary: `Canonicalized ${canonicalRows.length} row(s) into ${structure.decision.targetShape}.`,
             excludedRowCounts,
-            carryForwardAppliedCounts: {},
+            carryForwardAppliedCounts: carryForward.appliedCounts,
             footerTotalsMatched: null,
         },
     };
