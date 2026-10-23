@@ -744,4 +744,39 @@ describe('buildExecutiveKpis', () => {
             expect(kpis['group-count'].value).toBe('4');
         });
     });
+
+    describe('headline selection', () => {
+        it('leads with a money total by a business party over a quantity total by date', () => {
+            const quantityByDate = buildCard({
+                id: 'quantity-by-date',
+                plan: { title: 'Total Ordered Quantity by Order :: Date', description: '', chartType: 'area', aggregation: 'sum', groupByColumn: 'Order :: Date', valueColumn: 'Total Ordered Quantity' },
+                aggregatedData: [
+                    { 'Order :: Date': '09-03-2026', 'Total Ordered Quantity': 5000 },
+                    { 'Order :: Date': '20-01-2026', 'Total Ordered Quantity': 3000 },
+                ],
+            });
+            const moneyByCustomer = buildCard({
+                id: 'money-by-customer',
+                plan: { title: 'Total Balance Amount by Customer', description: '', chartType: 'bar', aggregation: 'sum', groupByColumn: 'Customer', valueColumn: 'Total Balance Amount' },
+                aggregatedData: [
+                    { Customer: 'RIVERSIDE ENGINEERING', 'Total Balance Amount': 517_201.12 },
+                    { Customer: 'MERIDIAN PARTS CO', 'Total Balance Amount': 482_867.45 },
+                ],
+            });
+            const profiles: ColumnProfile[] = [
+                { name: 'Customer', type: 'categorical', uniqueValues: 20, missingPercentage: 0 },
+                { name: 'Order :: Date', type: 'categorical', uniqueValues: 150, missingPercentage: 0 },
+            ];
+            const kpis = buildExecutiveKpis({
+                cards: [quantityByDate, moneyByCustomer],
+                columnProfiles: profiles,
+                csvData: buildCsvData([]),
+                language: 'English',
+                currentDatasetVersion: 'version-current',
+            });
+
+            expect(kpis.length).toBeGreaterThan(0);
+            kpis.forEach(kpi => expect(kpi.sourceCardId).toBe('money-by-customer'));
+        });
+    });
 });

@@ -10,6 +10,7 @@ import { resolveDisplayPlanLabels } from './displayLabelContext';
 import { resolvePlanGroupLabel, resolvePlanMetricLabel } from './businessLabelResolver';
 import { buildMetricLabel, isNeutralHelperDisplayLabel } from './executiveKpiUtils';
 import { classifyAnalysisColumnRole, isTimeLikeDimensionColumn } from '../agent/analysisColumnRoles';
+import { isMoneyMeasureName } from '../data/columnNameLeaf';
 
 const CURRENCY_LIKE_PATTERN = /amount|revenue|sales|cost|spend|budget|actual|price|profit|expense|value|total/i;
 const HELPER_ROW_INDEX_PATTERN = /^(sourcerowindex|source row)$/i;
@@ -312,6 +313,16 @@ const buildSelectionScore = (
     if (CURRENCY_LIKE_PATTERN.test(card.plan.valueColumn ?? '')) {
         score += 10;
         reasons.push('currency_like_metric');
+    }
+    // The headline of a report is who holds the most money, not how a quantity moves over dates.
+    if (
+        semanticRole === 'business_dimension'
+        && card.plan.aggregation === 'sum'
+        && isMoneyMeasureName(card.plan.valueColumn ?? '')
+        && !isTimeLikeDimensionColumn(card.plan.groupByColumn)
+    ) {
+        score += 25;
+        reasons.push('money_total_by_category');
     }
 
     switch (semanticRole) {

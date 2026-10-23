@@ -9,6 +9,7 @@ import type {
 } from '../../types';
 import { getCsvDatasetLoadVersion } from '../../utils/datasetId';
 import { isStructuralMetadataColumn } from '../agent/structuralMetadata';
+import { inferLeafAdditivity } from './columnNameLeaf';
 
 type ColumnRegistrySteering = {
     preferGroupBy?: string[];
@@ -271,6 +272,7 @@ const resolveAggregationHint = (
     analysisRole: ColumnRegistryEntry['analysisRole'],
     profile?: ColumnProfile,
     physicalName?: string,
+    siblingNames: readonly string[] = [],
 ): AggregationHint => {
     if (analysisRole === 'business_dimension' || analysisRole === 'helper_dimension') {
         return 'dimension_only';
@@ -279,6 +281,10 @@ const resolveAggregationHint = (
         return 'unrestricted';
     }
     if (physicalName ? isNonAdditiveMetric(physicalName, profile) : profile?.type === 'percentage') {
+        return 'non_additive';
+    }
+    // A unit price next to a quantity column is never summable, even when no judgement exists yet.
+    if (physicalName && !profile?.additivity && inferLeafAdditivity(physicalName, siblingNames)?.kind === 'non_additive') {
         return 'non_additive';
     }
     if (analysisRole === 'business_metric') {
@@ -291,6 +297,7 @@ const buildAllowedUsages = (
     physicalName: string,
     analysisRole: ColumnRegistryEntry['analysisRole'],
     profile?: ColumnProfile,
+    siblingNames: readonly string[] = [],
 ): ColumnRegistryEntry['allowedUsages'] => {
     const isSynthetic = isStructuralMetadataColumn(physicalName);
     return {
@@ -298,7 +305,7 @@ const buildAllowedUsages = (
         filter: true,
         select: true,
         orderBy: true,
-        aggregationHint: resolveAggregationHint(analysisRole, profile, physicalName),
+        aggregationHint: resolveAggregationHint(analysisRole, profile, physicalName, siblingNames),
     };
 };
 
@@ -361,7 +368,7 @@ export const buildColumnRegistry = ({
                 ? existingEntry.source
                 : source,
             analysisRole,
-            allowedUsages: buildAllowedUsages(physicalName, analysisRole, profile),
+            allowedUsages: buildAllowedUsages(physicalName, analysisRole, profile, orderedColumns),
             isSynthetic: isStructuralMetadataColumn(physicalName),
             isExposedToAi: true,
             ...(profile ? { profile } : {}),

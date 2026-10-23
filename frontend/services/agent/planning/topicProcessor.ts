@@ -36,6 +36,8 @@ import { measureLeadingGroupSampleSize } from './groupSampleSize';
 import { measureGroupCoverage, SERIES_NON_ADDITIVE_REASON_CODES } from './groupCoverage';
 import { assessSeriesMeasurePlan, resolveSeriesMeasure } from './seriesMeasureGuard';
 import { assessRowHierarchyPlan, mergePlanVerdicts, resolveRowHierarchy, withDetailRowScope, withRowHierarchyDetailFilter } from './rowHierarchyGuard';
+import { assessIdentifierGrouping } from './identifierGrouping';
+import { getCsvDataRowCount } from '../../../utils/datasetId';
 
 type StoreApi = {
     getState: () => AppStore;
@@ -511,6 +513,82 @@ export const processSingleTopic = async (
                     sourceStepIds,
                     rejectionReason: seriesCheck.feedback ?? seriesCheck.reasonCodes.join(', '),
                     valueReasonCodes: seriesCheck.reasonCodes,
+                };
+                break;
+            }
+
+            // Ranking or counting by a column that identifies single records (an invoice
+            // number, a product code) gives one-row groups and no finding. Replan with the
+            // reason, and reject it when the planner insists.
+            // The distinct share is measured over the whole table; a plan that filters rows (a hierarchy
+            // level, one year) works on an unknown, smaller population, so it is not judged here.
+            const filtersRows = Boolean(
+                evidencePlan.query.where?.predicates?.length
+                || evidencePlan.query.where?.groups?.length
+                || evidencePlan.preFilter?.length,
+            );
+            const identifierCheck = evidencePlan.queryMode === 'aggregate' && !filtersRows
+                ? assessIdentifierGrouping({
+                    groupBy: evidencePlan.query.groupBy ?? [],
+                    profiles: getState().columnProfiles ?? [],
+                    rowCount: getCsvDataRowCount(data),
+                    requestText: topic,
+                })
+                : null;
+            if (identifierCheck?.decision === 'reject') {
+                if (attempt < MAX_EXECUTION_ATTEMPTS) {
+                    emitPlannerEscalation('identifier_grouping_replan', attempt, { reasonCodes: identifierCheck.reasonCodes });
+                    plannerFeedback = identifierCheck.feedback ?? undefined;
+                    recordStep({
+                        type: 'refine_hypothesis',
+                        status: 'succeeded',
+                        inputSummary: `Evidence plan for "${topic}" groups by an identifier column; retrying with category guidance.`,
+                        inputSummaryI18n: {
+                            key: 'analysis_trace_refine_hypothesis_input',
+                            vars: { topic },
+                        },
+                        outputSummary: identifierCheck.feedback ?? 'Identifier grouping - replanning.',
+                        outputSummaryI18n: {
+                            key: 'analysis_trace_refine_hypothesis_output_feedback',
+                            vars: { message: 'Grouping by a record identifier - replanning.' },
+                        },
+                        decision: 'plan_probe_query',
+                        hypothesisId: options?.hypothesisId ?? null,
+                        reasonCodes: ['identifier_grouping_replan', ...identifierCheck.reasonCodes],
+                        queryTitle: evidencePlan.title,
+                        queryMode: evidencePlan.queryMode,
+                    });
+                    continue;
+                }
+                recordStep({
+                    type: 'evaluate_evidence',
+                    status: 'rejected',
+                    inputSummary: `Assess whether evidence query "${evidencePlan.title}" is worth presenting.`,
+                    inputSummaryI18n: {
+                        key: 'analysis_trace_evaluate_evidence_input',
+                        vars: { title: evidencePlan.title },
+                    },
+                    outputSummary: `Evidence gate decision: reject (${identifierCheck.reasonCodes.join(', ')} after ${attempt} attempts).`,
+                    outputSummaryI18n: {
+                        key: 'analysis_trace_evaluate_evidence_output',
+                        vars: { decision: 'reject' },
+                    },
+                    decision: 'reject_hypothesis',
+                    hypothesisId: options?.hypothesisId ?? null,
+                    reasonCodes: identifierCheck.reasonCodes,
+                    queryTitle: evidencePlan.title,
+                    queryMode: evidencePlan.queryMode,
+                });
+                completedResult = {
+                    status: 'completed',
+                    cardCreated: false,
+                    tableFirst: false,
+                    accepted: false,
+                    valueDecision: 'reject',
+                    evidenceLoopState: null,
+                    sourceStepIds,
+                    rejectionReason: identifierCheck.feedback ?? identifierCheck.reasonCodes.join(', '),
+                    valueReasonCodes: identifierCheck.reasonCodes,
                 };
                 break;
             }
