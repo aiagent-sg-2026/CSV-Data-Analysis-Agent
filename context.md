@@ -166,6 +166,10 @@
     - Cards saved before this change have no `groupCoverage` and keep the old behaviour until their evidence is re-run.
     - Deployed as PR #39 (merge 64dd847), live 1.0.0-a7aba150e557. Live no-AI audit: 6 viewports clean, 8 of 8 datasets load. One live real-AI run on visitor arrivals gave 1 card (USA monthly, 9,031,196, matches the source). A top-N card did not appear live because a request failed mid-run (`FAIL`, then an empty AI response, "Unexpected end of JSON input", after a 429 session refresh). The true-total display was verified by real-data tests and the candidate run, not seen live.
     - Next: retry an empty or truncated AI response in `generateEvidenceQueryPlanWithRetry` instead of failing the topic; a live real-AI table for all 9 datasets once the shared quota resets.
+  - **In progress (2026-10-23, SGT afternoon)**:
+    - Delegated to OMP on yapvmmcp2 (job 3188f9be, workspace `csv-retry-empty-ai-20261023`, branch `omp/retry-empty-ai-20261023`): retry an empty or truncated AI response in `generateEvidenceQueryPlanWithRetry` instead of failing the topic. A 15-minute check is scheduled.
+    - Owner screenshot on live a7aba15, an ERP report CSV (685 rows, private; not opened or stored): "Analysis blocked (2/9)", Pi task `blocked`. Stage 2 (`dataset.profileStructure`, `initialAnalysisStageExecutors.ts:170-182`) ends with the warning `coding_repair_required` when the structure cannot be resolved deterministically, and the qualified Pi coding task must then repair it. Pi staged `investigate.js` twice and then stopped without a validated candidate. The reason is not visible in the screenshot: the shared demo quota is a suspect, so is a Pi stage guard. Needs the "Inspect task" reason from the owner.
+    - UX gap regardless of cause: a blocked run shows a passive message with no stated reason and no retry action.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
