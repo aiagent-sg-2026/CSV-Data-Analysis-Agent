@@ -14,6 +14,8 @@ import { resolveReportStructure } from './reportStructureResolver';
 import { canonicalizeReportTable } from './canonicalizeReportTable';
 import { resolvePipelineOutcome } from './pipelineOutcomeResolver';
 import { verifyCleanedDatasetShape } from './cleaningVerification';
+import { applyDataOperations } from './execution/dataOperationRunner';
+import { buildPeriodWideReshape, detectPeriodWideTableFromCsvData } from './reportShapePeriodWide';
 
 export const getPreferredAnalysisDataset = (
     state: Pick<AppState, 'canonicalCsvData' | 'csvData'> & Partial<Pick<AppState, 'datasetBundle' | 'datasetCommitBindingStatus'>>,
@@ -66,8 +68,34 @@ export const resolveReportStructureArtifacts = (params: {
     const runtimeTableAssessment = params.cleaningRun?.runtimeTableAssessment
         ?? buildRuntimeTableAssessmentFromIr(effectiveIntakeIr, params.rawCsvData ?? preparedData, preparedData);
     const rowInspection = inspectCsvRows(preparedData, { source: 'cleaned' });
+    // A still-wide period-header table is melted deterministically during
+    // canonicalization, so verify that reshape (raw vs. its long output and
+    // unpivot plan) instead of judging the not-yet-reshaped prepared table.
+    const periodWideReshape = params.rawCsvData && detectPeriodWideTableFromCsvData(preparedData)
+        ? buildPeriodWideReshape(params.rawCsvData)
+        : null;
     const verification = params.rawCsvData
-        ? verifyCleanedDatasetShape(params.rawCsvData, preparedData, params.dataPreparationPlan)
+        ? periodWideReshape
+            ? verifyCleanedDatasetShape(
+                params.rawCsvData,
+                {
+                    ...params.rawCsvData,
+                    data: applyDataOperations(periodWideReshape.sourceRows, periodWideReshape.operations).data,
+                    metadataRows: [],
+                    headerLayers: [],
+                    summaryRows: [],
+                    headerDepth: 1,
+                    summaryRowCount: 0,
+                },
+                {
+                    explanation: 'Deterministic period-header wide table reshape.',
+                    operations: periodWideReshape.operations,
+                    outputColumns: [],
+                    planStatus: 'operations',
+                    consistencyIssues: [],
+                },
+            )
+            : verifyCleanedDatasetShape(params.rawCsvData, preparedData, params.dataPreparationPlan)
         : null;
     const shapeFailureSignalKey = verification?.signalKey ?? null;
     const reportStructureResolution = resolveReportStructure({
@@ -80,6 +108,7 @@ export const resolveReportStructureArtifacts = (params: {
         structureProposal: params.structureProposal ?? null,
         shapeFailureSignalKey,
         shapeVerificationPassed: verification?.passed ?? null,
+        periodWideTableRecognized: Boolean(periodWideReshape),
     });
     const canonical = canonicalizeReportTable({
         csvData: preparedData,

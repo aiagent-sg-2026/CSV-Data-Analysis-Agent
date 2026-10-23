@@ -249,4 +249,6 @@ export interface ResolveReportStructureInput {
     structureProposal?: ReportStructureProposal | null | undefined;
     shapeFailureSignalKey?: string | null | undefined;
     shapeVerificationPassed?: boolean | null | undefined;
+    /** The prepared table is a period-header wide table with a verified deterministic reshape. */
+    periodWideTableRecognized?: boolean;
 }

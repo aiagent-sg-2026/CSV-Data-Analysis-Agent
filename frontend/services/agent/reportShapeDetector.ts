@@ -35,6 +35,11 @@ import { assignHierarchyDepths, detectMatrixRowRole } from './reportShapeHierarc
 import { detectTabularRowRole, inferTabularShapeContext } from './reportShapeTabular';
 import { applyVerifiedCodeHierarchyRoles } from './reportShapeCodeHierarchy';
 import { computeRowRoleSignals } from './runtime/rowRoleSignals';
+import {
+    type PeriodWideTableDetection,
+    buildPeriodWideRowRoles,
+    detectPeriodWideTableFromCsvData,
+} from './reportShapePeriodWide';
 
 const MAX_HEADER_SCAN_ROWS = 40;
 const PARSER_HEADER_ROW_INDEX = -1;
@@ -160,6 +165,29 @@ const buildExplicitHeaderLayoutCandidate = (
         descriptorColumnIndexes: descriptorColumns.map(column => columnIndexByName.get(column) ?? -1).filter(index => index >= 0),
         detailSeriesIndexes: detailSeriesColumns.map(column => columnIndexByName.get(column) ?? -1).filter(index => index >= 0),
         summarySeriesIndexes: summarySeriesColumns.map(column => columnIndexByName.get(column) ?? -1).filter(index => index >= 0),
+        score: roundRatio(0.82 + Math.min(0.12, detailSeriesColumns.length / 48)),
+    };
+};
+
+// A period-header wide table (one label column, every other header a calendar
+// period, numeric-or-missing cells) is fully resolved by the parser header, so
+// it needs no in-body header scan; that scan dominated intake time (tens of
+// seconds) on a 225-column monthly export.
+const buildPeriodWideHeaderLayout = (
+    data: CsvData | null,
+    detection: PeriodWideTableDetection,
+): HeaderLayoutCandidate => {
+    const columnIndexByName = new Map(getColumns(data).map((column, index) => [column.trim(), index]));
+    const detailSeriesColumns = detection.periodColumns.map(entry => entry.column);
+    return {
+        rowIndex: PARSER_HEADER_ROW_INDEX,
+        descriptorColumns: [...detection.labelColumns],
+        detailSeriesColumns,
+        summarySeriesColumns: [],
+        summarySeriesCandidates: [],
+        descriptorColumnIndexes: detection.labelColumns.map(column => columnIndexByName.get(column) ?? -1).filter(index => index >= 0),
+        detailSeriesIndexes: detailSeriesColumns.map(column => columnIndexByName.get(column) ?? -1).filter(index => index >= 0),
+        summarySeriesIndexes: [],
         score: roundRatio(0.82 + Math.min(0.12, detailSeriesColumns.length / 48)),
     };
 };
@@ -349,7 +377,10 @@ export const detectReportShape = (data: CsvData | null): ReportShapeProfile => {
     }
 
     const tabularContext = inferTabularShapeContext(data);
-    const explicitHeaderLayout = buildExplicitHeaderLayoutCandidate(data, tabularContext);
+    const parserHeaderLayout = buildExplicitHeaderLayoutCandidate(data, tabularContext);
+    const periodWideDetection = parserHeaderLayout ? null : detectPeriodWideTableFromCsvData(data);
+    const explicitHeaderLayout = parserHeaderLayout
+        ?? (periodWideDetection ? buildPeriodWideHeaderLayout(data, periodWideDetection) : null);
     // A flat schema is confirmed when the parser identified metadata rows (strong structural evidence),
     // OR when the schema's column names are clearly labels (spaces, metric-style
     // punctuation, or descriptive snake_case). Label-style headers indicate a well-parsed
@@ -395,7 +426,9 @@ export const detectReportShape = (data: CsvData | null): ReportShapeProfile => {
             || parserConfirmedCleanSingleHeader
         ),
     );
-    const headerLayoutCandidates = parserResolvedFlatSchema ? [] : buildHeaderLayoutCandidates(rows);
+    // In-body candidates only feed the dominant-segment search and the
+    // fallback layout, both of which an explicit parser layout overrides.
+    const headerLayoutCandidates = parserResolvedFlatSchema || explicitHeaderLayout ? [] : buildHeaderLayoutCandidates(rows);
     const dominantSegment = (explicitHeaderLayout || parserResolvedFlatSchema)
         ? null
         : findDominantTabularSegment(rows, headerLayoutCandidates);
@@ -410,7 +443,9 @@ export const detectReportShape = (data: CsvData | null): ReportShapeProfile => {
                 parserMetadataBands.length === 0 || !['report_title', 'report_metadata'].includes(candidate.role),
             ),
         ];
-    const rowRoles = buildRowRoles(data, headerLayout, headerBands, dominantSegment, tabularContext);
+    const rowRoles = periodWideDetection
+        ? buildPeriodWideRowRoles(data, periodWideDetection)
+        : buildRowRoles(data, headerLayout, headerBands, dominantSegment, tabularContext);
     const signals = buildSignals(data, headerLayout, headerBands, rowRoles, tabularContext);
     const hierarchySignal = Number(signals.find(signal => signal.key === 'row_hierarchy_signature')?.value ?? 0);
     const descriptorColumns = sortDescriptorColumns(headerLayout?.descriptorColumns ?? tabularContext?.descriptorColumns ?? []);

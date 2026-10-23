@@ -428,7 +428,7 @@ const inferTargetShape = (input: ResolveReportStructureInput) => {
         && (summaryLikeCount + groupHeaderCount) >= 3
         && (summaryLikeCount + groupHeaderCount) / totalRows >= 0.2;
 
-    if (runtimeRequiresReshape || headerLayerCount > 0) {
+    if (runtimeRequiresReshape || headerLayerCount > 0 || input.periodWideTableRecognized) {
         return 'long_fact_table' as const;
     }
     if (hasStatementStructure) {
@@ -487,7 +487,11 @@ export const resolveReportStructure = (
     const hasNonPeriodicBand = normalizedBoundary.headerLayerRowIndexes.length > 0
         && !hasCalendarPeriodBandPattern(rawRows, normalizedBoundary.headerRowIndex, normalizedBoundary.headerLayerRowIndexes)
         && hasNarrowComparisonWindowBandRow(rawRows, normalizedBoundary.headerRowIndex, normalizedBoundary.headerLayerRowIndexes);
-    const targetShape = (isRowTableShape || hasNonPeriodicBand)
+    // A recognized period-header wide table has a verified lossless melt;
+    // the numeric-density heuristic cannot overrule it (sparse "na" series
+    // otherwise read as text-dominant columns).
+    const targetShape = !input.periodWideTableRecognized
+        && (isRowTableShape || hasNonPeriodicBand)
         && deterministicTargetShape !== 'long_statement_table'
         ? 'row_table'
         : deterministicTargetShape;

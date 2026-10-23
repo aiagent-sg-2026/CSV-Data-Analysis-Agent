@@ -5,6 +5,7 @@ import { getOperationContractSummary } from '../execution/dataOperationManifest'
 import { normalizeDataMutatePayload } from '../execution/dataOperationRunner';
 import { buildBuiltinToolRegistry, type ResolvedToolRegistry } from '../tools/toolRegistry';
 import { shouldRequireRawFirstInspection, validateOperationsAgainstRawReportContract } from './rawReportContract';
+import { detectPeriodWideTable } from '../reportShapePeriodWide';
 
 export type CleaningPhase = 'inspect' | 'edit' | 'verify' | 'done' | 'failed';
 
@@ -515,9 +516,19 @@ export const buildRuntimeTableAssessmentFromIr = (
         const textRatio = nonEmptyCells.length > 0
             ? (nonEmptyCells.length - numericCells.length) / nonEmptyCells.length
             : 0;
+        // A year axis ("DataSeries,2025,2024,...") is a header made of numbers.
+        // It counts only when the whole row parses as a period-header wide
+        // table over the body, so a numeric data row is never accepted here.
+        const isPeriodAxisHeader = textRatio < 0.45 && detectPeriodWideTable(
+            proposedHeaderRow.map(value => String(value ?? '')),
+            rawRows.slice(
+                table.bodyStartIndex,
+                table.summaryStartIndex > table.bodyStartIndex ? table.summaryStartIndex : rawRows.length,
+            ).map(row => row.map(value => String(value ?? ''))),
+        ) !== null;
         // Sparse report headers (e.g. ranking reports with spacer columns)
         // may have as few as 2 visible header cells — still valid.
-        headerConfirmed = nonEmptyCells.length >= 2 && textRatio >= 0.45;
+        headerConfirmed = nonEmptyCells.length >= 2 && (textRatio >= 0.45 || isPeriodAxisHeader);
         if (headerConfirmed) {
             reasons.push(`Header row ${table.headerRowIndex} confirmed: ${nonEmptyCells.length} non-empty cells, ${Math.round(textRatio * 100)}% text`);
         } else {
