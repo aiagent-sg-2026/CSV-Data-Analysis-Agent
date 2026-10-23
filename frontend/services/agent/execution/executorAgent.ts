@@ -29,6 +29,9 @@ import { executeMetricMappingValidationAction } from './metricMappingValidator';
 import { executePlanAndCreateCard } from './cardExecutor';
 import { createNewCard } from './cardCreator';
 import { executeSqlPlanAndCreateCard, mapSqlAnalysisPlanToAnalysisPlan } from './sqlCardExecutor';
+import { assessCardSeriesScope } from './cardSeriesScope';
+import { PlanExecutionSoftError } from './planExecutionErrors';
+import { resolveSeriesMeasure } from '../planning/seriesMeasureGuard';
 import { resolveCurrentDuckDbBinding } from '../datasetBinding';
 import { validateClarification } from '../tools/toolManifestSupport';
 import { createChatMessage } from '../../../utils/messageState';
@@ -386,6 +389,20 @@ const resolveSqlBinding = (store: StoreApi) => {
     });
 };
 
+/** A cross-series aggregate of a melted period table is sent back to the planner with the reason. */
+const rejectSeriesScope = (
+    feedback: string,
+    title: string,
+    store: StoreApi,
+    options?: { throwOnSoftFailure?: boolean },
+): null => {
+    store.getState().addProgress(feedback, 'error');
+    if (options?.throwOnSoftFailure) {
+        throw new PlanExecutionSoftError('series_scope_rejected', feedback, { title });
+    }
+    return null;
+};
+
 export const executePlanAction = async (
     plan: AnalysisPlan | SqlAnalysisPlan,
     store: StoreApi,
@@ -403,12 +420,21 @@ export const executePlanAction = async (
         const normalizedPlan = isSqlAnalysisPlanLike(plan)
             ? mapSqlAnalysisPlanToAnalysisPlan(plan)
             : plan as AnalysisPlan;
-        return createNewCard(normalizedPlan, precomputed, store);
+        const seriesScope = assessCardSeriesScope(plan as AnalysisPlan | SqlAnalysisPlan, resolveSeriesMeasure(getState()));
+        if (seriesScope.decision === 'reject') return rejectSeriesScope(seriesScope.feedback, plan.title, store, options);
+        return seriesScope.evidenceValueGate
+            ? createNewCard(normalizedPlan, precomputed, store, { evidenceValueGate: seriesScope.evidenceValueGate })
+            : createNewCard(normalizedPlan, precomputed, store);
     }
 
     if (isSqlAnalysisPlanLike(plan)) {
+        // The AnalysisPlan path runs the same check inside executePlanAndCreateCard.
+        const seriesScope = assessCardSeriesScope(plan, resolveSeriesMeasure(getState()));
+        if (seriesScope.decision === 'reject') return rejectSeriesScope(seriesScope.feedback, plan.title, store, options);
         const binding = resolveSqlBinding(store);
-        return executeSqlPlanAndCreateCard(plan, store, binding);
+        return seriesScope.evidenceValueGate
+            ? executeSqlPlanAndCreateCard(plan, store, binding, { evidenceValueGate: seriesScope.evidenceValueGate })
+            : executeSqlPlanAndCreateCard(plan, store, binding);
     }
     return executePlanAndCreateCard(plan, getState().csvData, store, options);
 };

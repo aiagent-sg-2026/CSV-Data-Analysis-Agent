@@ -596,7 +596,7 @@ export const executeSqlPlanAndCreateCard = async (
     plan: SqlAnalysisPlan,
     store: StoreApi,
     binding?: DuckDbAnalysisBinding | null,
-    options?: { topic?: string | null },
+    options?: { topic?: string | null; evidenceValueGate?: AnalysisCardData['evidenceValueGate'] },
 ): Promise<AnalysisCardData> => {
     const { getState } = store;
     const state = getState();
@@ -677,6 +677,7 @@ export const executeSqlPlanAndCreateCard = async (
             autoAnalysisEvaluation: null,
             qualityWarnings,
             queryTrace: execution.queryTrace,
+            ...(options?.evidenceValueGate ? { evidenceValueGate: options.evidenceValueGate } : {}),
         });
         const cardEvaluation = evaluateAutoAnalysisCards([card]).cards[0] ?? null;
         agentMemoryCollector.markExplorationAsCard(explorationId);
