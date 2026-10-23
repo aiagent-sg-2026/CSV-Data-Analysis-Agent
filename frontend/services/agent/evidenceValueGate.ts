@@ -21,6 +21,7 @@ import { isTechnicalHelperDimensionColumn } from './analysisColumnRoles';
 import type { VolumeDependence } from './planning/volumeDrivenSum';
 import { describeSmallGroupLeaders } from './planning/groupSampleSize';
 import { assessSeriesMeasurePlan, selectsSingleSeries } from './planning/seriesMeasureGuard';
+import { mergeEvidencePreFilterIntoQuery } from './planning/evidenceQuerySemantics';
 
 const LOG_PREFIX = '[EvidenceValueGate]';
 const AI_EVAL_TIMEOUT_MS = 8000;
@@ -289,9 +290,11 @@ const queryHasDetailRowFilter = (
     if (!harnessContext.detailRowColumn || !harnessContext.detailRowValue) return false;
     const col = harnessContext.detailRowColumn.toLowerCase();
     const val = harnessContext.detailRowValue.toLowerCase();
+    // The plan's pre-filter is part of the executed WHERE clause.
+    const { where } = mergeEvidencePreFilterIntoQuery(plan.query, plan.preFilter);
     const allPredicates = [
-        ...(plan.query.where?.predicates ?? []),
-        ...(plan.query.where?.groups ?? []).flatMap(g => g.predicates),
+        ...(where?.predicates ?? []),
+        ...(where?.groups ?? []).flatMap(g => g.predicates),
     ];
     return allPredicates.some(p =>
         p.column.toLowerCase() === col
