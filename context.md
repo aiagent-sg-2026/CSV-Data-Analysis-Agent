@@ -189,6 +189,13 @@
     - AD2: page breaks, repeated headers, blank rows, reconciled subtotals and indentation hierarchy are classified in the body; carry-forward works on the melted path.
     - Gate on the integrated code: 476 files, 4,559 tests (one stale precondition test updated; `codingAgentQualificationPreflight` and `httpMcpAdapter` time out under load and pass alone).
     - Pending: AD1 (w7 header), AB (two remaining raw-code leaks), independent review (ab501617), then real-AI runs after the shared quota resets (00:00 SGT) and a persona-panel review of the screenshots.
+  - **Independent review of the weird-report intake work (2026-10-23)**: no P0. Gateway wire contract untouched; large-file path and dialect sampling unchanged; no SQL built from cell values; the 9 demo files unchanged; ordinary CSVs with "Total Solutions Ltd", "Subtotal Corp", a "Balance" column or a product "Continued" lose nothing. Findings, assigned back to the authors:
+    - P1: Swiss `1'234.50` columns are typed numeric but DuckDB SUM silently returns 0; Indian grouping `12,34,567.89` parsed before and no longer does (AC).
+    - P2: identifier columns like `1.234.567` or `12,34` are retyped numeric; ambiguous-only columns in a European file read 1000x too small (an existing gap) (AC).
+    - P2: sparse text rows containing an unanchored "page N" or "printed by" are dropped at intake; `CONTINUED_MARKER_PATTERN` is quadratic (645 ms at 20k characters) (AD2).
+    - P2: `retireFailedCleaningRun` wipes the real failure text and makes "Continue cleaning" a no-op after Retry or Confirm (AB).
+    - Noted, not assigned: intake is about 2x slower on a 100k-row report file (2.2 s vs 1.1 s), the numeric SQL expression is about 22% slower per query on 983k rows, and `normalizeDecimalCommaColumns` costs about 3.8 s per 983k rows x 4 numeric columns on the serialization path.
+  - Integrated so far (all on the branch, not deployed): AB 941cf98 (codes out of cleaning progress and replay messages), AD1 84fdfad (w7 all-caps header), AC, AD2 and AB's earlier commits.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
