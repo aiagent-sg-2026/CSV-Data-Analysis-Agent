@@ -4,7 +4,7 @@ import { applyTopNWithOthers, parseNullableNumericValue, parseNumericValue } fro
 import { CsvRow, AnalysisCardData, AnalysisPlan } from '../types';
 import { isAdditiveAggregation, normalizeCategoryLabel } from '../utils/analysisCardPresentation';
 import { buildPivotStackedChartState, DEFAULT_STACKED_PIVOT_COLUMN_TOP_N } from '../utils/pivotMatrixCharting';
-import { formatTemporalDisplayValue } from '../utils/temporalDisplay';
+import { formatTemporalDisplayValue, getTemporalSortTimestamp, resolvePeriodGrain } from '../utils/temporalDisplay';
 import { detectTiedLeadingWindow, isRankedMeasureView, rankRowsByValue, resolveCardValueKey } from '../utils/rankedPresentation';
 
 export const useAnalysisCardData = (cardId: string) => {
@@ -27,23 +27,24 @@ export const useAnalysisCardData = (cardId: string) => {
     
     const valueKey = useMemo(() => resolveCardValueKey(plan, aggregatedData), [plan, aggregatedData]);
     const groupByKey = useMemo(() => plan?.groupByColumn || '', [plan]);
+    const periodSeries = plan?.periodSeries ?? null;
     const normalizeDisplayRows = useMemo(() => (rows: CsvRow[]) => rows.map(row => {
         const nextRow: CsvRow = { ...row };
 
         Object.entries(row).forEach(([column, value]) => {
-            const temporalDisplayValue = formatTemporalDisplayValue(column, value);
+            const temporalDisplayValue = formatTemporalDisplayValue(column, value, periodSeries);
             if (temporalDisplayValue) {
                 nextRow[column] = temporalDisplayValue;
             }
         });
 
         if (groupByKey) {
-            const groupDisplayValue = formatTemporalDisplayValue(groupByKey, row[groupByKey]);
+            const groupDisplayValue = formatTemporalDisplayValue(groupByKey, row[groupByKey], periodSeries);
             nextRow[groupByKey] = groupDisplayValue ?? normalizeCategoryLabel(row[groupByKey]);
         }
 
         return nextRow;
-    }), [groupByKey]);
+    }), [groupByKey, periodSeries]);
 
     const dataAfterFilter = useMemo(() => {
         if (!aggregatedData) return [];
@@ -99,6 +100,8 @@ export const useAnalysisCardData = (cardId: string) => {
     const sortedTableData = useMemo(() => {
         if (!tableSort) return tableDataForDisplay;
         const { column, direction } = tableSort;
+        // Period labels such as "Aug 2026" sort chronologically, not alphabetically.
+        const sortsByPeriod = resolvePeriodGrain(column, periodSeries) !== null;
         const isMissing = (value: unknown) => value === null || value === undefined || (typeof value === 'string' && value.trim() === '');
         return [...tableDataForDisplay].sort((a, b) => {
             const aVal = a[column];
@@ -107,6 +110,13 @@ export const useAnalysisCardData = (cardId: string) => {
             // instead of sorting as 0 or as an empty string.
             if (isMissing(aVal) || isMissing(bVal)) {
                 return (isMissing(aVal) ? 1 : 0) - (isMissing(bVal) ? 1 : 0);
+            }
+            if (sortsByPeriod) {
+                const aTime = getTemporalSortTimestamp(aVal, column, periodSeries);
+                const bTime = getTemporalSortTimestamp(bVal, column, periodSeries);
+                if (aTime !== null && bTime !== null) {
+                    return direction === 'asc' ? aTime - bTime : bTime - aTime;
+                }
             }
             // Treat numeric-like strings as numbers for correct sort order
             const aNum = typeof aVal === 'number' ? aVal : Number(String(aVal).replace(/[,$%()]/g, (m) => m === '(' ? '-' : m === ')' ? '' : ''));
@@ -120,7 +130,7 @@ export const useAnalysisCardData = (cardId: string) => {
             const bStr = String(bVal ?? '');
             return direction === 'asc' ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
         });
-    }, [tableDataForDisplay, tableSort]);
+    }, [periodSeries, tableDataForDisplay, tableSort]);
 
     const chartHiddenZeroValueRowCount = useMemo(() => {
         if (plan?.artifactType !== 'pivot_matrix' || !hideZeroValueRows) {

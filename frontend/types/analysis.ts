@@ -3,6 +3,7 @@ import type { DatasetHeaderSemantics, SemanticLabelConflict } from './semantics'
 import type { AnalysisEngine, QueryPlan, QueryAggregateFunction } from './querying';
 import type { PreFilterClause } from './preFilter';
 import type { LocalizedText } from './localization';
+import type { PeriodGrain } from './reportStructure';
 
 export type ChartType =
     | 'bar'
@@ -157,6 +158,19 @@ export interface AnalysisPlan {
      * Absent means the historical largest-first ranking.
      */
     rankDirection?: 'asc' | 'desc';
+    /**
+     * Set on cards of a melted period-series table when the card is created.
+     * The stored period is the ISO first day (2025-01-01), so display needs the
+     * grain to show "2025" or "Aug 2026"; the selected series names the measure.
+     */
+    periodSeries?: AnalysisPlanPeriodSeries;
+}
+
+export interface AnalysisPlanPeriodSeries {
+    periodColumn: string;
+    periodGrain: PeriodGrain;
+    /** Series key the card's filter selects (`DataSeries = X`); null when it reads several series or none. */
+    seriesName: string | null;
 }
 
 export interface SqlAnalysisBindings {
@@ -641,6 +655,7 @@ export interface CardContext {
     groupByColumn?: string;
     valueColumn?: string;
     aggregation?: AggregationType;
+    periodSeries?: AnalysisPlanPeriodSeries;
     rowCount?: number;
     aggregatedDataSample: CsvRow[];
 }

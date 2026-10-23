@@ -203,6 +203,9 @@ export interface CanonicalReshapeProvenance {
     rowCountAfter: number;
 }
 
+/** Calendar grain of the period columns of a period-header wide table. */
+export type PeriodGrain = 'year' | 'quarter' | 'month';
+
 /** One published series of a melted period-header wide table. */
 export interface PeriodSeriesInfo {
     /** Unique series key as stored in the series column. */
@@ -227,7 +230,7 @@ export interface SeriesMeasureSemantics {
     seriesColumn: string;
     measureColumn: string;
     periodColumn: string;
-    periodGrain: 'year' | 'quarter' | 'month';
+    periodGrain: PeriodGrain;
     parentColumn: string | null;
     /** Columns carrying the row class (RowClass and its RowRole copies); empty without a hierarchy. */
     detailRowColumns: string[];

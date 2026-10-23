@@ -1,13 +1,15 @@
 import type {
     AnalysisCardData,
     AnalysisPlan,
+    AnalysisPlanPeriodSeries,
     QueryAggregateClause,
+    QueryPlan,
     SeriesMeasureSemantics,
     SqlAnalysisPlan,
     SqlEvidenceQueryPlan,
 } from '../../../types';
 import { mergeEvidencePreFilterIntoQuery } from '../planning/evidenceQuerySemantics';
-import { assessSeriesMeasurePlan, type SeriesMeasurePlanVerdict } from '../planning/seriesMeasureGuard';
+import { assessSeriesMeasurePlan, resolveSelectedSeries, type SeriesMeasurePlanVerdict } from '../planning/seriesMeasureGuard';
 
 /**
  * Chat and skill cards are built from plans the model writes directly, not
@@ -96,4 +98,25 @@ export const assessCardSeriesScope = (
         return { decision: 'table_only', evidenceValueGate: buildTableOnlyGate(verdict, semantics) };
     }
     return { decision: 'pass', evidenceValueGate: null };
+};
+
+/**
+ * Display facts for a card on a melted period-series table: the period grain
+ * recorded at intake and the one series the card reads, taken from the query
+ * that produced its rows (or the card plan's own filters without a trace).
+ */
+export const buildPlanPeriodSeries = (
+    plan: AnalysisPlan,
+    semantics: SeriesMeasureSemantics | null | undefined,
+    executedQuery?: Pick<QueryPlan, 'where'> | null,
+): AnalysisPlanPeriodSeries | null => {
+    if (!semantics) return null;
+    const where = executedQuery?.where
+        ? mergeEvidencePreFilterIntoQuery({ where: executedQuery.where }, plan.preFilter).where
+        : toSeriesCheckPlan(plan).query.where;
+    return {
+        periodColumn: semantics.periodColumn,
+        periodGrain: semantics.periodGrain,
+        seriesName: resolveSelectedSeries(where, semantics)?.name ?? null,
+    };
 };

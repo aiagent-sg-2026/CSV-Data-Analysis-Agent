@@ -13,7 +13,7 @@ export interface TableSortState {
 
 interface DataTableProps {
     data: CsvRow[];
-    plan?: Pick<AnalysisPlan, 'title' | 'description' | 'groupByColumn' | 'valueColumn'>;
+    plan?: Pick<AnalysisPlan, 'title' | 'description' | 'groupByColumn' | 'valueColumn' | 'aggregation' | 'periodSeries'>;
     displayColumnLabels?: Record<string, string>;
     sort?: TableSortState | null;
     onSortChange?: (sort: TableSortState | null) => void;
@@ -113,7 +113,7 @@ const DataTableComponent: React.FC<DataTableProps> = ({ data, plan, displayColum
                                             row[header],
                                             /(^|_)count($|_)/i.test(header) && Number.isInteger(coerceNumericValue(row[header])) ? 0 : 2,
                                         )
-                                        : formatAnalysisCellValue(header, row[header]);
+                                        : formatAnalysisCellValue(header, row[header], 2, plan?.periodSeries);
 
                                     return (
                                         <td

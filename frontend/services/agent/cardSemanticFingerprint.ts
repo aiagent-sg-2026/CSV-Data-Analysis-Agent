@@ -35,5 +35,8 @@ export const buildCardSemanticFingerprint = (
         pivotRows: plan.artifactMetadata?.matrixRowLabel?.trim().toLowerCase() ?? null,
         pivotColumns: plan.artifactMetadata?.matrixColumnLabel?.trim().toLowerCase() ?? null,
         pivotValues: plan.artifactMetadata?.matrixValueColumns?.map(value => value.trim().toLowerCase()) ?? [],
+        // The series filter of a melted period table lives in the query, not
+        // in preFilter; without it every one-series trend would look the same.
+        series: plan.periodSeries?.seriesName?.trim().toLowerCase() ?? null,
     });
 };

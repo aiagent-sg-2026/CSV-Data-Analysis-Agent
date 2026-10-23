@@ -4,6 +4,7 @@ import type {
     CsvCellValue,
     EvidenceValueGateReasonCode,
     FilterPredicate,
+    PeriodSeriesInfo,
     QueryAggregateClause,
     QueryWhereClause,
     SeriesMeasureSemantics,
@@ -282,6 +283,19 @@ export const selectsSingleSeries = (
     if (!semantics || plan.query.rawSql) return false;
     const series = resolveSeriesValues(semantics, restrictedValues(plan.query.where, semantics.seriesColumn));
     return series !== null && series.length === 1;
+};
+
+/**
+ * The published series a WHERE clause selects when it selects exactly one,
+ * with the series key as the intake recorded it; null otherwise.
+ */
+export const resolveSelectedSeries = (
+    where: QueryWhereClause | undefined,
+    semantics: SeriesMeasureSemantics | null | undefined,
+): PeriodSeriesInfo | null => {
+    if (!semantics) return null;
+    const series = resolveSeriesValues(semantics, restrictedValues(where, semantics.seriesColumn));
+    return series !== null && series.length === 1 ? findSeries(semantics, series[0]) : null;
 };
 
 /** Planner guidance stating how the measure may be aggregated; shared by the AI topic, evidence and Pi planners. */
