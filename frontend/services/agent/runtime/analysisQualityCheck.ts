@@ -5,10 +5,20 @@ import { callSmallAiStep } from '../planning/planGenerator';
 import { handleAiAction } from '../actionHandler';
 import { robustlyParseJsonObject } from '../../../utils/jsonParser';
 import { recordRuntimeEvent } from './runtimeHelpers';
+import { collectOrderedColumnNames } from '../../data/columnRegistry';
+import { isCanonicalContextDimensionColumn } from '../analysisColumnRoles';
+import { isStructuralMetadataColumn } from '../structuralMetadata';
 
-export const buildQualityIssueSummary = (findings: DataInvestigationFindings): string[] => {
+const normalizeColumnKey = (name: string) => name.trim().toLowerCase();
+
+export const buildQualityIssueSummary = (
+    findings: DataInvestigationFindings,
+    repairableColumns?: string[],
+): string[] => {
+    const repairable = repairableColumns ? new Set(repairableColumns.map(normalizeColumnKey)) : null;
     const issues: string[] = [];
     for (const p of findings.missingDataPatterns) {
+        if (repairable && !repairable.has(normalizeColumnKey(p.column))) continue;
         const pct = Math.round((p.nullRate + p.blankRate) * 100);
         if (pct >= 3) {
             issues.push(`Column "${p.column}" has ${pct}% null/blank values`);
@@ -29,16 +39,35 @@ export const resolveQualityRepairColumn = (columnName: string, availableColumns:
     return availableColumns.find(column => column.trim().toLowerCase() === normalized) ?? null;
 };
 
+/**
+ * Columns a quality repair may target. data.mutate edits `csvData`, while the
+ * investigation profiles the canonical analysis dataset, which adds lineage
+ * columns (SectionLabel, HeaderPath, SourceRowIndex, ...). On a flat file those
+ * are empty by design and absent from csvData, so offering them let the model
+ * propose a fill_missing that failed with "references missing columns".
+ */
+export const resolveQualityRepairableColumns = (store: StoreApi): string[] => {
+    const state = store.getState();
+    const mutableColumns = new Set(collectOrderedColumnNames(state.csvData?.data).map(normalizeColumnKey));
+    return state.columnProfiles
+        .map(column => column.name)
+        .filter(name =>
+            mutableColumns.has(normalizeColumnKey(name))
+            && !isStructuralMetadataColumn(name)
+            && !isCanonicalContextDimensionColumn(name),
+        );
+};
+
 export const runPostInvestigationQualityCheck = async (
     findings: DataInvestigationFindings,
     store: StoreApi,
     settings: Settings,
 ): Promise<{ applied: boolean; fixCount: number }> => {
-    const issues = buildQualityIssueSummary(findings);
+    const availableColumns = resolveQualityRepairableColumns(store);
+    const issues = buildQualityIssueSummary(findings, availableColumns);
     if (issues.length === 0) return { applied: false, fixCount: 0 };
 
     try {
-        const availableColumns = store.getState().columnProfiles.map(column => column.name);
         const response = await callSmallAiStep(
             settings,
             'You are a data quality analyst. Return JSON only. Choose at most one conservative pre-analysis repair.',
