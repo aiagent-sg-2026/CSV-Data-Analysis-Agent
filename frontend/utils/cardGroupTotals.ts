@@ -32,7 +32,12 @@ export const resolveCardGroupTotals = (params: {
     filterActive: boolean;
 }): CardGroupTotals => {
     const { additive, coverage, rowsTotal, rowCount, filterActive } = params;
-    if (!additive) return { overallTotal: null, matchedGroupCount: rowCount, complete: true };
+    if (!additive) {
+        // A cut-off ranking of a non-additive measure has no total or share, but may know how many groups it was cut from.
+        return coverage?.status === 'partial' && !filterActive
+            ? { overallTotal: null, matchedGroupCount: coverage.groupCount, complete: false }
+            : { overallTotal: null, matchedGroupCount: rowCount, complete: true };
+    }
     if (!coverage || coverage.status === 'complete' || filterActive) {
         return { overallTotal: rowsTotal, matchedGroupCount: rowCount, complete: true };
     }

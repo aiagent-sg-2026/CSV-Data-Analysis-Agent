@@ -373,4 +373,59 @@ describe('AnalysisCardSummary', () => {
             expect(screen.getByText('前 8 个分组（共 52 个）')).toBeInTheDocument();
         });
     });
+
+    describe('a cut-off ranking of a non-additive measure', () => {
+        const median = {
+            plan: { ...plan, aggregation: 'median', groupByColumn: 'Customer', title: 'Median Balance Amount by Customer' },
+            totalValue: 0,
+            overallTotalValue: 0,
+            displayedRowCount: 8,
+            totalRowCount: 9,
+            displayedMetricLabel: 'Median Balance Amount',
+            displayedGroupLabel: 'Customer',
+            topN: 8,
+            hideOthers: false,
+            hiddenLabelCount: 0,
+            language: 'English' as const,
+            groupsComplete: false,
+        };
+
+        it('states the measured group count instead of presenting the returned rows as the total', () => {
+            const { container } = render(<AnalysisCardSummary cardId="median-cut-off" {...median} totalGroupCount={20} />);
+
+            expect(screen.getByText('Current view shows 8 of 20 groups. Compare each value separately; these measures cannot be added together.')).toBeInTheDocument();
+            expect(screen.getByText('Top 8 of 20 groups')).toBeInTheDocument();
+            expect(container.textContent).not.toContain('8 of 9 groups');
+            expect(container.textContent).not.toContain('Overall:');
+        });
+
+        it('says "the groups returned" when the count could not be measured', () => {
+            render(<AnalysisCardSummary cardId="median-unmeasured" {...median} totalGroupCount={null} />);
+
+            expect(screen.getByText('Current view shows 8 of the 9 groups returned. Compare each value separately; these measures cannot be added together.')).toBeInTheDocument();
+            expect(screen.getByText('Top 8 of the groups returned')).toBeInTheDocument();
+        });
+
+        it('formats group counts with thousands separators', () => {
+            render(<AnalysisCardSummary cardId="median-big" {...median} displayedRowCount={8} totalRowCount={10} totalGroupCount={3200} />);
+
+            expect(screen.getByText('Top 8 of 3,200 groups')).toBeInTheDocument();
+            expect(screen.getByText('Current view shows 8 of 3,200 groups. Compare each value separately; these measures cannot be added together.')).toBeInTheDocument();
+        });
+
+        it('formats the additive scope text the same way', () => {
+            render(<AnalysisCardSummary
+                cardId="sum-big"
+                {...median}
+                plan={{ ...plan, groupByColumn: 'Product' }}
+                totalValue={1_000}
+                overallTotalValue={90_000}
+                hideOthers={true}
+                totalGroupCount={2040}
+            />);
+
+            expect(screen.getByText('Top 8 of 2,040 groups')).toBeInTheDocument();
+            expect(screen.getByText('Current view shows 8 of 2,040 entries and 1,000.00 of 90,000.00.')).toBeInTheDocument();
+        });
+    });
 });

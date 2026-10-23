@@ -1640,8 +1640,15 @@ describe('topicProcessor', { timeout: 15000 }, () => {
             expect(groupCoverage).toEqual({ status: 'complete', groupCount: 5, overallTotal: 1500 });
         });
 
-        it('records nothing for an average, which has no total', async () => {
+        it('records only the group count for a cut-off average, which has no total', async () => {
             const { totalCalls, groupCoverage } = await run({ fn: 'avg', companion: async () => { throw new Error('must not run'); } });
+
+            expect(totalCalls).toHaveLength(0);
+            expect(groupCoverage).toEqual({ status: 'partial', groupCount: 40, overallTotal: null });
+        });
+
+        it('records nothing for an average that returned every group', async () => {
+            const { totalCalls, groupCoverage } = await run({ fn: 'avg', matched: 5, companion: async () => { throw new Error('must not run'); } });
 
             expect(totalCalls).toHaveLength(0);
             expect(groupCoverage).toBeNull();

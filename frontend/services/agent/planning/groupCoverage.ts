@@ -20,6 +20,7 @@ import { isVolumeCheckCancellation } from './volumeDrivenSum';
  */
 
 export const GROUP_TOTAL_ALIAS = 'group_coverage_total';
+export const GROUP_COUNT_ALIAS = 'group_coverage_group_count';
 
 /** Value-gate reasons for measures that must not be added across series: a total over them means nothing. */
 export const SERIES_NON_ADDITIVE_REASON_CODES: ReadonlySet<string> = new Set([
@@ -74,6 +75,29 @@ export const buildGroupTotalCheckPlan = (
     };
 };
 
+/**
+ * A cut-off ranking of a non-additive measure (median, average, min, max) has
+ * no total, but its group count is a fact: one distinct count over the same
+ * population, without grouping or limit. A single group column is needed to
+ * count; groups with a missing label are not counted by it.
+ */
+export const buildGroupCountCheckPlan = (plan: SqlEvidenceQueryPlan): SqlEvidenceQueryPlan | null => {
+    const query = plan.query;
+    if (plan.queryMode !== 'aggregate' || query.rawSql || query.groupBy?.length !== 1 || query.postAggregateFilter) return null;
+    return {
+        title: `Group count for ${plan.title}`,
+        queryMode: 'aggregate',
+        intentSummary: 'Number of distinct groups the shown measure is ranked over, ignoring the group limit.',
+        query: {
+            select: [GROUP_COUNT_ALIAS],
+            ...(query.where ? { where: query.where } : {}),
+            aggregates: [{ function: 'count_distinct', column: query.groupBy[0], as: GROUP_COUNT_ALIAS }],
+            limit: 1,
+        },
+        ...(plan.preFilter ? { preFilter: plan.preFilter } : {}),
+    };
+};
+
 type CoverageResult = Pick<DataQueryResult, 'rows'> & Partial<Pick<DataQueryResult, 'totalMatchedRows' | 'truncated' | 'appliedLimit'>>;
 
 /**
@@ -115,11 +139,9 @@ export const measureGroupCoverage = async (
     options: { valueColumn?: string | null; signal?: AbortSignal; totalSuppressed?: boolean } = {},
 ): Promise<AnalysisCardGroupCoverage | null> => {
     const aggregate = resolveCardAggregate(plan, options.valueColumn);
-    if (
-        plan.queryMode !== 'aggregate' || plan.query.rawSql || !plan.query.groupBy?.length
-        || !aggregate || !ADDITIVE_FUNCTIONS.has(aggregate.function)
-    ) {
-        return null;
+    if (plan.queryMode !== 'aggregate' || plan.query.rawSql || !plan.query.groupBy?.length || !aggregate) return null;
+    if (!ADDITIVE_FUNCTIONS.has(aggregate.function)) {
+        return measureNonAdditiveGroupCount(plan, result, runQuery, options.signal);
     }
     const valueKey = findRowKey(result.rows[0], aggregate.as);
     const shown = sumRows(result.rows, valueKey);
@@ -146,6 +168,32 @@ export const measureGroupCoverage = async (
         return { status: 'partial', groupCount, overallTotal };
     } catch (error) {
         if (isVolumeCheckCancellation(error, options.signal)) throw error;
+        return unmeasured;
+    }
+};
+
+/** Coverage of a non-additive ranking: only the group count, never a total or a share. Null when nothing was cut off. */
+const measureNonAdditiveGroupCount = async (
+    plan: SqlEvidenceQueryPlan,
+    result: CoverageResult,
+    runQuery: (checkPlan: SqlEvidenceQueryPlan) => Promise<{ result: { rows: CsvRow[] } }>,
+    signal?: AbortSignal,
+): Promise<AnalysisCardGroupCoverage | null> => {
+    if (!isGroupResultTruncated(result)) return null;
+    const matched = result.totalMatchedRows;
+    const reported = typeof matched === 'number' && Number.isFinite(matched) && matched > result.rows.length ? matched : null;
+    const unmeasured: AnalysisCardGroupCoverage = { status: 'partial', groupCount: reported, overallTotal: null };
+    if (reported !== null) return unmeasured;
+    const checkPlan = buildGroupCountCheckPlan(plan);
+    if (!checkPlan) return unmeasured;
+    try {
+        const execution = await runQuery(checkPlan);
+        const row = execution.result.rows[0];
+        const groupCount = row ? parseNullableNumericValue(row[GROUP_COUNT_ALIAS]) : null;
+        // A count below the rows already returned means the two queries did not read the same data.
+        return groupCount !== null && groupCount >= result.rows.length ? { ...unmeasured, groupCount } : unmeasured;
+    } catch (error) {
+        if (isVolumeCheckCancellation(error, signal)) throw error;
         return unmeasured;
     }
 };

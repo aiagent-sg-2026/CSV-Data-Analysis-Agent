@@ -2154,6 +2154,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Paparan semasa menunjukkan {visible} daripada {total} kumpulan. Bandingkan setiap nilai secara berasingan; ukuran ini tidak boleh dijumlahkan.',
         'Japanese': '現在のビューでは {total} グループ中 {visible} グループを表示しています。各値を個別に比較してください。これらの指標は合算できません。',
     },
+    'analysis_card_view_line_scope_non_additive_returned': {
+        'English': 'Current view shows {visible} of the {total} groups returned. Compare each value separately; these measures cannot be added together.',
+        'Mandarin': '当前视图显示返回的 {total} 个分组中的 {visible} 个。请逐项比较数值；这些指标不能相加。',
+        'Malay': 'Paparan semasa menunjukkan {visible} daripada {total} kumpulan yang dikembalikan. Bandingkan setiap nilai secara berasingan; ukuran ini tidak boleh dijumlahkan.',
+        'Japanese': '現在のビューでは、取得した {total} グループ中 {visible} グループを表示しています。各値を個別に比較してください。これらの指標は合算できません。',
+    },
     'analysis_card_view_line_scope_unknown': {
         'English': 'Current view shows {visible} of {total} groups. The aggregation type is unavailable, so no combined total is shown.',
         'Mandarin': '当前视图显示 {visible}/{total} 个分组。聚合类型未记录，因此不显示合计。',

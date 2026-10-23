@@ -127,7 +127,7 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = React.memo(({ cardId, i
         }
         if (!groupsComplete) {
             // The query limit cut groups off: an export must not claim the whole card aggregation.
-            scopeParts.push(matchedGroupCount !== null && overallTotalValue !== null
+            scopeParts.push(matchedGroupCount !== null && (overallTotalValue !== null || !hasAdditiveMeasure)
                 ? `${totalRowCount} of ${matchedGroupCount} groups returned`
                 : 'Only the groups returned');
         }
