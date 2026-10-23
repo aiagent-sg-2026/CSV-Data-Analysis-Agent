@@ -362,6 +362,29 @@ export const detectReportShape = (data: CsvData | null): ReportShapeProfile => {
     ).length;
     const columnNamesAreLabelStyle = schemaColumnNames.length >= 5
         && (labelStyleColumnCount / schemaColumnNames.length) >= 0.5;
+    // A plain CSV whose parse was clean also confirms a flat schema: one
+    // header row, no layers, metadata, summary rows or parser warnings, and
+    // every column carrying a distinct text label. Period or code headers
+    // ("2024", "SKU") are excluded because they are what a wide crosstab
+    // looks like, so those files still get the in-body header scan.
+    const parserConfirmedCleanSingleHeader = Boolean(
+        data
+        && (data.headerDepth ?? 0) === 1
+        && (data.headerLayers?.length ?? 0) === 0
+        && (data.metadataRows?.length ?? 0) === 0
+        && (data.summaryRows?.length ?? 0) === 0
+        && data.intakeDetection?.confidence === 'high'
+        && data.intakeDetection.warnings.length === 0
+        && schemaColumnNames.length >= 2
+        && new Set(schemaColumnNames.map(column => column.trim().toLowerCase())).size === schemaColumnNames.length
+        && schemaColumnNames.every(column =>
+            /[A-Za-z]/.test(column)
+            && !PLACEHOLDER_PATTERN.test(column)
+            && !isCodeLike(column)
+            && !isNumericLike(column)
+            && !/\d{4}/.test(column),
+        ),
+    );
     const parserResolvedFlatSchema = Boolean(
         data
         && (((data.headerDepth ?? 0) === 1 && (data.headerLayers?.length ?? 0) === 0)
@@ -369,6 +392,7 @@ export const detectReportShape = (data: CsvData | null): ReportShapeProfile => {
         && (
             (data.metadataRows?.length ?? 0) > 0
             || columnNamesAreLabelStyle
+            || parserConfirmedCleanSingleHeader
         ),
     );
     const headerLayoutCandidates = parserResolvedFlatSchema ? [] : buildHeaderLayoutCandidates(rows);
