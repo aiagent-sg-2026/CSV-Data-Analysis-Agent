@@ -1,5 +1,12 @@
 import type { CsvRow, RowRole, RowRoleCandidate } from '../../types';
 import {
+    buildUniqueSeriesKeys,
+    measureIndent,
+    resolvePeriodWideHierarchy,
+    verifyParentSum,
+    type PeriodWideRowClass,
+} from './reportShapePeriodWide';
+import {
     getNonEmptyValues,
     getRowCells,
     isBlankRow,
@@ -106,4 +113,83 @@ export const assignHierarchyDepths = (rowRoles: RowRoleCandidate[]): RowRoleCand
         activeDepth = 0;
         return { ...candidate, depth: Math.max(0, depth) };
     });
+};
+
+export interface IndentHierarchyEvidence {
+    /** Parents (rows followed by deeper-indented rows) whose numbers could be compared with their children. */
+    parentsChecked: number;
+    /** Checked parents whose published values equal the sum of their children. */
+    parentsVerified: number;
+    levels: number;
+}
+
+export interface IndentHierarchyEntry {
+    /** Label with indentation trimmed, made unique across repeats (same convention as the melted path). */
+    key: string;
+    level: number;
+    parentKey: string | null;
+    rowClass: PeriodWideRowClass;
+}
+
+// A parent counts as verified when most of its comparable measure columns
+// equal the sum of its children; non-additive columns (unit prices, rates)
+// are allowed to disagree.
+const MIN_PARENT_COLUMN_MATCH = 0.5;
+// Indentation is accepted as a hierarchy only when nearly every comparable
+// parent reconciles. Cosmetic leading spaces never reconcile.
+const MIN_VERIFIED_PARENT_SHARE = 0.8;
+
+/**
+ * Resolves a parent/child hierarchy from label indentation in a row table
+ * (for example "Region / Country / Customer" with 4 spaces per level) and
+ * only accepts it when the published parent values reconcile with the sum of
+ * their children. Returns null when the labels carry no indentation, the
+ * indentation does not form a tree, or the numbers contradict it.
+ *
+ * `rows[i]` holds the numeric measures of label i, or null for a heading row
+ * that has none.
+ */
+export const resolveIndentHierarchy = (params: {
+    labels: string[];
+    rows: Array<CsvRow | null>;
+    measureColumns: string[];
+}): { entries: IndentHierarchyEntry[]; evidence: IndentHierarchyEvidence } | null => {
+    const { labels, rows, measureColumns } = params;
+    if (labels.length < 3 || measureColumns.length === 0) return null;
+    if (new Set(labels.map(measureIndent)).size < 2) return null;
+    const hierarchy = resolvePeriodWideHierarchy(labels);
+    if (!hierarchy || hierarchy.every(entry => entry.parentIndex === null)) return null;
+
+    const childrenByParent = new Map<number, number[]>();
+    hierarchy.forEach((entry, index) => {
+        if (entry.parentIndex === null) return;
+        childrenByParent.set(entry.parentIndex, [...(childrenByParent.get(entry.parentIndex) ?? []), index]);
+    });
+    let parentsChecked = 0;
+    let parentsVerified = 0;
+    childrenByParent.forEach((childIndexes, parentIndex) => {
+        const parentRow = rows[parentIndex];
+        const childRows = childIndexes.map(index => rows[index]).filter((row): row is CsvRow => row !== null);
+        if (!parentRow || childRows.length === 0) return;
+        const { checked, matched } = verifyParentSum(parentRow, childRows, measureColumns);
+        if (checked === 0) return;
+        parentsChecked += 1;
+        if (matched / checked >= MIN_PARENT_COLUMN_MATCH) parentsVerified += 1;
+    });
+    if (parentsChecked === 0 || parentsVerified / parentsChecked < MIN_VERIFIED_PARENT_SHARE) return null;
+
+    const keys = buildUniqueSeriesKeys(labels.map(label => label.trim()), hierarchy);
+    return {
+        entries: hierarchy.map((entry, index) => ({
+            key: keys[index],
+            level: entry.level,
+            parentKey: entry.parentIndex === null ? null : keys[entry.parentIndex],
+            rowClass: entry.rowClass,
+        })),
+        evidence: {
+            parentsChecked,
+            parentsVerified,
+            levels: Math.max(...hierarchy.map(entry => entry.level)) + 1,
+        },
+    };
 };

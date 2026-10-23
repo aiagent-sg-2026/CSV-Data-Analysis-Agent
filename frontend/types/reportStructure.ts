@@ -269,6 +269,23 @@ export interface CanonicalBuildMeta {
     reshapeProvenance?: CanonicalReshapeProvenance;
     /** Set when the canonical table is a melted period-header wide table. */
     seriesMeasure?: SeriesMeasureSemantics | null;
+    /**
+     * Set when a row table's label column carried a verified indentation
+     * hierarchy. Parent rows stay in the table with RowClass subtotal|total;
+     * detail rows have RowClass fact.
+     */
+    rowHierarchy?: {
+        labelColumn: string;
+        parentColumn: string;
+        depthColumn: string;
+        rowClassColumn: string;
+        detailRowValue: string;
+        levels: number;
+        parentRows: number;
+        detailRows: number;
+        parentsChecked: number;
+        parentsVerified: number;
+    } | null;
 }
 
 export interface CanonicalDatasetArtifact {

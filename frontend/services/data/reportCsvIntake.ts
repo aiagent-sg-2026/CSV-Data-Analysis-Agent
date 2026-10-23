@@ -22,6 +22,7 @@ import {
     isNumericLike,
 } from '../agent/reportShapeUtils';
 import { buildMergedBoundaryHeaders } from '../agent/reportStructureNormalization';
+import { classifyBodyRows, type BodyRowFinding } from './reportBodyRows';
 
 type RawCsvRow = string[];
 
@@ -897,6 +898,26 @@ const pushSegment = (
     });
 };
 
+// In-body findings reuse the existing segment kinds; the note keeps the reason
+// so a page break and a repeated header stay distinguishable.
+const applyBodyFindingSegment = (
+    rowKinds: ReportIntakeSegmentKind[],
+    rowConfidence: number[],
+    rowNotes: string[][],
+    index: number,
+    finding: BodyRowFinding,
+) => {
+    if (finding.kind === 'subtotal' || finding.kind === 'total') {
+        rowKinds[index] = 'summary';
+        rowConfidence[index] = 0.88;
+        rowNotes[index].push(`in_body_${finding.kind}`);
+        return;
+    }
+    rowKinds[index] = finding.kind === 'blank' ? 'blank' : 'repeated_header';
+    rowConfidence[index] = finding.kind === 'blank' ? 1 : 0.9;
+    if (finding.kind !== 'blank') rowNotes[index].push(`in_body_${finding.kind}`);
+};
+
 const buildSegments = (
     rows: RawCsvRow[],
     provisionalTable: ReportIntakeIr['provisionalTable'],
@@ -935,6 +956,18 @@ const buildSegments = (
         const headerLayerSet = new Set(provisionalTable.headerLayerRowIndexes);
         const repeatedHeaderSet = new Set(provisionalTable.repeatedHeaderRowIndexes);
         const parameterSet = new Set(provisionalTable.parameterRowIndexes);
+        // Page-break blocks, repeated headers and reconciled subtotals inside
+        // the body are layout artefacts, not records.
+        const bodyFindings = classifyBodyRows(rows, provisionalTable);
+        // A summary row after the last record is the table's closing total. It
+        // stays in the body (published totals are series of their own in a
+        // period-wide table, and the canonical step classifies it); only
+        // subtotals with records after them are layout between groups.
+        let lastRecordIndex = provisionalTable.summaryStartIndex - 1;
+        while (lastRecordIndex >= provisionalTable.bodyStartIndex
+            && (bodyFindings.has(lastRecordIndex) || isBlankRow(rows[lastRecordIndex]))) {
+            lastRecordIndex -= 1;
+        }
         let seenTitle = false;
         rows.forEach((row, index) => {
             if (isBlankRow(row)) {
@@ -977,6 +1010,14 @@ const buildSegments = (
                 }
                 rowKinds[index] = 'summary';
                 rowConfidence[index] = 0.76;
+                return;
+            }
+            const bodyFinding = bodyFindings.get(index);
+            const isClosingSummary = bodyFinding !== undefined
+                && (bodyFinding.kind === 'subtotal' || bodyFinding.kind === 'total')
+                && index > lastRecordIndex;
+            if (bodyFinding && !isClosingSummary) {
+                applyBodyFindingSegment(rowKinds, rowConfidence, rowNotes, index, bodyFinding);
                 return;
             }
             rowKinds[index] = 'body';
@@ -1232,13 +1273,36 @@ export const buildCsvDataFromIntakeIr = (intakeIr: ReportIntakeIr): CsvData => {
         .filter((_, index) => !headerLayerIndexSet.has(index) && index !== provisionalTable.headerRowIndex)
         .filter(row => getNonEmptyCells(row).length > 0)
         .map(row => [...row]);
-    const bodyRows = normalizedRows.slice(provisionalTable.bodyStartIndex, provisionalTable.summaryStartIndex);
+    // Blank spacers, page-break blocks, repeated headers and reconciled
+    // subtotals inside the body are not records (see reportBodyRows.ts). The
+    // subtotals stay available as summary evidence next to the trailing summary.
+    const bodyNoiseKinds = new Map<number, ReportIntakeSegmentKind>();
+    intakeIr.segments.forEach(segment => {
+        if (segment.kind !== 'blank' && segment.kind !== 'repeated_header' && segment.kind !== 'summary') return;
+        const rowEnd = Math.min(segment.rowEnd, provisionalTable.summaryStartIndex - 1);
+        for (let index = Math.max(segment.rowStart, provisionalTable.bodyStartIndex); index <= rowEnd; index += 1) {
+            bodyNoiseKinds.set(index, segment.kind);
+        }
+    });
+    const bodyRows: RawCsvRow[] = [];
+    const inBodySummaryRows: CsvRow[] = [];
+    for (let index = provisionalTable.bodyStartIndex; index < provisionalTable.summaryStartIndex; index += 1) {
+        const noiseKind = bodyNoiseKinds.get(index);
+        if (!noiseKind) {
+            bodyRows.push(normalizedRows[index]);
+        } else if (noiseKind === 'summary') {
+            inBodySummaryRows.push(buildSummaryRow(normalizedRows[index]));
+        }
+    }
     // Tables stacked below the analysed one are set aside, not summary rows.
     const setAsideStart = diagnostics.setAsideSections?.[0]?.rowStart ?? normalizedRows.length;
-    const summaryRows = normalizedRows
-        .slice(provisionalTable.summaryStartIndex, Math.max(provisionalTable.summaryStartIndex, setAsideStart))
-        .filter(row => getNonEmptyCells(row).length > 0)
-        .map(buildSummaryRow);
+    const summaryRows = [
+        ...inBodySummaryRows,
+        ...normalizedRows
+            .slice(provisionalTable.summaryStartIndex, Math.max(provisionalTable.summaryStartIndex, setAsideStart))
+            .filter(row => getNonEmptyCells(row).length > 0)
+            .map(buildSummaryRow),
+    ];
 
     // For headerless files, use AI-inferred synthetic headers instead of reading a data row.
     // When a header layer exists (band row + leaf row), merge them via the

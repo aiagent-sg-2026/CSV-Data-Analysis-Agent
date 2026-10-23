@@ -11,6 +11,7 @@ import {
     inferFactColumns as classifierInferFact,
     computeColumnStatistics,
 } from './columnRoleClassifier';
+import { withoutBodyNoise } from '../data/reportBodyRows';
 
 const UNNAMED_COLUMN_PREFIX = '_unnamed_column_';
 const UNNAMED_COLUMN_PATTERN = /^_?unnamed_column_/i;
@@ -357,6 +358,10 @@ export const buildDeterministicNormalizationPlan = (params: {
     warnings: string[];
 } => {
     const mergedHeaders = buildMergedBoundaryHeaders(params.rawRows, params.boundary);
+    // Column roles are inferred on records only: page-break blocks, repeated
+    // headers, spacer rows and reconciled subtotals would dilute the fill-down
+    // and density statistics.
+    const body = withoutBodyNoise(params.rawRows, params.boundary);
     const bodyStart = params.boundary.bodyStartIndex ?? 0;
     const summaryStart = params.boundary.summaryStartIndex ?? params.rawRows.length;
     const warnings: string[] = [];
@@ -364,8 +369,8 @@ export const buildDeterministicNormalizationPlan = (params: {
     // Data-driven column role inference (replaces hardcoded regex patterns).
     // Uses actual body row data to detect fill-down patterns, text density,
     // and numeric density — domain-agnostic.
-    const deterministicCarryForward = inferCarryForwardColumns(mergedHeaders, params.rawRows, bodyStart, summaryStart);
-    const deterministicSectionLabels = inferSectionLabelColumns(mergedHeaders, deterministicCarryForward, params.rawRows, bodyStart, summaryStart);
+    const deterministicCarryForward = inferCarryForwardColumns(mergedHeaders, body.rows, body.bodyStartIndex, body.summaryStartIndex);
+    const deterministicSectionLabels = inferSectionLabelColumns(mergedHeaders, deterministicCarryForward, body.rows, body.bodyStartIndex, body.summaryStartIndex);
 
     // AI proposals are accepted when they resolve to actual headers — no regex
     // filter gate. The AI drives column classification; data-driven inference
