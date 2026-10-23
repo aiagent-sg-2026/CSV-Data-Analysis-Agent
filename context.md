@@ -158,6 +158,12 @@
   - Independent check on live visitors: the leaf rows sum to 244,299,398, the published total. The Parent Series card and the Month trend match it exactly.
   - **Known issue (next round)**: a ranked card that is limited to the top 10 groups shows "Overall 179,811,161" and shares (Indonesia 23.6%) relative to those 10 rows, under a "Full dataset" label. The true total is 244,299,398 and Indonesia is 17.4%. Fix: compute share and overall from the full-dataset total, or label the scope as top 10.
   - Not verified against the live gateway: `datasetSemanticAnnotationSchema`, `reportStructureProposalSchema`, tool schemas. The analyst report export and the provenance modal still use DD/MM/YYYY for periods.
+  - **Round 5c (top-N totals), deployed with root build 1.0.0-a7aba150e557**:
+    - Worker AA: the companion total query and `groupCoverage` (see the README paragraph). Independent check on the visitor data: total 244,299,398 over 52 leaf markets; Indonesia 17.4 percent (was shown as 23.6 percent); with the top 8 shown (163,114,689), "Others" = 81,184,709 (was shown as 16,696,472).
+    - Real-AI candidate run found one more gap: a plan that carries `RowClass = fact` in `preFilter` instead of `where` was treated as mixing totals and facts, so the card became table-only and the total was suppressed. Fixed in `seriesMeasureGuard.ts` and `evidenceValueGate.ts` by reading the merged executed WHERE.
+    - Gate: 466 files / 4,411 tests; `test:publish` 4/4; bundle budget; `stage:pages` 107 files.
+    - Known small issue: when the plan filters facts through an aggregate-level filter, `groupCount` reads 62 (all series) instead of 52 leaf groups. The total and the verdict are correct.
+    - Cards saved before this change have no `groupCoverage` and keep the old behaviour until their evidence is re-run.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
