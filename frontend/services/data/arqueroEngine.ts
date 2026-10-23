@@ -21,6 +21,7 @@ import type {
     QueryWhereClause,
 } from '../../types';
 import { robustParseFloat } from './dataProfiler';
+import { isMissingCellValue } from '../duckdb/dimensionNormalization';
 
 const DEFAULT_MAX_ROWS = 500;
 const DEFAULT_MAX_COLUMNS = 50;
@@ -62,6 +63,34 @@ const preprocessRows = (rows: CsvRow[], aggregateColumns: Set<string>): CsvRow[]
         }
         return next;
     });
+};
+
+/**
+ * Blank cells and missing markers (`na`, `N.A.`, `-`, ...) become null in the
+ * aggregated columns so op.valid/op.sum/op.median skip them instead of
+ * counting them or turning a sum into NaN. Returns null when a numeric
+ * aggregate column still holds non-numeric text (e.g. a footnote-marked
+ * `3200*`); Arquero cannot skip such a cell, so the native engine handles it.
+ */
+const nullMissingAggregateCells = (
+    rows: CsvRow[],
+    aggregateColumns: Set<string>,
+    numericAggregateColumns: Set<string>,
+): CsvRow[] | null => {
+    if (rows.length === 0 || aggregateColumns.size === 0) return rows;
+    const next: CsvRow[] = [];
+    for (const row of rows) {
+        const copy: CsvRow = { ...row };
+        for (const col of aggregateColumns) {
+            if (isMissingCellValue(copy[col])) {
+                copy[col] = null;
+            } else if (numericAggregateColumns.has(col) && typeof copy[col] !== 'number') {
+                return null;
+            }
+        }
+        next.push(copy);
+    }
+    return next;
 };
 
 // ---------------------------------------------------------------------------
@@ -169,7 +198,8 @@ const buildAggExpression = (agg: QueryAggregateClause): string | null => {
     const col = escapeExprColumn(agg.column);
 
     switch (fn) {
-        case 'count_distinct': return `d => op.distinct(d["${col}"])`;
+        // op.distinct counts null as a value; missing cells are not values.
+        case 'count_distinct': return `d => op.distinct(d["${col}"]) - (op.invalid(d["${col}"]) > 0 ? 1 : 0)`;
         case 'sum': return `d => op.sum(d["${col}"])`;
         case 'avg': return `d => op.mean(d["${col}"])`;
         case 'min': return `d => op.min(d["${col}"])`;
@@ -259,10 +289,15 @@ export const executeArqueroQuery = (
     // 2. Pre-process numeric columns for aggregation accuracy
     // -----------------------------------------------------------------------
     const aggregateColumnNames = new Set<string>();
+    const numericAggregateColumnNames = new Set<string>();
     for (const agg of aggregates) {
         if (agg.column) {
             const resolved = resolveColumn(agg.column, availableColumns);
-            if (resolved) aggregateColumnNames.add(resolved);
+            if (resolved) {
+                aggregateColumnNames.add(resolved);
+                const fn = (agg.function ?? '').toLowerCase().trim();
+                if (fn !== 'count' && fn !== 'count_distinct') numericAggregateColumnNames.add(resolved);
+            }
         }
     }
     const preprocessedRows = preprocessRows(inputRows, aggregateColumnNames);
@@ -270,9 +305,16 @@ export const executeArqueroQuery = (
     // -----------------------------------------------------------------------
     // 3. Apply WHERE filter (before loading into Arquero)
     // -----------------------------------------------------------------------
-    const filteredRows = plan.where
+    const matchedRows = plan.where
         ? applyWhereFilter(preprocessedRows, plan.where)
         : preprocessedRows;
+    // Filters still see the original cell text; only aggregation skips markers.
+    const filteredRows = isAggregateQuery
+        ? nullMissingAggregateCells(matchedRows, aggregateColumnNames, numericAggregateColumnNames)
+        : matchedRows;
+    if (!filteredRows) {
+        return unsupported('numeric aggregate column contains non-numeric text');
+    }
 
     if (filteredRows.length === 0 && !isAggregateQuery) {
         return {

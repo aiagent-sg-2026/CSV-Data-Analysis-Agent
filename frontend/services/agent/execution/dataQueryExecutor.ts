@@ -12,6 +12,7 @@ import {
     QueryOrderByClause,
 } from '../../../types';
 import { robustParseFloat } from '../../data/dataProfiler';
+import { isMissingCellValue } from '../../duckdb/dimensionNormalization';
 import { normalizeQueryAggregateFunction, normalizeQueryOrderDirection } from './dataQueryContract';
 import { normalizeString } from './dataOperationNormalization';
 import {
@@ -49,10 +50,9 @@ export const createQueryPlanFromFilterOperation = (
 const isRecord = (value: unknown): value is Record<string, unknown> =>
     Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
-const isMissingValue = (value: unknown): boolean => {
-    if (value === null || value === undefined) return true;
-    return typeof value === 'string' && value.trim() === '';
-};
+// Blank cells and missing markers (`na`, `N.A.`, `-`, ...) are not counted as
+// values, matching the DuckDB query compiler.
+const isMissingValue = isMissingCellValue;
 
 const tryNormalizeColumnName = (column: string, lookup: Map<string, string>): string | null => {
     const trimmed = column.trim();

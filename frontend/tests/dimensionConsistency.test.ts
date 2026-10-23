@@ -66,8 +66,9 @@ describe('BUG-DATA-205: dimension grouping consistency', () => {
             // No dimensionNormalization — old behavior
         });
 
-        // Should NOT normalize
-        expect(compiled.sql).not.toContain('CASE');
+        // Should NOT normalize the dimension. COUNT("BRAND") still skips
+        // missing markers through its own CASE, which is not a GROUP BY label.
+        expect(compiled.sql).not.toContain("THEN 'Unknown'");
         expect(compiled.sql).toContain('GROUP BY "BRAND"');
     });
 

@@ -1,6 +1,13 @@
 ## Current Work Context
 
 - **Goal**: Maintain the React browser app and its checked-in GitHub Pages build. The main assistant and initial analysis run through Pi Harness and the governed app tools.
+- **Worker change (2026-10-23, P0 missing markers counted as 0; root not republished)**:
+  - Live symptom: on `sg-graduate-employment.csv` the card "Median Gross Mthly 25 Percentile by School" ranked School of Law (only `na`/`N.A.`) at 0 and Yong Siew Toh at 1,500 (real median of reported values: 2,999).
+  - Root cause: `compileAggregateExpression` in `frontend/services/duckdb/queryCompiler.ts` wrapped every single-column numeric aggregate in `COALESCE(<numeric>, 0)` (the old comment said it was for `'-` zero markers). Period-sum and unpivot aggregates did the same. The in-process executor already skipped these cells, so DuckDB and the fallback disagreed.
+  - Fix: one shared `MISSING_VALUE_MARKERS` list (and `isMissingCellValue` / `buildMissingCellSqlCondition`) in `dimensionNormalization.ts`, extended with `n.a.`, `nil`, `nan`, en and em dash. Numeric expressions return NULL for blanks, markers and non-numeric text, and no aggregate coalesces to 0. COUNT(column) and COUNT DISTINCT skip markers, and a period sum is NULL only when every period is missing. The in-process executor, the Arquero fallback and the diagnostic templates follow the same rule. Valid `0` is unchanged.
+  - Other demo files affected the same way: `sg-hdb-median-rent.csv` (2,273 `na` + 2,249 `-` in `median_rent`), `sg-public-transport-ridership.csv` (147 `na`). No footnote values such as `3200*` occur in the demo files.
+  - Test: `frontend/tests/numericMissingMarkers.test.ts` (real CSV through intake → query engine → real in-process DuckDB; per-marker cases for DuckDB, Arquero and native). It failed before the fix.
+  - Not changed: `utils/dataHelpers.ts` `parseNumericValue` still maps null to 0 for chart heights, zero-row hiding and the additive top-N sort. Non-additive ranked cards already sort NULL last through `rankRowsByValue`.
 - **Worker change (2026-10-23, ranked-card fidelity; root not republished)**:
   - Found in a live gpt-5.4-mini run on `sg-graduate-employment.csv`: the card "lowest median 25th-percentile pay by school" was ordered ascending with LIMIT 20. `useAnalysisCardData` then re-sorted non-additive rows largest-first and kept 8, so the chart showed eight schools tied at 3,000 under "Top 8 view".
   - Fix: the card plan now carries `rankDirection` from the query's leading `orderBy` on the measure. The hook, `applyTopNWithOthers`, the scope labels and the executive KPI all follow it.

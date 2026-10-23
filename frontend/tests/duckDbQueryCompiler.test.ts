@@ -91,7 +91,10 @@ describe('compileQueryPlanToDuckDbSql', () => {
             tableName: 'session_clean_dataset',
         });
 
-        expect(compiled.sql).toContain('SUM(COALESCE(TRY_CAST(NULLIF(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(');
+        // Missing markers stay NULL instead of being coalesced to 0.
+        expect(compiled.sql).toContain('SUM(CASE WHEN (TRIM(COALESCE(CAST("Revenue" AS VARCHAR), \'\')) = \'\' OR LOWER(');
+        expect(compiled.sql).toContain('TRY_CAST(NULLIF(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(');
+        expect(compiled.sql).not.toContain('SUM(COALESCE(');
         expect(compiled.sql).toContain('CAST("Revenue" AS VARCHAR)');
         expect(compiled.sql).toContain('COUNT(*) AS "RowCount"');
         expect(compiled.sql).toContain('GROUP BY "Region"');
@@ -144,7 +147,8 @@ describe('compileQueryPlanToDuckDbSql', () => {
             tableName: 'session_clean_dataset',
         });
 
-        expect(compiled.sql).toContain('SUM(COALESCE(TRY_CAST(NULLIF(');
+        expect(compiled.sql).toContain('THEN NULL ELSE TRY_CAST(NULLIF(');
+        expect(compiled.sql).not.toContain('SUM(COALESCE(');
         expect(compiled.sql).toContain('FILTER (WHERE');
         expect(compiled.sql).toContain(`LOWER(COALESCE(CAST("Description" AS VARCHAR), '')) IN ('revenue')`);
         expect(compiled.sql).toContain(`LOWER(COALESCE(CAST("Description" AS VARCHAR), '')) IN ('cost of sales')`);
