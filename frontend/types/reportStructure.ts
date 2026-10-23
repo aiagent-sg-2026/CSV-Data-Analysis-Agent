@@ -230,9 +230,11 @@ export interface SeriesMeasureSemantics {
     detailRowColumns: string[];
     detailRowValue: string;
     /**
-     * True only when one published total covers every series and each published
-     * parent equals the sum of its children for almost all periods, so detail
-     * (fact) series share one unit and can be summed.
+     * False only on positive evidence that the series do not share one unit: a
+     * published parent that does not equal the sum of its children, or several
+     * top-level series without a covering total while some have components.
+     * A plain table without hierarchy is additive. When true, detail (fact)
+     * series can be summed.
      */
     additiveAcrossSeries: boolean;
     /** Families verified to share a unit: a published parent equal to the sum of its children. */

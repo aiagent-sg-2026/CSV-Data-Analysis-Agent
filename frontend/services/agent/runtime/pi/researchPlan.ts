@@ -283,8 +283,11 @@ export const checkQuestionSeriesScope = (
             kept.push(question);
             continue;
         }
-        if (semantics.additiveAcrossSeries && semantics.detailRowColumns.length > 0) {
-            kept.push({ ...question, filter: { column: semantics.detailRowColumns[0], value: semantics.detailRowValue } });
+        if (semantics.additiveAcrossSeries) {
+            // Without a hierarchy every row is already a detail row.
+            kept.push(semantics.detailRowColumns.length > 0
+                ? { ...question, filter: { column: semantics.detailRowColumns[0], value: semantics.detailRowValue } }
+                : question);
             continue;
         }
         reject(`${measureColumn} means something different for each ${seriesColumn} (${semantics.evidence.summary}) `

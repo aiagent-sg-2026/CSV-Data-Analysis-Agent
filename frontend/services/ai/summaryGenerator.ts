@@ -48,7 +48,9 @@ const buildSeriesMeasureSummarySections = (target: unknown) => {
     if (!semantics) return [];
     const { seriesColumn: s, measureColumn: m } = semantics;
     const rule = semantics.additiveAcrossSeries
-        ? `Detail series share one unit and add up to the published totals; a total or subtotal series is never added to its own components.`
+        ? semantics.detailRowColumns.length > 0
+            ? `Detail series share one unit and add up to the published totals; a total or subtotal series is never added to its own components.`
+            : `The series share one unit and may be added or compared across series.`
         : `The series measure different things in different units (${semantics.evidence.summary}) Never add, total, average or rank "${m}" across series; describe each number with the series it belongs to.`;
     return [createContextSection('series_measure', `Series-dependent measure: every "${m}" belongs to one "${s}" value, named by each card's filter or grouping. ${rule}`, 'required', 'sticky')];
 };

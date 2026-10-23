@@ -109,8 +109,12 @@ const sharesVerifiedUnit = (semantics: SeriesMeasureSemantics, names: string[]):
     });
 };
 
+/** A table without published totals or subtotals has no hierarchy levels to double-count. */
+const hasSummarySeries = (semantics: SeriesMeasureSemantics): boolean =>
+    semantics.series.some(series => series.rowClass !== 'fact');
+
 const filtersDetailRows = (where: QueryWhereClause | undefined, semantics: SeriesMeasureSemantics): boolean =>
-    semantics.detailRowColumns.some(column => {
+    !hasSummarySeries(semantics) || semantics.detailRowColumns.some(column => {
         const values = restrictedValues(where, column);
         return values !== null && values.length > 0 && values.every(value => same(value, semantics.detailRowValue));
     });
@@ -178,7 +182,7 @@ const assessRawSql = (sql: string, semantics: SeriesMeasureSemantics, title: str
         return semantics.additiveAcrossSeries ? PASS : verdict(semantics, title, 'table_only', 'mixed_unit_series_comparison');
     }
     if (semantics.additiveAcrossSeries) {
-        const detailFilter = semantics.detailRowColumns.some(name =>
+        const detailFilter = !hasSummarySeries(semantics) || semantics.detailRowColumns.some(name =>
             new RegExp(`${column(name)}\\s*=\\s*'${escape(semantics.detailRowValue)}'`, 'i').test(sql));
         return detailFilter ? PASS : verdict(semantics, title, 'reject', 'series_hierarchy_double_count');
     }
@@ -300,8 +304,18 @@ export const buildSeriesTrendTopic = (semantics: SeriesMeasureSemantics, seriesN
  * Deterministic topics for a melted table: trends of the most prominent
  * series, one series each. With verified additive series the published total
  * leads, followed by detail series, since that total is the headline figure.
+ * Additive series without any total are summed across series directly.
  */
 export const buildSeriesMeasureFallbackTopics = (semantics: SeriesMeasureSemantics, limit = 2): string[] => {
+    const { seriesColumn: s, measureColumn: m, periodColumn: p } = semantics;
+    if (semantics.additiveAcrossSeries && !hasSummarySeries(semantics)) {
+        // Plain comparable series (products by year): the overall trend and
+        // the per-series totals are the headline views, and both are sums.
+        return [
+            `${m} trend by ${p} (sum of ${m} by ${p})`,
+            `${m} by ${s} (sum of ${m} by ${s})`,
+        ].slice(0, limit);
+    }
     const ranked = rankProminentSeries(semantics);
     const total = semantics.additiveAcrossSeries
         ? ranked.find(series => series.parent === null && series.rowClass === 'total') ?? null

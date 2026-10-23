@@ -429,33 +429,42 @@ const describeAdditivity = (params: {
     additive: boolean;
     seriesCount: number;
     hasHierarchy: boolean;
+    fullyVerified: boolean;
+    uncoveredRoots: boolean;
     rootCount: number;
-    verifiedParents: number;
     parentCount: number;
+    contradictedParents: number;
     matched: number;
     checked: number;
 }): string => {
     const periods = `${params.matched}/${params.checked} parent periods match`;
     if (params.additive) {
-        return `One published total covers all ${params.seriesCount} series and every published parent equals the sum of its children (${periods}), so detail series share one unit.`;
+        if (!params.hasHierarchy) {
+            return `The ${params.seriesCount} series have no published hierarchy or totals, so they are read as comparable series in one unit.`;
+        }
+        if (params.fullyVerified) {
+            return `One published total covers all ${params.seriesCount} series and every published parent equals the sum of its children (${periods}), so detail series share one unit.`;
+        }
+        return `No published total contradicts the sum of its components (${periods}), so the ${params.seriesCount} series are read as one unit; totals and subtotals stay out of detail sums.`;
     }
-    if (!params.hasHierarchy) {
-        return `No published total ties the ${params.seriesCount} series together, so their values may measure different things.`;
+    if (params.uncoveredRoots) {
+        return `${params.rootCount} top-level series, some with components, are not covered by one published total, so their values may measure different things.`;
     }
-    if (params.rootCount !== 1) {
-        return `${params.rootCount} top-level series are not covered by one published total, so their values may measure different things.`;
-    }
-    return `Only ${params.verifiedParents} of ${params.parentCount} published parent series equal the sum of their children (${periods}), so the series are not verified to share one unit.`;
+    return `${params.contradictedParents} of ${params.parentCount} published parent series do not equal the sum of their children (${periods}), so the series are not verified to share one unit.`;
 };
 
 /**
  * Decides, from the published numbers only, whether the series of a melted
- * table can be summed with each other. The rule is conservative: the series
- * are additive only when one published total covers every series and every
- * published parent equals the sum of its children for almost all periods.
- * Labels and units are never guessed, so a table of unrelated series (for
- * example rail length next to daily ridership) is non-additive even when one
- * of its families adds up.
+ * table can be summed with each other. Non-additivity needs positive evidence,
+ * because a plain wide table (products or stores by year) is the common case
+ * of comparable series in one unit:
+ * - a table without any hierarchy or total rows is additive;
+ * - a published parent that does not equal the sum of its children in almost
+ *   all checked periods makes the table non-additive;
+ * - several top-level series without one covering total, while some of them
+ *   have components, make it non-additive (rail length with its MRT/LRT parts
+ *   next to unrelated km-operated and ridership series).
+ * Labels and units are never guessed.
  */
 export const describePeriodWideSeriesMeasure = (reshape: PeriodWideReshape): SeriesMeasureSemantics | null => {
     const { detection, sourceRows, hierarchy } = reshape;
@@ -485,6 +494,7 @@ export const describePeriodWideSeriesMeasure = (reshape: PeriodWideReshape): Ser
         : [];
     let checked = 0;
     let matched = 0;
+    let checkedParents = 0;
     const unitFamilies: SeriesMeasureSemantics['unitFamilies'] = [];
     for (const parentIndex of parentIndexes) {
         const childIndexes = childrenByParent.get(parentIndex) ?? [];
@@ -492,6 +502,7 @@ export const describePeriodWideSeriesMeasure = (reshape: PeriodWideReshape): Ser
         const result = verifyParentSum(sourceRows[parentIndex], childIndexes.map(index => sourceRows[index]), periodColumns);
         checked += result.checked;
         matched += result.matched;
+        if (result.checked > 0) checkedParents += 1;
         if (result.checked > 0 && result.matched / result.checked >= MIN_PARENT_MATCH_RATIO) {
             unitFamilies.push({ parent: labels[parentIndex], children: childIndexes.map(index => labels[index]) });
         }
@@ -502,7 +513,13 @@ export const describePeriodWideSeriesMeasure = (reshape: PeriodWideReshape): Ser
         : isFlatHierarchy
             ? hierarchy.flatMap((entry, index) => (entry.rowClass === 'total' ? [index] : []))
             : hierarchy.flatMap((entry, index) => (entry.parentIndex === null ? [index] : []));
-    const additiveAcrossSeries = Boolean(hierarchy)
+    // A parent without any checkable period is no evidence either way.
+    const contradictedParents = checkedParents - unitFamilies.length;
+    // Only indentation proves that some roots have components; a flat table's
+    // total rows cannot leave other series uncovered.
+    const uncoveredRoots = Boolean(hierarchy) && !isFlatHierarchy && rootIndexes.length > 1;
+    const additiveAcrossSeries = contradictedParents === 0 && !uncoveredRoots;
+    const fullyVerified = Boolean(hierarchy)
         && rootIndexes.length === 1
         && childrenByParent.has(rootIndexes[0])
         && parentIndexes.length > 0
@@ -542,9 +559,11 @@ export const describePeriodWideSeriesMeasure = (reshape: PeriodWideReshape): Ser
                 additive: additiveAcrossSeries,
                 seriesCount: labels.length,
                 hasHierarchy: Boolean(hierarchy),
+                fullyVerified,
+                uncoveredRoots,
                 rootCount: rootIndexes.length,
-                verifiedParents: unitFamilies.length,
                 parentCount: parentIndexes.length,
+                contradictedParents,
                 matched,
                 checked,
             }),
