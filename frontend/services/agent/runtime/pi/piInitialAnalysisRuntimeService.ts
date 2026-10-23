@@ -7,7 +7,7 @@ import { Type, type ToolResultMessage } from '@earendil-works/pi-ai';
 import { resolveAnalysisCompletionGate } from '../../analysisCompletionGate';
 import { getCurrentAnalysisDatasetVersion } from '../../artifactProvenance';
 import { buildCardSemanticFingerprint } from '../../cardSemanticFingerprint';
-import { retireFailedCleaningRun, updateCleaningRun } from '../../cleaningRunState';
+import { updateCleaningRun } from '../../cleaningRunState';
 import { emitAgentEvent, updateAgentTaskStatus } from '../../monitoring/agentMonitor';
 import { persistCurrentAppSessionSnapshot } from '../../../persistence/currentSessionPersistence';
 import { ensureCloudAiConsent } from '../../../privacy/cloudAiConsent';
@@ -141,13 +141,7 @@ const run = async (
     const receiptStartIndex = checkpoint?.schemaVersion === 2 ? checkpoint.receiptStartIndex : checkpoint?.nextStageIndex ?? 0;
     const initialDatasetVersion = checkpoint?.schemaVersion === 2 ? checkpoint.initialDatasetVersion : getCurrentAnalysisDatasetVersion(store.getState()) ?? request.datasetVersion;
     // A fresh run must not reuse a plan left by an earlier one; a resumed run brings its own back.
-    if (!checkpoint) {
-        store.setState({ initialAnalysisPlan: null, initialAnalysisRecovery: null });
-        // The previous attempt's failure must not be replayed as `cleaning_failed` by the structure gate.
-        const previousCleaning = store.getState().cleaningRun;
-        const clearedCleaning = retireFailedCleaningRun(previousCleaning);
-        if (clearedCleaning !== previousCleaning) store.setState({ cleaningRun: clearedCleaning });
-    }
+    if (!checkpoint) store.setState({ initialAnalysisPlan: null, initialAnalysisRecovery: null });
     else if (checkpoint.researchPlan && !store.getState().initialAnalysisPlan) {
         store.setState({ initialAnalysisPlan: checkpoint.researchPlan });
     }
@@ -621,6 +615,10 @@ const run = async (
         ...(qualified && cleaningRun ? { cleaningRun: updateCleaningRun(cleaningRun, {
             status: pendingApproval || status === 'cancelled' ? 'paused' : prepared ? 'completed' : status === 'failed' ? 'failed' : 'paused',
             shouldAutoResume: false,
+            // An analysis failure says nothing about the data, so the structure gate must not read it as a cleaning
+            // failure. A failure the cleaning loop wrote earlier stays what it was.
+            ...(status === 'failed' && !pendingApproval && (cleaningRun.status !== 'failed' || cleaningRun.failureOrigin === 'initial_analysis')
+                ? { failureOrigin: 'initial_analysis' as const } : {}),
         }) } : {}),
         initialAnalysisRecovery: null,
         initialAnalysisStatus: status === 'cancelled'||status==='blocked' ? 'paused'

@@ -10,7 +10,7 @@ import { profileData } from '../services/data/dataProfiler';
 import { resolveReportStructureArtifactsWithProposal } from '../services/agent/orchestration/reportStructureOrchestrator';
 import { createInitialAnalysisStageExecutors } from '../services/agent/runtime/pi/initialAnalysisStageExecutors';
 import { HUMAN_CONFIRMABLE_VERIFICATION_SIGNALS, resolvePipelineOutcome } from '../services/agent/pipelineOutcomeResolver';
-import { createCleaningRun, retireFailedCleaningRun } from '../services/agent/cleaningRunState';
+import { createCleaningRun, updateCleaningRun } from '../services/agent/cleaningRunState';
 import { describeInitialAnalysisFailure } from '../services/agent/runtime/pi/initialAnalysisFailure';
 import { getPipelineOutcomeUserText, getTranslation } from '../utils/localization';
 import { createTestSettings } from './testSettings';
@@ -50,8 +50,26 @@ const toBoundary = (resolution: ReportStructureResolution) => ({
 
 // The app state after the first analysis attempt stopped at the structure check:
 // the post-import pipeline marks the cleaning run failed with the stage error
-// when the initial analysis ends in `error` (fileOrchestrator.runPostImportPipeline).
-const createStore = () => {
+// when the initial analysis ends in `error` (fileOrchestrator.runPostImportPipeline),
+// and records that the analysis, not cleaning, caused it.
+const analysisStopMarker = () => ({
+    ...createCleaningRun(),
+    status: 'failed' as const,
+    lastError: 'Stage 5/9 failed: Structure review is required before automatic analysis.',
+    failureOrigin: 'initial_analysis' as const,
+});
+
+// A failure written by the cleaning loop itself: real, with its own user text and technical detail.
+const realCleaningFailure = () => ({
+    ...createCleaningRun(),
+    status: 'failed' as const,
+    lastError: 'Cleaning loop exhausted after 3 rounds: numeric reconciliation did not match.',
+    userFacingMessage: 'Cleaning could not be verified.',
+    technicalDetail: 'rounds=3; reconciliation delta 12.5',
+    shouldAutoResume: false,
+});
+
+const createStore = (initialCleaningRun: Record<string, unknown> = analysisStopMarker()) => {
     let state: Record<string, any> = {
         sessionId: 'session-test',
         currentDatasetId: 'dataset-test',
@@ -66,11 +84,7 @@ const createStore = () => {
         canonicalizationStatus: blocked.canonicalizationStatus,
         pipelineOutcome: blocked.pipelineOutcome,
         dataPreparationPlan: plan,
-        cleaningRun: {
-            ...createCleaningRun(),
-            status: 'failed',
-            lastError: 'Stage 5/9 failed: Structure review is required before automatic analysis.',
-        },
+        cleaningRun: initialCleaningRun,
         columnProfiles: profileData(intake.csvData.data).profiles,
         datasetSemanticSnapshot: null,
         semanticStatus: 'idle',
@@ -132,8 +146,9 @@ describe('human structure confirmation on the ERP outstanding-orders report', ()
 
         expect(getState().reportStructureResolution.source).toBe('human_confirmed');
         expect(getState().pipelineOutcome).toMatchObject({ status: 'ready', canAutoAnalyze: true });
-        expect(getState().cleaningRun.status).not.toBe('failed');
         expect(getState().handleInitialAnalysis).toHaveBeenCalledTimes(1);
+        // Continue cleaning must keep working: the earlier failure and its text are not rewritten.
+        expect(getState().cleaningRun).toMatchObject({ status: 'failed', lastError: analysisStopMarker().lastError });
         expect(progress.join(' ')).not.toMatch(SNAKE_CASE_CODE);
 
         // The stage gate of the analysis run that follows must pass on the confirmed state.
@@ -226,16 +241,42 @@ describe('what a human-confirmed structure may and may not clear', () => {
     });
 });
 
-describe('retiring a stale cleaning failure', () => {
-    it('clears only a failed run', () => {
-        const failed = { ...createCleaningRun(), status: 'failed' as const, lastError: 'boom', userFacingMessage: 'boom' };
-        const cleared = retireFailedCleaningRun(failed)!;
-        expect(cleared.status).toBe('idle');
-        expect(cleared.lastError).toBeNull();
-        expect(cleared.userFacingMessage).toBeNull();
+describe('a real cleaning failure is not mistaken for the analysis-stop marker', () => {
+    it('keeps blocking a confirmation, starts nothing and leaves the failure text and detail alone', async () => {
+        const { getState } = createStore(realCleaningFailure());
+        const before = structuredClone(realCleaningFailure());
+        await getState().saveReportStructureBoundaryOverride(toBoundary(blocked.reportStructureResolution!));
 
-        const completed = { ...createCleaningRun(), status: 'completed' as const };
-        expect(retireFailedCleaningRun(completed)).toBe(completed);
-        expect(retireFailedCleaningRun(null)).toBeNull();
+        expect(getState().pipelineOutcome).toMatchObject({ status: 'cleaning_failed', canAutoAnalyze: false });
+        expect(getState().handleInitialAnalysis).not.toHaveBeenCalled();
+        const after = getState().cleaningRun;
+        expect(after).toMatchObject({
+            status: 'failed',
+            lastError: before.lastError,
+            userFacingMessage: before.userFacingMessage,
+            technicalDetail: before.technicalDetail,
+        });
+    });
+
+    it('only the analysis-stop marker lets the structure gate through', () => {
+        const confirmed = {
+            source: 'human_confirmed', requiresHumanReview: false, blockingReasons: [],
+            decision: { targetShape: 'row_table', shouldCanonicalize: true, reason: '' },
+        } as unknown as ReportStructureResolution;
+        const resolve = (cleaningRun: Record<string, unknown>) => resolvePipelineOutcome({
+            reportStructureResolution: confirmed,
+            intakeGuard: { shouldBlockAutomaticAnalysis: false, severity: 'clear' },
+            cleaningRun: cleaningRun as never,
+            verificationReport: null,
+            hasCanonicalData: true,
+        });
+        expect(resolve(analysisStopMarker()).canAutoAnalyze).toBe(true);
+        expect(resolve(realCleaningFailure())).toMatchObject({ status: 'cleaning_failed', canAutoAnalyze: false });
+    });
+
+    it('drops the marker on any later update of the run, so a new failure is judged on its own', () => {
+        const marked = analysisStopMarker();
+        expect(updateCleaningRun(marked, { lastError: 'Cleaning failed for real.' }).failureOrigin).toBeNull();
+        expect(updateCleaningRun(marked, { failureOrigin: 'initial_analysis' }).failureOrigin).toBe('initial_analysis');
     });
 });

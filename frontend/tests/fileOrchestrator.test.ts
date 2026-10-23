@@ -559,6 +559,24 @@ describe('orchestrateFileUpload post-import pipeline timing', () => {
             event.step === 'structure_confirmation_required',
         )).toBe(false);
     });
+    it('marks a run failed by a stopped initial analysis so the structure gate does not read it as a cleaning failure', async () => {
+        const { store, state } = createStore();
+        orchestrateAutonomousAiCleaningMock.mockImplementation(async () => undefined);
+        state.handleInitialAnalysis = vi.fn(async () => ({
+            status: 'error' as const,
+            message: 'Stage 5/9 failed: Structure review is required before automatic analysis.',
+        }));
+
+        const generator = (await import('../services/agent/orchestration/fileOrchestrator')).orchestrateFileUpload(
+            { name: 'fr_fin_pl_prj.csv', size: 1 } as File,
+            store,
+        );
+        await drainFileOrchestrator(generator, store);
+        await flushPostImportPipeline();
+
+        expect(state.cleaningRun).toMatchObject({ status: 'failed', failureOrigin: 'initial_analysis' });
+    });
+
     it('does not show replay reason codes when a saved lineage cannot be reproduced', async () => {
         const { store } = createStore();
         const { createSingleTableDatasetBundle } = await import('../services/data/datasetBundle');

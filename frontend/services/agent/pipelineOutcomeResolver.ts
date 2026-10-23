@@ -76,7 +76,8 @@ export const resolvePipelineOutcome = (input: {
         && HUMAN_CONFIRMABLE_VERIFICATION_SIGNALS.has(input.verificationReport.signalKey),
     );
 
-    if (input.cleaningRun?.status === 'failed') {
+    // A run marked failed only because the initial analysis stopped says nothing about the data.
+    if (input.cleaningRun?.status === 'failed' && input.cleaningRun.failureOrigin !== 'initial_analysis') {
         return {
             status: 'cleaning_failed',
             canAutoAnalyze: false,

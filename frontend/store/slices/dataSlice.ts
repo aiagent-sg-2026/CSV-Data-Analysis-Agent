@@ -995,15 +995,6 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
             ]);
             if (!ownedStore.isActive?.()) return;
 
-            // The blocked first attempt left the cleaning run marked failed. Confirming the structure starts a
-            // new attempt; without clearing it, the rebuild below reports `cleaning_failed`, never starts the
-            // analysis and shows the old failure again.
-            const { retireFailedCleaningRun } = await import('../../services/agent/cleaningRunState');
-            if (!ownedStore.isActive?.()) return;
-            const previousCleaning = get().cleaningRun;
-            const clearedCleaning = retireFailedCleaningRun(previousCleaning);
-            if (clearedCleaning !== previousCleaning) set({ cleaningRun: clearedCleaning });
-
             await rebuildStructureArtifacts(boundary, ownedStore);
             if (ownedStore.isActive?.() === false) return;
             // Close the modal immediately after rebuilding — analysis runs in the background.

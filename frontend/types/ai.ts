@@ -203,6 +203,11 @@ export interface CleaningRun {
     updatedAt: Date;
     targetPath: string;
     lastError?: string | null;
+    /**
+     * Set only when the run was marked failed because the initial analysis stopped, not because
+     * cleaning failed. Any other update through `updateCleaningRun` clears it.
+     */
+    failureOrigin?: 'initial_analysis' | null;
     shouldAutoResume?: boolean;
     strategyKind?: 'already_valid' | 'deterministic_cleanup' | 'deterministic_reshape' | 'llm_guided';
     strategy?: 'simple_detail_strategy' | 'report_shape_strategy';

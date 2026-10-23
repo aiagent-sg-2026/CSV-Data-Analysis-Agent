@@ -81,6 +81,9 @@ const runPostImportPipeline = (
                     ...prev.cleaningRun,
                     status: 'failed',
                     lastError: message,
+                    // The initial analysis stopped; cleaning itself did not fail. The structure gate ignores this
+                    // marker so a Retry or a confirmed structure can start again.
+                    failureOrigin: 'initial_analysis' as const,
                     updatedAt: new Date(),
                     shouldAutoResume: false,
                 }
