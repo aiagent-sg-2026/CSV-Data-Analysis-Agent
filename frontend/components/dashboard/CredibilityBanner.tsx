@@ -9,6 +9,9 @@ export interface CredibilityBannerProps {
     weakCount: number;
     hasRunCaveats?: boolean;
     language: string;
+    /** Shown when the current view hides every card the hint asks the user to review. */
+    reviewActionLabel?: string;
+    onReviewAction?: () => void;
 }
 
 const TIER_CONFIG: Record<CredibilityVerdict, {
@@ -78,6 +81,8 @@ export const CredibilityBanner: React.FC<CredibilityBannerProps> = ({
     weakCount,
     hasRunCaveats = false,
     language,
+    reviewActionLabel,
+    onReviewAction,
 }) => {
     const effectiveVerdict = overallVerdict === 'trusted' && hasRunCaveats
         ? 'caveated'
@@ -117,6 +122,15 @@ export const CredibilityBanner: React.FC<CredibilityBannerProps> = ({
                     <p className={`mt-1 text-xs leading-relaxed ${config.hintColor}`}>
                         {hint}
                     </p>
+                    {reviewActionLabel && onReviewAction && (
+                        <button
+                            type="button"
+                            onClick={onReviewAction}
+                            className={`mt-3 inline-flex min-h-[44px] items-center rounded-lg border ${config.border} bg-white px-3 text-sm font-medium ${config.titleColor} shadow-sm transition-colors hover:bg-slate-50 md:min-h-[36px]`}
+                        >
+                            {reviewActionLabel}
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

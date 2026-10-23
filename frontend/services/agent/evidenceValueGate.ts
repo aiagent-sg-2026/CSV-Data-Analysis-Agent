@@ -3,9 +3,11 @@ import { streamGenerateText } from '../ai/streamGenerateText';
 import { prepareSchemaForProvider } from '../ai/googleSchemaAdapter';
 import type {
     EvidenceHarnessContext,
+    EvidenceSampleSizeCaveat,
     EvidenceValueGateReasonCode,
     PivotMatrixConfig,
     RuntimeSemanticUnderstanding,
+    SeriesMeasureSemantics,
     Settings,
     SqlEvidenceQueryPlan,
     SqlEvidenceQueryResultSummary,
@@ -18,6 +20,8 @@ import { buildEvidenceEvaluationPrompt } from '../prompts/analysisPrompts';
 import { robustlyParseJsonObject } from '../../utils/jsonParser';
 import { isTechnicalHelperDimensionColumn } from './analysisColumnRoles';
 import type { VolumeDependence } from './planning/volumeDrivenSum';
+import { describeSmallGroupLeaders } from './planning/groupSampleSize';
+import { assessSeriesMeasurePlan, selectsSingleSeries } from './planning/seriesMeasureGuard';
 
 const LOG_PREFIX = '[EvidenceValueGate]';
 const AI_EVAL_TIMEOUT_MS = 8000;
@@ -319,11 +323,13 @@ const hasHierarchySafeGrouping = (
 const evaluateSteeringFloor = (params: {
     evidencePlan: SqlEvidenceQueryPlan;
     harnessContext: EvidenceHarnessContext;
+    /** The query reads exactly one series of a melted table, so no parent row can mix in. */
+    singleSeries?: boolean;
 }): { reasonCodes: EvidenceValueGateReasonCode[]; floorDecision: EvidenceValueGateResult['decision'] } => {
     const { evidencePlan, harnessContext } = params;
     const reasonCodes: EvidenceValueGateReasonCode[] = [];
     let floorDecision: EvidenceValueGateResult['decision'] = 'pass';
-    const detailRowFiltered = queryHasDetailRowFilter(evidencePlan, harnessContext);
+    const detailRowFiltered = params.singleSeries === true || queryHasDetailRowFilter(evidencePlan, harnessContext);
 
     if (
         harnessContext.reportShapeClass === 'hierarchical_statement'
@@ -368,6 +374,7 @@ const evaluateHarnessContamination = (params: {
     evidencePlan: SqlEvidenceQueryPlan;
     evidenceSummary: SqlEvidenceQueryResultSummary;
     harnessContext: EvidenceHarnessContext;
+    singleSeries?: boolean;
 }): { reasonCodes: EvidenceValueGateReasonCode[]; atLeastTableOnly: boolean } => {
     const { evidencePlan, evidenceSummary, harnessContext } = params;
     const reasonCodes: EvidenceValueGateReasonCode[] = [];
@@ -379,7 +386,7 @@ const evaluateHarnessContamination = (params: {
     // from the result set.  Skip contamination checks entirely — any matching
     // labels in the filtered result are coincidental fact-row descriptions,
     // not actual parent contamination.
-    const detailRowFiltered = queryHasDetailRowFilter(evidencePlan, harnessContext);
+    const detailRowFiltered = params.singleSeries === true || queryHasDetailRowFilter(evidencePlan, harnessContext);
 
     if (!detailRowFiltered) {
         // Hierarchy contamination: groupBy equals hierarchyColumn and
@@ -434,6 +441,7 @@ const evaluateDeterministicQuality = (params: {
     evidencePlan: SqlEvidenceQueryPlan;
     evidenceSummary: SqlEvidenceQueryResultSummary;
     harnessContext?: EvidenceHarnessContext | null;
+    singleSeries?: boolean;
 }): { reasonCodes: EvidenceValueGateReasonCode[]; decision: EvidenceValueGateResult['decision'] } => {
     const { semanticUnderstanding, evidencePlan, evidenceSummary, harnessContext } = params;
     const reasonCodes: EvidenceValueGateReasonCode[] = [];
@@ -476,6 +484,7 @@ const evaluateDeterministicQuality = (params: {
             evidencePlan,
             evidenceSummary,
             harnessContext,
+            singleSeries: params.singleSeries,
         });
         reasonCodes.push(...harnessResult.reasonCodes);
         harnessAtLeastTableOnly = harnessResult.atLeastTableOnly;
@@ -805,6 +814,22 @@ const resolveVolumeReason = (
 
 const appendNote = (detail: string, note: string | null): string => (note ? `${detail} — ${note}` : detail);
 
+/**
+ * Thin leading groups are a caveat, not a rejection: the numbers are correct
+ * and the presentation decision is unchanged, but the card must say so and is
+ * not used as a trusted headline.
+ */
+const resolveSampleSizeReason = (
+    sampleSizeCaveat: EvidenceSampleSizeCaveat | null | undefined,
+): { reasonCodes: EvidenceValueGateReasonCode[]; note: string | null; caveat: EvidenceSampleSizeCaveat | null } => {
+    if (!sampleSizeCaveat?.leaders.length) return { reasonCodes: [], note: null, caveat: null };
+    return {
+        reasonCodes: ['small_group_leader'],
+        note: describeSmallGroupLeaders(sampleSizeCaveat),
+        caveat: sampleSizeCaveat,
+    };
+};
+
 // --- Public API ---
 
 export const evaluateEvidenceValue = (params: {
@@ -815,6 +840,9 @@ export const evaluateEvidenceValue = (params: {
     aiEvaluation?: AiEvidenceEvaluation | null;
     harnessContext?: EvidenceHarnessContext | null;
     volumeDependence?: EvidenceVolumeDependence | null;
+    sampleSizeCaveat?: EvidenceSampleSizeCaveat | null;
+    /** Meaning of the value column of a melted period-series table, recorded at intake. */
+    seriesMeasure?: SeriesMeasureSemantics | null;
 }): EvidenceValueGateResult => {
     const {
         semanticUnderstanding,
@@ -825,6 +853,9 @@ export const evaluateEvidenceValue = (params: {
         harnessContext,
     } = params;
     const volumeReason = resolveVolumeReason(params.volumeDependence);
+    const sampleSizeReason = resolveSampleSizeReason(params.sampleSizeCaveat);
+    const caveatNote = [volumeReason.note, sampleSizeReason.note].filter(Boolean).join(' ') || null;
+    const sampleSizeField = sampleSizeReason.caveat ? { sampleSizeCaveat: sampleSizeReason.caveat } : {};
     const querySignature = buildEvidenceSignature(evidencePlan);
     const semanticSignature = buildSemanticSignature(evidencePlan, evidenceSummary, semanticUnderstanding);
 
@@ -850,6 +881,24 @@ export const evaluateEvidenceValue = (params: {
         };
     }
 
+    // A series-dependent measure aggregated across series that measure
+    // different things has no meaning, so it is rejected before any quality
+    // judgement; series-scoped but mixed-unit views stay table-only.
+    const seriesVerdict = assessSeriesMeasurePlan(evidencePlan, params.seriesMeasure);
+    if (seriesVerdict.decision === 'reject') {
+        const reasonCodes = [...new Set([...safetyFloor.reasonCodes, ...seriesVerdict.reasonCodes])];
+        return {
+            decision: 'reject',
+            reasonCodes,
+            detail: appendNote(buildDetail(reasonCodes), seriesVerdict.feedback),
+            querySignature,
+            semanticSignature,
+            semanticRisk: 'high',
+        };
+    }
+    const seriesFloorDecision: EvidenceValueGateResult['decision'] = seriesVerdict.decision;
+    const singleSeries = selectsSingleSeries(evidencePlan, params.seriesMeasure);
+
     // Blocked dimension (non-duplicate) → at minimum table_only, not reject.
     const semanticSafetyFloor: EvidenceValueGateResult['decision'] =
         safetyFloor.reasonCodes.some(reasonCode => (
@@ -864,11 +913,13 @@ export const evaluateEvidenceValue = (params: {
         const steeringFloor = evaluateSteeringFloor({
             evidencePlan,
             harnessContext,
+            singleSeries,
         });
         const harnessResult = evaluateHarnessContamination({
             evidencePlan,
             evidenceSummary,
             harnessContext,
+            singleSeries,
         });
         harnessReasonCodes = [
             ...steeringFloor.reasonCodes,
@@ -886,8 +937,10 @@ export const evaluateEvidenceValue = (params: {
         const allReasonCodes: EvidenceValueGateReasonCode[] = [
             ...safetyFloor.reasonCodes,
             ...harnessReasonCodes,
+            ...seriesVerdict.reasonCodes,
             ...aiReasonCodes,
             ...volumeReason.reasonCodes,
+            ...sampleSizeReason.reasonCodes,
         ];
         const uniqueReasonCodes = [...new Set(allReasonCodes)];
 
@@ -920,6 +973,7 @@ export const evaluateEvidenceValue = (params: {
         decision = enforceDecisionPriority(decision, harnessFloorDecision);
         // Blocked dimension floor — cannot be raised by AI or harness
         decision = enforceDecisionPriority(decision, semanticSafetyFloor);
+        decision = enforceDecisionPriority(decision, seriesFloorDecision);
 
         const degradationSteps: string[] = [];
         if (semanticSafetyFloor !== 'pass') degradationSteps.push(`semantic_safety→${semanticSafetyFloor}`);
@@ -932,11 +986,12 @@ export const evaluateEvidenceValue = (params: {
         return {
             decision,
             reasonCodes: uniqueReasonCodes,
-            detail: appendNote(aiEvaluation.reasoning || buildDetail(uniqueReasonCodes), volumeReason.note),
+            detail: appendNote(aiEvaluation.reasoning || buildDetail(uniqueReasonCodes), caveatNote),
             querySignature,
             semanticSignature,
             semanticRisk,
             degradationPath: degradationSteps.length > 0 ? degradationSteps.join(' + ') : undefined,
+            ...sampleSizeField,
         };
     }
 
@@ -946,12 +1001,15 @@ export const evaluateEvidenceValue = (params: {
         evidencePlan,
         evidenceSummary,
         harnessContext,
+        singleSeries,
     });
     const allReasonCodes: EvidenceValueGateReasonCode[] = [
         ...safetyFloor.reasonCodes,
         ...harnessReasonCodes,
+        ...seriesVerdict.reasonCodes,
         ...deterministicQuality.reasonCodes,
         ...volumeReason.reasonCodes,
+        ...sampleSizeReason.reasonCodes,
     ];
     // Deduplicate reason codes from harness (may overlap with deterministic quality)
     const uniqueReasonCodes = [...new Set(allReasonCodes)];
@@ -961,6 +1019,7 @@ export const evaluateEvidenceValue = (params: {
     decision = enforceDecisionPriority(decision, harnessFloorDecision);
     // Blocked dimension floor enforcement in fallback path
     decision = enforceDecisionPriority(decision, semanticSafetyFloor);
+    decision = enforceDecisionPriority(decision, seriesFloorDecision);
 
     const degradationSteps: string[] = [];
     if (semanticSafetyFloor !== 'pass') degradationSteps.push(`semantic_safety→${semanticSafetyFloor}`);
@@ -973,11 +1032,12 @@ export const evaluateEvidenceValue = (params: {
     return {
         decision,
         reasonCodes: uniqueReasonCodes,
-        detail: appendNote(buildDetail(uniqueReasonCodes), volumeReason.note),
+        detail: appendNote(buildDetail(uniqueReasonCodes), caveatNote),
         querySignature,
         semanticSignature,
         semanticRisk,
         degradationPath: degradationSteps.length > 0 ? degradationSteps.join(' + ') : undefined,
+        ...sampleSizeField,
     };
 };
 

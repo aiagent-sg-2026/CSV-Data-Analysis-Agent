@@ -5,6 +5,7 @@ import {
     getRows,
     isBlankRow,
     isFooterLikeRow,
+    isMissingValueMarker,
     isNumericLike,
     isSummaryLike,
     roundRatio,
@@ -176,6 +177,14 @@ export const detectTabularRowRole = (
         // a coarser section/category code is a genuine heading.
         if (hasLeafHierarchyCode(row, context.descriptorColumns)) {
             return { role: 'fact', confidence: 0.6 };
+        }
+        // A heading leaves its measure cells blank. A detail record whose
+        // measure is suppressed carries an explicit marker instead
+        // ("2011-Q2,ANG MO KIO,1-RM,na"), so it stays a fact row with a
+        // missing value rather than opening a hierarchy level.
+        const valueCells = context.valueColumns.map(column => String(row[column] ?? '').trim()).filter(Boolean);
+        if (valueCells.length > 0 && valueCells.every(isMissingValueMarker)) {
+            return { role: 'fact', confidence: 0.7 };
         }
         return { role: 'group_header', confidence: 0.82 };
     }

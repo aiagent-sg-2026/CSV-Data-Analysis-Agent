@@ -1,13 +1,13 @@
 import { ChartConfigProps } from './types';
 import { BG_COLORS, BORDER_COLORS, getColors, getBorderColors, getCommonOptions, getPivotTooltipCallbacks } from './common';
-import { parseNumericValue } from '../dataHelpers';
+import { parseNullableNumericValue } from '../dataHelpers';
 
 export const createPieChartConfig = ({ chartType, data, plan, selectedIndices, onElementClick, disableAnimation, showDataLabels }: ChartConfigProps): any => {
     const { groupByColumn, valueColumn } = plan;
     const valueKey = valueColumn || 'count';
     const hasSelection = selectedIndices.length > 0;
     const labels = groupByColumn ? data.map(d => d[groupByColumn]) : [];
-    const values = valueKey ? data.map(d => parseNumericValue(d[valueKey])) : [];
+    const values = valueKey ? data.map(d => parseNullableNumericValue(d[valueKey])) : [];
     
     const commonOptions = getCommonOptions(onElementClick, disableAnimation, showDataLabels);
     const pivotTooltipCallbacks = getPivotTooltipCallbacks(plan, data);

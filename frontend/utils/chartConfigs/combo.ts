@@ -1,6 +1,6 @@
 import { ChartConfigProps } from './types';
 import { COLORS, BORDER_COLORS, BG_COLORS, DESELECTED_BORDER_COLOR, DESELECTED_COLOR, getColors, getBorderColors, getCommonOptions } from './common';
-import { parseNumericValue } from '../dataHelpers';
+import { parseNullableNumericValue } from '../dataHelpers';
 
 export const createComboChartConfig = (props: ChartConfigProps): any => {
     const { data, plan, selectedIndices, onElementClick, disableAnimation, showDataLabels } = props;
@@ -21,7 +21,7 @@ export const createComboChartConfig = (props: ChartConfigProps): any => {
                 {
                     type: 'bar',
                     label: valueKey,
-                    data: data.map(d => parseNumericValue(d[valueKey])),
+                    data: data.map(d => parseNullableNumericValue(d[valueKey])),
                     backgroundColor: getColors(BG_COLORS, data.length, selectedIndices),
                     borderColor: getBorderColors(BORDER_COLORS, data.length, selectedIndices),
                     borderWidth: 1,
@@ -30,7 +30,7 @@ export const createComboChartConfig = (props: ChartConfigProps): any => {
                 {
                     type: 'line',
                     label: secondaryValueColumn,
-                    data: data.map(d => parseNumericValue(d[secondaryValueColumn])),
+                    data: data.map(d => parseNullableNumericValue(d[secondaryValueColumn])),
                     fill: false,
                     borderColor: hasSelection ? DESELECTED_BORDER_COLOR : COLORS[1],
                     pointBackgroundColor: hasSelection ? DESELECTED_COLOR : COLORS[1],

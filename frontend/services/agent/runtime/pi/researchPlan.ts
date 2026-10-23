@@ -1,5 +1,5 @@
 import { AGGREGATION_TYPES, isAggregationType } from '../../../../types/analysis';
-import type { AggregationType, ColumnAdditivity, ColumnProfile, DataAnalysisHypothesis, ResearchPlan, ResearchPlanQuestion } from '../../../../types';
+import type { AggregationType, ColumnAdditivity, ColumnProfile, DataAnalysisHypothesis, ResearchPlan, ResearchPlanQuestion, SeriesMeasureSemantics } from '../../../../types';
 import { assessVolumeDependence, describeVolumeDependence, isTimeDimension, isVolumeCheckCancellation, type GroupSumAndCount } from '../../planning/volumeDrivenSum';
 
 export const MIN_PLAN_QUESTIONS = 2;
@@ -78,7 +78,9 @@ export const validateResearchQuestions = (
             reject('The dimension and the metric are the same column.'); continue;
         }
 
-        const key = [dimension?.name, metric?.name, aggregation].map(part => (part ?? '').toLowerCase()).join('|');
+        // Questions on different named series of a melted table are distinct.
+        const series = readText(item.series, MAX_TITLE_CHARS);
+        const key = [dimension?.name, metric?.name, aggregation, series].map(part => (part ?? '').toLowerCase()).join('|');
         if (seen.has(key)) { reject('This duplicates another question.'); continue; }
         seen.add(key);
 
@@ -92,6 +94,7 @@ export const validateResearchQuestions = (
             aggregation,
             comparison: readText(item.comparison, MAX_TITLE_CHARS) || null,
             ...(totalIntent ? { totalIntent: true } : {}),
+            ...(series ? { series } : {}),
         });
     }
     return { questions, rejected };
@@ -114,8 +117,15 @@ export const buildResearchTopic = (question: ResearchPlanQuestion): string => {
     const measure = question.aggregation
         ? `${question.aggregation}${question.metric ? ` of ${question.metric}` : ''}`
         : question.metric;
-    const detail = [measure, question.dimension ? `by ${question.dimension}` : null].filter(Boolean).join(' ');
-    return detail ? `${question.title} (${detail})` : question.title;
+    const detail = [
+        measure,
+        question.dimension ? `by ${question.dimension}` : null,
+    ].filter(Boolean).join(' ');
+    // The filter is written as `<column> = '<value>'` so planners and the
+    // topic parser apply the same row scope Pi's question was checked with.
+    const scope = question.filter ? `where ${question.filter.column} = '${question.filter.value.replace(/'/g, "''")}'` : null;
+    const full = [detail, scope].filter(Boolean).join(', ');
+    return full ? `${question.title} (${full})` : question.title;
 };
 
 /** The plan is used once, and only for the dataset version it was drafted for. */
@@ -140,6 +150,7 @@ export const applyPlanToHypotheses = (
             grain: question.dimension ?? hypothesis.grain,
             metric: question.metric ?? hypothesis.metric,
             comparisonIntent: question.comparison ?? hypothesis.comparisonIntent,
+            ...(question.filter ? { filterIntent: `${question.filter.column} = '${question.filter.value}'` } : {}),
             ...(question.totalIntent ? { totalIntent: true } : {}),
         };
     });
@@ -229,6 +240,61 @@ export const checkQuestionMethods = (
             }
         }
         kept.push(question);
+    }
+    return { questions: kept, rejected };
+};
+
+const COUNT_AGGREGATIONS = new Set<AggregationType>(['count', 'count_distinct']);
+
+/**
+ * Holds questions on a melted period-series table to what its value column
+ * means. Each row is one series in one period, so a measure question must name
+ * one series, group by the series column, or (only when the intake verified
+ * the series as additive) read detail rows. Counting records only shows how
+ * many periods were published and is sent back.
+ */
+export const checkQuestionSeriesScope = (
+    questions: readonly ResearchPlanQuestion[],
+    semantics: SeriesMeasureSemantics | null | undefined,
+): ResearchPlanValidation => {
+    if (!semantics) return { questions: [...questions], rejected: [] };
+    const { seriesColumn, measureColumn, periodColumn } = semantics;
+    const example = semantics.series.find(series => series.observations > 1)?.name ?? semantics.series[0]?.name ?? '';
+    const kept: ResearchPlanQuestion[] = [];
+    const rejected: ResearchPlanValidation['rejected'] = [];
+    for (const question of questions) {
+        const reject = (reason: string) => rejected.push({ title: question.title, reason });
+        if (question.series) {
+            const known = semantics.series.find(series => sameName(series.name, question.series!));
+            if (!known) {
+                const repeated = semantics.series.filter(series => series.label !== undefined && sameName(series.label, question.series!));
+                reject(repeated.length > 0
+                    ? `"${question.series}" names ${repeated.length} different series. Copy one exact ${seriesColumn} value: ${repeated.map(series => `"${series.name}"`).join(', ')}.`
+                    : `"${question.series}" is not a ${seriesColumn} value. Copy one exact ${seriesColumn} value, for example "${example}".`);
+                continue;
+            }
+            kept.push({ ...question, series: known.name, filter: { column: seriesColumn, value: known.name } });
+            continue;
+        }
+        const groupsBySeries = question.dimension !== null && sameName(question.dimension, seriesColumn);
+        if (question.aggregation && COUNT_AGGREGATIONS.has(question.aggregation)) {
+            reject(`Counting rows here only shows how many periods each series published. Measure ${measureColumn} of one named series instead (set series, dimension ${periodColumn}).`);
+            continue;
+        }
+        const measuresValue = question.metric !== null && sameName(question.metric, measureColumn);
+        if (!measuresValue || groupsBySeries) {
+            kept.push(question);
+            continue;
+        }
+        if (semantics.additiveAcrossSeries) {
+            // Without a hierarchy every row is already a detail row.
+            kept.push(semantics.detailRowColumns.length > 0
+                ? { ...question, filter: { column: semantics.detailRowColumns[0], value: semantics.detailRowValue } }
+                : question);
+            continue;
+        }
+        reject(`${measureColumn} means something different for each ${seriesColumn} (${semantics.evidence.summary}) `
+            + `Set series to one exact ${seriesColumn} value, for example "${example}", with ${periodColumn} as the dimension for a trend, or use ${seriesColumn} as the dimension.`);
     }
     return { questions: kept, rejected };
 };

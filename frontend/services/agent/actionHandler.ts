@@ -755,6 +755,7 @@ export const handleAiAction = async (
                     const failureCode = error.code === 'empty_result'
                         || error.code === 'no_card_created'
                         || error.code === 'duckdb_unavailable'
+                        || error.code === 'series_scope_rejected'
                         ? error.code
                         : undefined;
                     result = buildCreatePlanExecutionResult(uiPlan, null, {

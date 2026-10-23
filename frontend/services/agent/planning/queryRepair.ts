@@ -13,6 +13,10 @@ import type {
 } from '../../../types';
 import { normalizeString } from './semanticTextMatching';
 
+// Same key as EVIDENCE_AGGREGATE_FILTERS_KEY in services/ai/schemas/analysisSchemas.ts;
+// kept local so plan validation does not load the provider schema module.
+const EVIDENCE_AGGREGATE_FILTERS_KEY = 'aggregateFilters';
+
 // ─── Type guard ────────────────────────────────────────────────
 
 export const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -162,6 +166,62 @@ export const normalizeEvidenceQuery = (plan: SqlEvidenceQueryPlan): QueryPlan =>
     }
 
     return normalizedQuery;
+};
+
+/**
+ * Folds the structured-output schema's flat `query.aggregateFilters[]` back
+ * into `aggregates[].where.predicates` (see
+ * createSqlEvidenceQueryPlanOutputSchema). Entries whose alias matches no
+ * aggregate stay under `aggregateFilters` and are reported, because dropping
+ * them would silently widen that aggregate.
+ */
+export const liftEvidenceAggregateFilters = (
+    query: Record<string, unknown>,
+): { query: Record<string, unknown>; unresolvedAliases: string[] } => {
+    if (!(EVIDENCE_AGGREGATE_FILTERS_KEY in query)) {
+        return { query, unresolvedAliases: [] };
+    }
+    const { [EVIDENCE_AGGREGATE_FILTERS_KEY]: filters, ...rest } = query;
+    if (!Array.isArray(filters) || filters.length === 0) {
+        return { query: rest, unresolvedAliases: [] };
+    }
+
+    const aggregates = (Array.isArray(rest.aggregates) ? rest.aggregates : [])
+        .map(aggregate => (isObject(aggregate) ? { ...aggregate } : aggregate));
+    const unresolved: unknown[] = [];
+    const unresolvedAliases: string[] = [];
+    for (const filter of filters) {
+        if (!isObject(filter)) continue;
+        const { aggregate: alias, ...predicate } = filter;
+        const aliasKey = normalizeString(alias).toLowerCase();
+        const target = aliasKey
+            ? aggregates.find((aggregate): aggregate is Record<string, unknown> =>
+                isObject(aggregate) && normalizeString(aggregate.as).toLowerCase() === aliasKey)
+            : undefined;
+        if (!target) {
+            unresolved.push(filter);
+            unresolvedAliases.push(normalizeString(alias) || '(missing alias)');
+            continue;
+        }
+        const where = isObject(target.where) ? target.where : {};
+        const predicates = Array.isArray(where.predicates) ? where.predicates : [];
+        target.where = { ...where, predicates: [...predicates, predicate] };
+    }
+
+    return {
+        query: {
+            ...rest,
+            aggregates,
+            ...(unresolved.length > 0 ? { [EVIDENCE_AGGREGATE_FILTERS_KEY]: unresolved } : {}),
+        },
+        unresolvedAliases,
+    };
+};
+
+/** Applies liftEvidenceAggregateFilters to a raw plan object; anything else is returned unchanged. */
+export const liftEvidencePlanAggregateFilters = <T>(rawPlan: T): T => {
+    if (!isObject(rawPlan) || !isObject(rawPlan.query)) return rawPlan;
+    return { ...rawPlan, query: liftEvidenceAggregateFilters(rawPlan.query).query } as T;
 };
 
 // ─── Select alignment repair ───────────────────────────────────

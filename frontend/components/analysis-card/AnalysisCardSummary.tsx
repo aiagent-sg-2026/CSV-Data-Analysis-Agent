@@ -16,6 +16,7 @@ interface AnalysisCardSummaryProps {
     displayedMetricLabel: string;
     displayedGroupLabel: string;
     topN: number | null;
+    rankDirection?: 'asc' | 'desc' | null;
     hideOthers: boolean;
     hiddenLabelCount: number;
     filter?: { column: string; values: (string | number)[] };
@@ -36,6 +37,7 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
     displayedMetricLabel,
     displayedGroupLabel,
     topN,
+    rankDirection,
     hideOthers,
     hiddenLabelCount,
     filter,
@@ -74,10 +76,10 @@ const AnalysisCardSummaryComponent: React.FC<AnalysisCardSummaryProps> = ({
         : null;
     const scopeLabel = useMemo(() => {
         if (topN) {
-            return getTranslation('analysis_card_scope_top_n', language, { count: String(topN) });
+            return getTranslation(rankDirection === 'asc' ? 'analysis_card_scope_bottom_n' : 'analysis_card_scope_top_n', language, { count: String(topN) });
         }
         return getTranslation('analysis_card_scope_full', language);
-    }, [language, topN]);
+    }, [language, rankDirection, topN]);
     const filterLabel = useMemo(() => {
         if (!filter || !filter.column || filter.values.length === 0) return null;
         const values = filter.values.map(value => normalizeCategoryLabel(value)).join(', ');

@@ -113,6 +113,10 @@ export interface ResearchPlanQuestion {
     comparison: string | null;
     /** True when Pi stated that a SUM question is explicitly about total volume or value. */
     totalIntent?: boolean;
+    /** Exact series value Pi named for a melted period-series table. */
+    series?: string;
+    /** Row filter the app attached so the question reads only comparable rows (one series, or detail rows). */
+    filter?: { column: string; value: string };
 }
 
 /** The research plan Pi drafted for the initial analysis, consumed once by the evidence stage. */
@@ -147,6 +151,12 @@ export interface AnalysisPlan {
     artifactMetadata?: AnalysisArtifactMetadata;
     defaultDataVisible?: boolean;
     disableTopNControls?: boolean;
+    /**
+     * Direction in which the evidence query ranked the measure. 'asc' keeps the
+     * lowest groups first in the chart, the top-N window and the KPI headline.
+     * Absent means the historical largest-first ranking.
+     */
+    rankDirection?: 'asc' | 'desc';
 }
 
 export interface SqlAnalysisBindings {
@@ -315,7 +325,35 @@ export type EvidenceValueGateReasonCode =
     /** A SUM ranking that mirrors the groups' row counts, without a stated total-volume intent. */
     | 'volume_driven_sum'
     /** The same volume-driven ranking where the question explicitly asked for a total; informational only. */
-    | 'volume_driven_total';
+    | 'volume_driven_total'
+    /** A leading group of the ranking rests on very few source rows; a caveat, not a rejection. */
+    | 'small_group_leader'
+    /** Aggregates a series-dependent measure across series not verified to share a unit; rejected. */
+    | 'cross_series_aggregate'
+    /** Sums a series-dependent measure over a published total and its own components; rejected. */
+    | 'series_hierarchy_double_count'
+    /** Compares series not verified to share a unit on one axis; kept as a table. */
+    | 'mixed_unit_series_comparison'
+    /** Shows a published total next to its own components; kept as a table. */
+    | 'series_hierarchy_mix'
+    /** Counts records per series or period of a melted table, which only reflects publication coverage. */
+    | 'series_record_count';
+
+/** A leading group whose value is computed from very few source rows. */
+export interface EvidenceSmallGroupLeader {
+    label: string;
+    rows: number;
+    /** 1-based position in the card's ranking direction. */
+    rank: number;
+}
+
+export interface EvidenceSampleSizeCaveat {
+    leaders: EvidenceSmallGroupLeader[];
+    /** Median source rows per compared group. */
+    medianGroupRows: number;
+    /** Groups with fewer rows than this are flagged. */
+    minAdequateRows: number;
+}
 
 export interface EvidenceValueGateResult {
     decision: EvidenceValueGateDecision;
@@ -326,6 +364,8 @@ export interface EvidenceValueGateResult {
     semanticRisk: 'low' | 'medium' | 'high';
     /** Audit trail of which signal degraded the decision (e.g. 'blocked_dimension→table_only'). */
     degradationPath?: string;
+    /** Present when leading groups rest on very few rows; the card shows it as a visible caveat. */
+    sampleSizeCaveat?: EvidenceSampleSizeCaveat;
 }
 
 export interface EvidenceHarnessContext {
@@ -535,7 +575,11 @@ export type AutoAnalysisEvaluationReasonCode =
     | 'dimension_quality_warning'
     | 'metric_quality_warning'
     | 'unclassified_share_warning'
-    | 'volume_driven_aggregate';
+    | 'volume_driven_aggregate'
+    | 'small_sample_leader'
+    | 'tied_leading_values'
+    | 'cross_series_aggregate'
+    | 'series_scope_warning';
 
 export type AnalysisQualitySeverity = 'info' | 'warning' | 'critical';
 export type AnalysisDimensionQualityAction = 'allow' | 'avoid' | 'block';

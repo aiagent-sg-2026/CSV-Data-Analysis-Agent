@@ -27,6 +27,8 @@ export const buildCardSemanticFingerprint = (
         xValueColumn: plan.xValueColumn?.trim().toLowerCase() ?? null,
         yValueColumn: plan.yValueColumn?.trim().toLowerCase() ?? null,
         secondaryValueColumn: plan.secondaryValueColumn?.trim().toLowerCase() ?? null,
+        // A lowest-first and a highest-first ranking of the same measure show different groups.
+        rankDirection: plan.rankDirection ?? 'desc',
         preFilter: (plan.preFilter ?? [])
             .map(normalizeFilter)
             .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),

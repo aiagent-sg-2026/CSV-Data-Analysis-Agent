@@ -1,5 +1,7 @@
 import type { AnalysisCardData, AnalysisQualityGovernanceResult, ColumnProfile, CsvRow } from '../../types';
 import { buildDisplayAnalysisIr } from '../dashboard/displayAnalysisIr';
+import { isAdditiveAggregation } from '../../utils/analysisCardPresentation';
+import { detectTiedLeadingWindow, isRankedMeasureView, rankRowsByValue, resolveCardValueKey } from '../../utils/rankedPresentation';
 
 export type AutoAnalysisEvaluationReasonCode =
     | 'helper_exposure'
@@ -14,7 +16,11 @@ export type AutoAnalysisEvaluationReasonCode =
     | 'dimension_quality_warning'
     | 'metric_quality_warning'
     | 'unclassified_share_warning'
-    | 'volume_driven_aggregate';
+    | 'volume_driven_aggregate'
+    | 'small_sample_leader'
+    | 'tied_leading_values'
+    | 'cross_series_aggregate'
+    | 'series_scope_warning';
 
 export type AutoAnalysisCardVerdict = 'trusted' | 'caveated' | 'weak';
 
@@ -114,6 +120,19 @@ const formatPreFilterContract = (card: AnalysisCardData): string | null => {
         .join(';');
 };
 
+/**
+ * A ranked window whose shown groups all share one value (e.g. a "Top 8" of
+ * eight 3,000s) does not rank anything, so the card is caveated as
+ * low-information instead of reading as a confident ranking.
+ */
+const findTiedLeadingWindow = (card: AnalysisCardData) => {
+    const groupByKey = card.plan.groupByColumn ?? '';
+    const topN = card.plan.disableTopNControls || card.plan.chartType === 'scatter' ? null : card.topN;
+    if (!groupByKey || !topN || !isRankedMeasureView(card.plan, groupByKey, isAdditiveAggregation)) return null;
+    const valueKey = resolveCardValueKey(card.plan, card.aggregatedData);
+    return detectTiedLeadingWindow(rankRowsByValue(card.aggregatedData, valueKey, card.plan.rankDirection), valueKey, topN);
+};
+
 const AGGREGATION_QUALITY_WARNING_FLAGS = new Set([
     'fallback_view',
     'fragmented_groups',
@@ -123,6 +142,9 @@ const AGGREGATION_QUALITY_WARNING_FLAGS = new Set([
     'null_group_labels',
     'repeated_bundle_dimension',
 ]);
+
+const SERIES_INVALID_GATE_CODES = new Set<string>(['cross_series_aggregate', 'series_hierarchy_double_count']);
+const SERIES_CAVEAT_GATE_CODES = new Set<string>(['mixed_unit_series_comparison', 'series_hierarchy_mix', 'series_record_count']);
 
 export const evaluateAutoAnalysisCards = (
     cards: AnalysisCardData[],
@@ -192,6 +214,29 @@ export const evaluateAutoAnalysisCards = (
             if (card.evidenceValueGate?.reasonCodes?.includes('volume_driven_sum')) {
                 reasonCodes.push('volume_driven_aggregate');
                 detailParts.push('volumeDrivenSum=true');
+            }
+            // A leader computed from very few rows stays visible with its
+            // caveat but must not lead the trusted headline.
+            const smallLeaders = card.evidenceValueGate?.sampleSizeCaveat?.leaders ?? [];
+            if (card.evidenceValueGate?.reasonCodes?.includes('small_group_leader') && smallLeaders.length > 0) {
+                reasonCodes.push('small_sample_leader');
+                detailParts.push(`smallSampleLeaders=${smallLeaders.map(leader => `${leader.label}:${leader.rows}`).join(', ')}`);
+            }
+            // A series-dependent measure aggregated across series of different
+            // meaning is wrong, not merely caveated; scoped-but-mixed views stay
+            // visible as tables and never become trusted headlines.
+            const gateReasonCodes = card.evidenceValueGate?.reasonCodes ?? [];
+            if (gateReasonCodes.some(code => SERIES_INVALID_GATE_CODES.has(code))) {
+                reasonCodes.push('cross_series_aggregate');
+                detailParts.push(`crossSeries=${gateReasonCodes.filter(code => SERIES_INVALID_GATE_CODES.has(code)).join(', ')}`);
+            } else if (gateReasonCodes.some(code => SERIES_CAVEAT_GATE_CODES.has(code))) {
+                reasonCodes.push('series_scope_warning');
+                detailParts.push(`seriesScope=${gateReasonCodes.filter(code => SERIES_CAVEAT_GATE_CODES.has(code)).join(', ')}`);
+            }
+            const tiedWindow = findTiedLeadingWindow(card);
+            if (tiedWindow) {
+                reasonCodes.push('tied_leading_values');
+                detailParts.push(`tiedLeadingValues=${tiedWindow.count}x${tiedWindow.value} (${tiedWindow.tiedGroupCount} of ${tiedWindow.totalGroupCount} groups share it)`);
             }
 
             if (ir.helperExposureLevel !== 'none') {
@@ -263,7 +308,8 @@ export const evaluateAutoAnalysisCards = (
                 code === 'fallback_plan'
                 || code === 'narrative_ineligible'
                 || code === 'helper_exposure'
-                || code === 'value_gate_reject',
+                || code === 'value_gate_reject'
+                || code === 'cross_series_aggregate',
             );
             // unsafe_business_narrative on a table_only card is caveated, not weak —
             // the chart would be misleading, but the data table itself is fine.

@@ -13,6 +13,7 @@ import { applyDataOperations } from './execution/dataOperationRunner';
 import { buildDeterministicCleaningFallbackAction } from './orchestration/deterministicCleaningFallback';
 import { getPrimaryReshapeHypothesis } from './reportShapeHypothesis';
 import { detectReportShape } from './reportShapeDetector';
+import { buildPeriodWideReshape, describePeriodWideSeriesMeasure, type PeriodWideReshape } from './reportShapePeriodWide';
 import {
     buildMergedBoundaryHeaders,
     inferFactColumns,
@@ -122,13 +123,17 @@ const parseNumericCandidate = (value: unknown): number | null => {
     if (DATE_LIKE_PATTERN.test(normalized)) {
         return null;
     }
+    // Whole-string parse after stripping symbols, mirroring isNumericCandidate
+    // in columnRoleClassifier: a prefix parse turned the month "2010-01" into
+    // the number 2010. A trailing minus ("1,234.56-") still marks a negative.
     const numeric = normalized
         .replace(/[^0-9.\-]/g, '')
-        .trim();
+        .trim()
+        .replace(/^(\d[\d.]*)-$/, '-$1');
     if (!numeric || numeric === '-' || numeric === '.' || numeric === '-.') {
         return null;
     }
-    const parsed = Number.parseFloat(numeric);
+    const parsed = Number(numeric);
     return Number.isFinite(parsed) ? parsed : null;
 };
 
@@ -946,11 +951,63 @@ const buildRowTableFromRawBoundary = (params: {
     };
 };
 
+// Parent series (totals and indented group rows) stay in the canonical table
+// with RowClass/RowRole subtotal|total: they are published series in their own
+// right, and the runtime detail-row filter keeps them out of detail-level
+// aggregation, so every non-missing source cell appears exactly once.
+const buildPeriodWideCanonicalTable = (
+    sourceData: CsvData,
+    structure: ReportStructureResolution,
+    reshape: PeriodWideReshape,
+): CanonicalDatasetArtifact => {
+    const result = applyDataOperations(reshape.sourceRows, reshape.operations, { allowEmptyResult: false });
+    const excludedRowCounts: CanonicalDatasetArtifact['canonicalBuildMeta']['excludedRowCounts'] = {};
+    const canonicalRows = result.data.map(row => {
+        const rowRole = typeof row.RowClass === 'string' ? row.RowClass : 'fact';
+        return {
+            ...row,
+            RowRole: rowRole,
+            ResolvedRowRole: rowRole,
+            HeaderPath: buildHeaderPath(typeof row.SourceColumnName === 'string' ? row.SourceColumnName : null),
+            CarryForwardAppliedColumns: '',
+        };
+    });
+    const canonicalCsvData: CsvData = {
+        ...cloneCsvData(sourceData),
+        data: canonicalRows,
+        metadataRows: [],
+        summaryRows: [],
+        headerLayers: [],
+        headerDepth: 1,
+        summaryRowCount: 0,
+    };
+    return {
+        canonicalCsvData,
+        canonicalSchema: Object.keys(canonicalRows[0] ?? {}),
+        canonicalBuildMeta: {
+            shape: structure.decision.targetShape,
+            source: structure.source,
+            rowCount: canonicalRows.length,
+            columnCount: Object.keys(canonicalRows[0] ?? {}).length,
+            lineageColumns: ['SourceRowIndex', 'SourceColumnName', 'ResolvedRowRole', 'HeaderPath', 'CarryForwardAppliedColumns'],
+            summary: `Melted ${reshape.sourceRows.length} series across ${reshape.detection.periodColumns.length} ${reshape.detection.grain} periods into ${canonicalRows.length} row(s).`,
+            excludedRowCounts,
+            carryForwardAppliedCounts: {},
+            footerTotalsMatched: null,
+            seriesMeasure: describePeriodWideSeriesMeasure(reshape),
+        },
+    };
+};
+
 const buildReshapedTable = (
     sourceData: CsvData,
     structure: ReportStructureResolution,
     runtimeTableAssessment: ReportStructureResolution['runtimeTableAssessment'],
 ): CanonicalDatasetArtifact | null => {
+    const periodWideReshape = buildPeriodWideReshape(sourceData);
+    if (periodWideReshape) {
+        return buildPeriodWideCanonicalTable(sourceData, structure, periodWideReshape);
+    }
     const action = buildDeterministicCleaningFallbackAction(
         sourceData,
         null,

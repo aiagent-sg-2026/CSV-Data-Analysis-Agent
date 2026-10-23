@@ -1,10 +1,11 @@
 import { useMemo } from 'react';
 import { useAppStore } from '../store/useAppStore';
-import { applyTopNWithOthers, parseNumericValue } from '../utils/dataHelpers';
+import { applyTopNWithOthers, parseNullableNumericValue, parseNumericValue } from '../utils/dataHelpers';
 import { CsvRow, AnalysisCardData, AnalysisPlan } from '../types';
 import { isAdditiveAggregation, normalizeCategoryLabel } from '../utils/analysisCardPresentation';
 import { buildPivotStackedChartState, DEFAULT_STACKED_PIVOT_COLUMN_TOP_N } from '../utils/pivotMatrixCharting';
-import { formatTemporalDisplayValue, isTemporalDisplayColumn } from '../utils/temporalDisplay';
+import { formatTemporalDisplayValue } from '../utils/temporalDisplay';
+import { detectTiedLeadingWindow, isRankedMeasureView, rankRowsByValue, resolveCardValueKey } from '../utils/rankedPresentation';
 
 export const useAnalysisCardData = (cardId: string) => {
     const cardData = useAppStore(state => state.analysisCards.find(c => c.id === cardId));
@@ -24,36 +25,7 @@ export const useAnalysisCardData = (cardId: string) => {
         tableSort,
     } = (cardData || {}) as Partial<AnalysisCardData> & { plan?: AnalysisPlan };
     
-    const valueKey = useMemo(() => {
-        const planned = plan?.valueColumn || 'count';
-        if (!aggregatedData?.length) return planned;
-
-        // Fast path: planned column exists in data
-        if (planned in aggregatedData[0]) return planned;
-
-        // Reconcile: when SQL-first cards use an aggregate alias (e.g. "Sum Total")
-        // that differs from plan.valueColumn (e.g. "TOTAL"), find the actual numeric
-        // column in the data so charts and legends render correctly.
-        const groupBy = plan?.groupByColumn;
-        const columns = Object.keys(aggregatedData[0]);
-        const plannedLower = planned.toLowerCase();
-
-        // Try case-insensitive or containment match first
-        const aliasMatch = columns.find(col => {
-            if (col === groupBy) return false;
-            const colLower = col.toLowerCase();
-            return colLower === plannedLower
-                || colLower.endsWith(` ${plannedLower}`)
-                || colLower.startsWith(`${plannedLower} `);
-        });
-        if (aliasMatch) return aliasMatch;
-
-        // Fallback: pick the first numeric non-groupBy column
-        const numericCol = columns.find(col =>
-            col !== groupBy && typeof aggregatedData[0][col] === 'number',
-        );
-        return numericCol || planned;
-    }, [plan, aggregatedData]);
+    const valueKey = useMemo(() => resolveCardValueKey(plan, aggregatedData), [plan, aggregatedData]);
     const groupByKey = useMemo(() => plan?.groupByColumn || '', [plan]);
     const normalizeDisplayRows = useMemo(() => (rows: CsvRow[]) => rows.map(row => {
         const nextRow: CsvRow = { ...row };
@@ -87,24 +59,31 @@ export const useAnalysisCardData = (cardId: string) => {
         return normalizeDisplayRows(data);
     }, [aggregatedData, filter, normalizeDisplayRows]);
 
+    const rankDirection = plan?.rankDirection;
+    const isRankedNonAdditive = isRankedMeasureView(plan, groupByKey, isAdditiveAggregation);
+    const appliesTopN = Boolean(plan && !plan.disableTopNControls && plan.chartType !== 'scatter' && groupByKey && topN);
+    const rankedNonAdditiveRows = useMemo(
+        () => (isRankedNonAdditive ? rankRowsByValue(dataAfterFilter, valueKey, rankDirection) : dataAfterFilter),
+        [dataAfterFilter, isRankedNonAdditive, rankDirection, valueKey],
+    );
+
     const dataForLegend = useMemo(() => {
         if (!plan) return [];
-        const rankedNonAdditive = plan.aggregation
-            && !isAdditiveAggregation(plan.aggregation)
-            && !isTemporalDisplayColumn(groupByKey)
-            && !['line', 'area', 'multi_line'].includes(plan.chartType)
-            ? [...dataAfterFilter].sort((a, b) => parseNumericValue(b[valueKey]) - parseNumericValue(a[valueKey]))
-            : dataAfterFilter;
-        if (!plan.disableTopNControls && plan.chartType !== 'scatter' && groupByKey && topN) {
+        if (appliesTopN && topN) {
             if (isAdditiveAggregation(plan.aggregation)) {
-                return applyTopNWithOthers(dataAfterFilter, groupByKey, valueKey, topN);
+                return applyTopNWithOthers(dataAfterFilter, groupByKey, valueKey, topN, rankDirection);
             }
-            return [...rankedNonAdditive]
-                .sort((a, b) => parseNumericValue(b[valueKey]) - parseNumericValue(a[valueKey]))
-                .slice(0, topN);
+            // The window keeps the query's ranking direction: an ascending
+            // evidence query shows its lowest groups, not the largest values.
+            return rankRowsByValue(rankedNonAdditiveRows, valueKey, rankDirection).slice(0, topN);
         }
-        return rankedNonAdditive;
-    }, [dataAfterFilter, plan, groupByKey, topN, valueKey]);
+        return rankedNonAdditiveRows;
+    }, [appliesTopN, dataAfterFilter, plan, groupByKey, topN, valueKey, rankDirection, rankedNonAdditiveRows]);
+
+    const tiedLeadingWindow = useMemo(
+        () => (appliesTopN && isRankedNonAdditive ? detectTiedLeadingWindow(rankedNonAdditiveRows, valueKey, topN) : null),
+        [appliesTopN, isRankedNonAdditive, rankedNonAdditiveRows, topN, valueKey],
+    );
 
     const tableDataForDisplay = useMemo(() => {
         let data = dataForLegend;
@@ -120,9 +99,15 @@ export const useAnalysisCardData = (cardId: string) => {
     const sortedTableData = useMemo(() => {
         if (!tableSort) return tableDataForDisplay;
         const { column, direction } = tableSort;
+        const isMissing = (value: unknown) => value === null || value === undefined || (typeof value === 'string' && value.trim() === '');
         return [...tableDataForDisplay].sort((a, b) => {
             const aVal = a[column];
             const bVal = b[column];
+            // A cell without a value (e.g. a NULL median) goes last in both directions
+            // instead of sorting as 0 or as an empty string.
+            if (isMissing(aVal) || isMissing(bVal)) {
+                return (isMissing(aVal) ? 1 : 0) - (isMissing(bVal) ? 1 : 0);
+            }
             // Treat numeric-like strings as numbers for correct sort order
             const aNum = typeof aVal === 'number' ? aVal : Number(String(aVal).replace(/[,$%()]/g, (m) => m === '(' ? '-' : m === ')' ? '' : ''));
             const bNum = typeof bVal === 'number' ? bVal : Number(String(bVal).replace(/[,$%()]/g, (m) => m === '(' ? '-' : m === ')' ? '' : ''));
@@ -141,20 +126,20 @@ export const useAnalysisCardData = (cardId: string) => {
         if (plan?.artifactType !== 'pivot_matrix' || !hideZeroValueRows) {
             return 0;
         }
-        return tableDataForDisplay.filter(row => parseNumericValue(row[valueKey]) === 0).length;
+        return tableDataForDisplay.filter(row => parseNullableNumericValue(row[valueKey]) === 0).length;
     }, [hideZeroValueRows, plan?.artifactType, tableDataForDisplay, valueKey]);
     const chartRowDataForDisplay = useMemo(() => {
         const base = sortedTableData;
         if (plan?.artifactType !== 'pivot_matrix' || !hideZeroValueRows) {
             return base;
         }
-        return base.filter(row => parseNumericValue(row[valueKey]) !== 0);
+        return base.filter(row => parseNullableNumericValue(row[valueKey]) !== 0);
     }, [hideZeroValueRows, plan?.artifactType, sortedTableData, valueKey]);
     const tableZeroValueRowCount = useMemo(() => {
         if (plan?.artifactType !== 'pivot_matrix') {
             return 0;
         }
-        return tableDataForDisplay.filter(row => parseNumericValue(row[valueKey]) === 0).length;
+        return tableDataForDisplay.filter(row => parseNullableNumericValue(row[valueKey]) === 0).length;
     }, [plan?.artifactType, tableDataForDisplay, valueKey]);
 
     const totalValue = useMemo(() => {
@@ -193,5 +178,7 @@ export const useAnalysisCardData = (cardId: string) => {
         valueKey,
         groupByKey,
         tableSort: tableSort ?? null,
+        rankDirection: rankDirection ?? null,
+        tiedLeadingWindow,
     };
 };

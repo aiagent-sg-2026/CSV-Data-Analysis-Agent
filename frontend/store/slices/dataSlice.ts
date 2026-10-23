@@ -9,7 +9,7 @@ import type { StateCreator } from 'zustand';
 import type { StoreApi } from '../../services/agent/types';
 import { flushSync } from 'react-dom';
 import type { AppStore } from '../useAppStore';
-import { getTranslation } from '../../utils/localization';
+import { getStructureReviewReasonText, getTranslation } from '../../utils/localization';
 import {
     ProgressMessage,
     CsvData,
@@ -1037,6 +1037,12 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
                     }
                 }
                 get().addProgress('Report structure was confirmed and canonical data is ready for analysis.');
+            } else if (pipelineOutcome?.status === 'needs_structure_review') {
+                // The outcome message embeds internal reason codes; the
+                // progress log is user-facing, so show the plain explanation.
+                const language = get().settings.language;
+                const reasonText = getStructureReviewReasonText(pipelineOutcome.reasonCode, language);
+                get().addProgress(`${getTranslation('structure_review_required_message', language)} ${reasonText}`, 'system');
             } else {
                 get().addProgress(pipelineOutcome?.message ?? 'Report structure review was saved.', pipelineOutcome?.severity === 'blocked' ? 'warning' : 'system');
             }

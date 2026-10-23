@@ -11,7 +11,8 @@ import {
     QueryWhereClause,
     QueryOrderByClause,
 } from '../../../types';
-import { robustParseFloat } from '../../data/dataProfiler';
+import { buildColumnMissingCheck, robustParseFloat } from '../../data/dataProfiler';
+import { isMissingCellValue } from '../../duckdb/dimensionNormalization';
 import { normalizeQueryAggregateFunction, normalizeQueryOrderDirection } from './dataQueryContract';
 import { normalizeString } from './dataOperationNormalization';
 import {
@@ -49,9 +50,23 @@ export const createQueryPlanFromFilterOperation = (
 const isRecord = (value: unknown): value is Record<string, unknown> =>
     Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
-const isMissingValue = (value: unknown): boolean => {
-    if (value === null || value === undefined) return true;
-    return typeof value === 'string' && value.trim() === '';
+type MissingCheck = (value: unknown) => boolean;
+
+/**
+ * Per-column missing checks for COUNT(col) and COUNT DISTINCT, decided over
+ * the whole table like the DuckDB compiler: blank cells never count, and
+ * missing markers (`na`, `-`) are skipped only in a numeric column, since in a
+ * text column they are values (`NA` for North America).
+ */
+const buildCountMissingChecks = (rows: CsvRow[], aggregates: NormalizedQueryAggregateClause[]): Map<string, MissingCheck> => {
+    const checks = new Map<string, MissingCheck>();
+    aggregates.forEach(aggregate => {
+        if ((aggregate.function === 'count' || aggregate.function === 'count_distinct')
+            && aggregate.column && !checks.has(aggregate.column)) {
+            checks.set(aggregate.column, buildColumnMissingCheck(rows.map(row => row[aggregate.column!] ?? null)));
+        }
+    });
+    return checks;
 };
 
 const tryNormalizeColumnName = (column: string, lookup: Map<string, string>): string | null => {
@@ -305,7 +320,9 @@ const aggregateRowsForQuery = (
     rows: CsvRow[],
     groupByColumns: string[],
     aggregates: NormalizedQueryAggregateClause[],
+    countMissingChecks: Map<string, MissingCheck>,
 ): CsvRow[] => {
+    const isMissingIn = (column: string): MissingCheck => countMissingChecks.get(column) ?? isMissingCellValue;
     const groups = new Map<string, { groupValues: CsvRow; rows: CsvRow[] }>();
 
     rows.forEach(row => {
@@ -345,14 +362,14 @@ const aggregateRowsForQuery = (
                     nextRow[aggregate.as] = aggregateRows.length;
                     return;
                 }
-                nextRow[aggregate.as] = aggregateRows.filter(row => !isMissingValue(row[aggregate.column!] ?? null)).length;
+                nextRow[aggregate.as] = aggregateRows.filter(row => !isMissingIn(aggregate.column!)(row[aggregate.column!] ?? null)).length;
                 return;
             }
             if (aggregate.function === 'count_distinct') {
                 nextRow[aggregate.as] = aggregate.column
                     ? new Set(aggregateRows
                         .map(row => row[aggregate.column!] ?? null)
-                        .filter(value => !isMissingValue(value))).size
+                        .filter(value => !isMissingIn(aggregate.column!)(value))).size
                     : aggregateRows.length;
                 return;
             }
@@ -469,7 +486,7 @@ export const executeDataQuery = (
         : cloneRows(inputRows);
 
     const rowsBeforeProjection = isAggregateQuery
-        ? aggregateRowsForQuery(filteredRows, normalizedGroupBy, normalizedAggregates)
+        ? aggregateRowsForQuery(filteredRows, normalizedGroupBy, normalizedAggregates, buildCountMissingChecks(inputRows, normalizedAggregates))
         : filteredRows;
     const rowsAfterPostAggregateFilter = normalizedPostAggregateFilter
         ? applySpreadsheetFilterOperation(rowsBeforeProjection, {

@@ -1,6 +1,18 @@
 ## Current Work Context
 
 - **Goal**: Maintain the React browser app and its checked-in GitHub Pages build. The main assistant and initial analysis run through Pi Harness and the governed app tools.
+- **Worker change (2026-10-23, P0 missing markers counted as 0; root not republished)**:
+  - Live symptom: on `sg-graduate-employment.csv` the card "Median Gross Mthly 25 Percentile by School" ranked School of Law (only `na`/`N.A.`) at 0 and Yong Siew Toh at 1,500 (real median of reported values: 2,999).
+  - Root cause: `compileAggregateExpression` in `frontend/services/duckdb/queryCompiler.ts` wrapped every single-column numeric aggregate in `COALESCE(<numeric>, 0)` (the old comment said it was for `'-` zero markers). Period-sum and unpivot aggregates did the same. The in-process executor already skipped these cells, so DuckDB and the fallback disagreed.
+  - Fix: one shared `MISSING_VALUE_MARKERS` list (and `isMissingCellValue` / `buildMissingCellSqlCondition`) in `dimensionNormalization.ts`, extended with `n.a.`, `nil`, `nan`, en and em dash. Numeric expressions return NULL for blanks, markers and non-numeric text, and no aggregate coalesces to 0. COUNT(column) and COUNT DISTINCT skip markers, and a period sum is NULL only when every period is missing. The in-process executor, the Arquero fallback and the diagnostic templates follow the same rule. Valid `0` is unchanged.
+  - Other demo files affected the same way: `sg-hdb-median-rent.csv` (2,273 `na` + 2,249 `-` in `median_rent`), `sg-public-transport-ridership.csv` (147 `na`). No footnote values such as `3200*` occur in the demo files.
+  - Test: `frontend/tests/numericMissingMarkers.test.ts` (real CSV through intake → query engine → real in-process DuckDB; per-marker cases for DuckDB, Arquero and native). It failed before the fix.
+  - Not changed: `utils/dataHelpers.ts` `parseNumericValue` still maps null to 0 for chart heights, zero-row hiding and the additive top-N sort. Non-additive ranked cards already sort NULL last through `rankRowsByValue`.
+- **Worker change (2026-10-23, ranked-card fidelity; root not republished)**:
+  - Found in a live gpt-5.4-mini run on `sg-graduate-employment.csv`: the card "lowest median 25th-percentile pay by school" was ordered ascending with LIMIT 20. `useAnalysisCardData` then re-sorted non-additive rows largest-first and kept 8, so the chart showed eight schools tied at 3,000 under "Top 8 view".
+  - Fix: the card plan now carries `rankDirection` from the query's leading `orderBy` on the measure. The hook, `applyTopNWithOthers`, the scope labels and the executive KPI all follow it.
+  - Small-n leaders: a COUNT companion query adds the value-gate code `small_group_leader` with a visible card caveat, and the card is caveated (`small_sample_leader`). An all-tied top-N window gets the code `tied_leading_values` and a note.
+  - Tests: `tests/rankedCardPresentation.test.tsx` runs the real query and card path on the demo CSV, plus new cases in the topicProcessor, executiveKpis and analysisCardSummary tests.
 - **Current issue**: The 2026-10-22 e2e run found four problems. (1) Time spent waiting on the cloud-AI consent dialog counted toward the 30 s provider idle timeout. (2) A non-timeout topic-planning error (live gateway HTTP 413) left the analysis with empty topics. (3) On phones the header buttons covered the "AI Analysis" title. (4) In local-only mode the next step pointed to evidence review.
 - **Current change (manager round, branch `claude/funny-lovelace-beqo7n`)**:
   - A per-model consent/connectivity preflight runs before the idle timer starts in `streamGenerateText` and the intent classifier. The middleware still enforces consent.
@@ -73,6 +85,52 @@
   - No-AI end-user audit, 6 viewports (320/390/430/768/1024/1440): no overflow, no unnamed controls, no small touch targets, no errors. All 8 fast datasets load with local processing only and matching row counts (median rent 9,505 of 9,507, because the source repeats 2020-Q1 rows).
   - Full suite 439 files / 4,101 tests. Root published as 1.0.0-4e10f9176de9.
   - Real-AI runs per dataset are scheduled for 2026-10-23 02:00 UTC, after the demo quota resets.
+  - Deployed as PR #36 (Pages, live 1.0.0-4e10f9176de9). On live: the 6-viewport audit is clean, all 8 fast datasets load with local processing only, and the large dataset sorts last.
+- **Real-AI run per demo dataset (2026-10-23, after quota reset, live build 1.0.0-4e10f9176de9)**:
+  - HDB sample: 125 s, 2 median cards (by storey range, by flat type). Numbers verified. The headline "40 TO 42 leads" rests on n=2.
+  - Graduate employment: 2 cards.
+    - "Typical Basic Monthly Pay by School" is correct, but its leaders have n=2-3.
+    - "Median Gross Mthly 25 Percentile by School" claims an ascending ranking but shows 8 schools tied at 3,000, while the true lowest are 2,050 / 2,200.
+  - Resident unemployment: 1 card.
+  - COE bidding, business formation, visitor arrivals and HDB median rent were stopped by the structure-review gate (`detail_series_coverage_rate`, `dominant_block_resolved`, `hierarchy_depth_retention_rate`...). For COE (a tidy long table) this looks like a false positive. Visitor arrivals also hit the 240 s budget.
+  - Rent intake misreads its first 2 data rows (numeric column holding `na`/`-`) as 2 extra header layers. This is the real reason for 9,505 vs 9,507 rows, not duplicate rows.
+  - The dialog shows a phantom summary row past end-of-file, internal reason codes, and a conflicting "cleaning stopped" banner.
+  - The transport run was interrupted by a container restart.
+  - Workers dispatched:
+    - N: intake/header/summary/reason-code/banner fixes;
+    - O: read-only root cause of the structure gate and an agentic reshape path;
+    - P: card ranking direction, small-n caveat, all-tied top-N.
+- **Round 5 integration (2026-10-23, branch `claude/funny-lovelace-beqo7n`)**:
+  - Worker P integrated: ranked cards keep the query direction (asc/desc), and a "small group leader" / "tied leading values" caveat shows on thin or tied leaders.
+  - Worker N integrated (5 commits):
+    - Rows whose measure is `na`/`-` no longer become header layers, so rent keeps all 9,507 rows.
+    - CSV dialect: when the 200-line sample has no quotes, it now defaults to `"` quoting. COE row 1580 (`"1,438"`) and 108 other rows were split into extra columns before this fix.
+    - A clean single-header parse skips the in-body header scan.
+    - No phantom summary row past end-of-file.
+    - 28 structure-review reasons are explained in plain language (4 languages), with the codes moved under "Technical details".
+    - The cleaning banner is hidden while structure review is pending.
+  - No-AI intake: rent and COE now reach `ready` with no structure review. Visitor arrivals, transport ridership and business formation are SingStat wide tables (`DataSeries` plus one column per period, with indented child rows) and still need structure review.
+  - In progress:
+    - Worker R: `na`/`N.A.`/`-` become NULL, not 0, in numeric aggregation ("School of Law = 0" on the live card).
+    - Worker S: recognise the SingStat wide shape through the existing wide-reshape/unpivot path, without double-counting subtotals, plus visitor intake speed.
+  - Integrated afterwards:
+    - R: missing markers become NULL in DuckDB, Arquero and in-process aggregation.
+    - S: `reportShapePeriodWide.ts` melts period-header wide tables into `DataSeries/ParentSeries/HierarchyDepth/RowClass/Period/Value`. Visitor intake went from 27.6 s to 1.6 s.
+    - T: marker-aware column typing in `profileData`/`profileDataLightweight`; a whole-string numeric parse, so `2010-01` is no longer read as 2010; quality repair offered only on columns that `data.mutate` can reach.
+    - Manager fixes:
+      - the simple view gains a "Show the N cards to review" button when no card is verified;
+      - a bare year shows as `2013`, not `2,013`.
+  - Full gate before T: 446 files / 4,223 tests.
+  - **Real-AI runs on local candidates under the live origin (2026-10-23)**. All 9 datasets now pass intake with no structure-review dialog. The gateway's 20-request session limit was hit mid-run several times, and the app opened a new session and continued each time.
+    - COE (before T): 94 s, 2 cards, both "need review". The simple view was empty, which is now fixed with the review button.
+    - Rent:
+      - Before T: only record counts, because `median_rent` was typed as text.
+      - After T: median rent by flat type, by town, and the quarterly trend. Independently verified: 5-RM 2,600, EXEC 2,500, 4-RM 2,400, 2-RM 2,200, 3-RM 2,000.
+      - Bug: `1-RM` has no reported rent but shows `0.00`, because the presentation layer turns NULL into 0. Worker V is fixing this.
+    - Graduate employment: 5 cards; the small-sample caveat shows. The `ï¿½` in some school names is in the MOE source file itself.
+    - Transport, **P0**: SUM(Value) across series with different units ("Total ridership 11.2M", marked Verified), and a summary line "total ridership was 67" (67 is rail length in km). Worker U is fixing this: series additivity at intake, and a gate that requires a per-series analysis.
+    - Business formation: 3 cards; the top-4 medians are verified (Wholesale 777, Professional Services 615, Retail 405, Finance 323). "Max Value by Period" is generic and low-value.
+    - Visitor arrivals: 4 cards; total by market verified (Indonesia 42,399,967, China 36,552,383, ...).
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.

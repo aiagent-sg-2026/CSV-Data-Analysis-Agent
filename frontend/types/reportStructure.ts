@@ -203,6 +203,56 @@ export interface CanonicalReshapeProvenance {
     rowCountAfter: number;
 }
 
+/** One published series of a melted period-header wide table. */
+export interface PeriodSeriesInfo {
+    /** Unique series key as stored in the series column. */
+    name: string;
+    /** Source label, present only when it repeats and so differs from `name` (e.g. `Male` for `Citizens > Male`). */
+    label?: string;
+    parent: string | null;
+    rowClass: 'fact' | 'subtotal' | 'total';
+    /** Periods with a published (non-missing) value. */
+    observations: number;
+    /** ISO start date of the latest period with a published value. */
+    latestPeriod: string | null;
+}
+
+/**
+ * What the value column of a melted period-header wide table means. Each row
+ * holds one series in one period, and different series can measure different
+ * things (km of rail, daily riders, passenger-km), so the value is only
+ * comparable or summable across series when the intake verified it.
+ */
+export interface SeriesMeasureSemantics {
+    seriesColumn: string;
+    measureColumn: string;
+    periodColumn: string;
+    periodGrain: 'year' | 'quarter' | 'month';
+    parentColumn: string | null;
+    /** Columns carrying the row class (RowClass and its RowRole copies); empty without a hierarchy. */
+    detailRowColumns: string[];
+    detailRowValue: string;
+    /**
+     * False only on positive evidence that the series do not share one unit: a
+     * published parent that does not equal the sum of its children, or several
+     * top-level series without a covering total while some have components.
+     * A plain table without hierarchy is additive. When true, detail (fact)
+     * series can be summed.
+     */
+    additiveAcrossSeries: boolean;
+    /** Families verified to share a unit: a published parent equal to the sum of its children. */
+    unitFamilies: Array<{ parent: string; children: string[] }>;
+    evidence: {
+        rootSeries: number;
+        parentSeriesChecked: number;
+        parentSeriesVerified: number;
+        parentPeriodsChecked: number;
+        parentPeriodsMatched: number;
+        summary: string;
+    };
+    series: PeriodSeriesInfo[];
+}
+
 export interface CanonicalBuildMeta {
     shape: CanonicalizationDecision['targetShape'];
     source: CanonicalBuildSource;
@@ -214,6 +264,8 @@ export interface CanonicalBuildMeta {
     carryForwardAppliedCounts: Record<string, number>;
     footerTotalsMatched: boolean | null;
     reshapeProvenance?: CanonicalReshapeProvenance;
+    /** Set when the canonical table is a melted period-header wide table. */
+    seriesMeasure?: SeriesMeasureSemantics | null;
 }
 
 export interface CanonicalDatasetArtifact {
@@ -249,4 +301,6 @@ export interface ResolveReportStructureInput {
     structureProposal?: ReportStructureProposal | null | undefined;
     shapeFailureSignalKey?: string | null | undefined;
     shapeVerificationPassed?: boolean | null | undefined;
+    /** The prepared table is a period-header wide table with a verified deterministic reshape. */
+    periodWideTableRecognized?: boolean;
 }

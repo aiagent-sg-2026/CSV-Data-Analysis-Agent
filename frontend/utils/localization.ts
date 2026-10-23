@@ -351,6 +351,18 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'French': '{group} principal',
         'Malay': '{group} teratas',
     },
+    'executive_kpi_lowest_group_label': {
+        'English': 'Lowest {group}',
+        'Mandarin': '最低{group}',
+        'Japanese': '最下位{group}',
+        'Malay': '{group} terendah',
+    },
+    'executive_kpi_lowest_group_detail': {
+        'English': '{group} has the lowest value in this view.',
+        'Mandarin': '{group} 在此视图中数值最低。',
+        'Japanese': '{group} がこのビューで最も低い値です。',
+        'Malay': '{group} mempunyai nilai terendah dalam paparan ini.',
+    },
     'executive_kpi_group_count_label': {
         'English': '{groups}',
         'Mandarin': '{groups}',
@@ -2002,6 +2014,42 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Malay': 'Paparan {count} teratas',
         'Japanese': '上位 {count} 件ビュー',
     },
+    'analysis_card_scope_bottom_n': {
+        'English': 'Lowest {count} view',
+        'Mandarin': '最低 {count} 项视图',
+        'Malay': 'Paparan {count} terendah',
+        'Japanese': '下位 {count} 件ビュー',
+    },
+    'analysis_card_caveat_small_group': {
+        'English': '{label} (rank {rank}) is based on only {rows} rows.',
+        'Mandarin': '{label}（排名 {rank}）仅基于 {rows} 行数据。',
+        'Malay': '{label} (kedudukan {rank}) hanya berdasarkan {rows} baris.',
+        'Japanese': '{label}（{rank} 位）は {rows} 行のみに基づいています。',
+    },
+    'analysis_card_caveat_small_group_median': {
+        'English': 'The median group has {median} rows, so these values may not be typical.',
+        'Mandarin': '分组行数中位数为 {median}，这些数值可能不具代表性。',
+        'Malay': 'Kumpulan median mempunyai {median} baris, jadi nilai ini mungkin tidak tipikal.',
+        'Japanese': 'グループの行数の中央値は {median} 行のため、これらの値は典型的でない可能性があります。',
+    },
+    'analysis_card_caveat_small_group_title': {
+        'English': 'Small sample:',
+        'Mandarin': '样本过少：',
+        'Malay': 'Sampel kecil:',
+        'Japanese': '少数サンプル:',
+    },
+    'analysis_card_caveat_tied_window': {
+        'English': 'All {count} shown groups share the same value ({value}); {tied} of {total} groups have it, so this view does not rank them.',
+        'Mandarin': '显示的 {count} 个分组数值相同（{value}）；共 {total} 个分组中有 {tied} 个为该值，因此此视图无法区分排名。',
+        'Malay': 'Kesemua {count} kumpulan yang dipaparkan berkongsi nilai yang sama ({value}); {tied} daripada {total} kumpulan mempunyainya, jadi paparan ini tidak menyusun kedudukan mereka.',
+        'Japanese': '表示中の {count} グループはすべて同じ値（{value}）です。{total} グループ中 {tied} グループが同値のため、このビューでは順位を付けられません。',
+    },
+    'analysis_card_caveat_tied_window_title': {
+        'English': 'Tied values:',
+        'Mandarin': '数值并列：',
+        'Malay': 'Nilai seri:',
+        'Japanese': '同値:',
+    },
     'analysis_card_scope_filter': {
         'English': 'Filter: {column} = {values}',
         'Mandarin': '筛选：{column} = {values}',
@@ -3316,6 +3364,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'credibility_ready_hint': { 'English': 'All cards passed quality checks. You can use these findings directly.', 'Mandarin': '所有卡片均通过质量检查，可直接使用分析结论。', 'Japanese': '全カードが品質チェックを通過。結果をそのまま使用できます。', 'Malay': 'Semua kad lulus semakan kualiti. Anda boleh menggunakan dapatan ini secara langsung.' },
     'credibility_ready_with_caveats_hint': { 'English': 'All result cards passed their checks, but data-quality limitations remain. Review the warnings before using the findings.', 'Mandarin': '所有结果卡片均通过检查，但数据质量仍有限制。使用结论前请先查看警告。', 'Malay': 'Semua kad hasil lulus semakan, tetapi batasan kualiti data masih ada. Semak amaran sebelum menggunakan dapatan.', 'Spanish': 'Todas las tarjetas pasaron las comprobaciones, pero persisten limitaciones de calidad de datos. Revise las advertencias antes de usar los hallazgos.', 'Japanese': 'すべての結果カードは検証済みですが、データ品質上の制限が残っています。結果を使用する前に警告を確認してください。', 'French': 'Toutes les cartes ont réussi les contrôles, mais des limites de qualité des données subsistent. Consultez les avertissements avant d’utiliser les conclusions.' },
     'credibility_review_hint': { 'English': '{trusted} verified, {review} need review — start with verified cards.', 'Mandarin': '{trusted} 张已验证，{review} 张待复核 — 建议优先查看已验证卡片。', 'Japanese': '{trusted} 枚検証済み、{review} 枚要確認 — 検証済みカードから確認してください。', 'Malay': '{trusted} disahkan, {review} perlu disemak — mulakan dengan kad yang disahkan.' },
+    'credibility_show_review_cards': { 'English': 'Show the {count} cards to review', 'Mandarin': '查看 {count} 张待复核卡片', 'Japanese': '要確認のカード {count} 枚を表示', 'Malay': 'Tunjukkan {count} kad untuk disemak' },
     'credibility_review_hint_no_verified': { 'English': '0 verified, {review} need review — review these cards and data warnings before using the findings.', 'Mandarin': '0 张已验证，{review} 张待复核 — 使用结论前请先检查这些卡片和数据警告。', 'Japanese': '検証済み 0 枚、要確認 {review} 枚 — 結果を使用する前にカードとデータ警告を確認してください。', 'Malay': '0 disahkan, {review} perlu disemak — semak kad dan amaran data ini sebelum menggunakan dapatan.' },
     'credibility_insufficient_hint': { 'English': 'No cards reached full confidence. Check data warnings, then try follow-up queries.', 'Mandarin': '所有卡片均未达到完全可信标准。请先查看数据警告，再尝试追问。', 'Japanese': '十分な信頼度のカードがありません。データ警告を確認し、追加クエリをお試しください。', 'Malay': 'Tiada kad mencapai keyakinan penuh. Semak amaran data, kemudian cuba pertanyaan susulan.' },
     'card_verdict_verified': { 'English': 'Verified', 'Mandarin': '已验证', 'Japanese': '検証済み', 'Malay': 'Disahkan' },
@@ -3360,6 +3409,10 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'verdict_reason_dimension_quality_warning': { 'English': 'Dimension quality concern', 'Mandarin': '维度质量问题', 'Japanese': 'ディメンション品質懸念', 'Malay': 'Kebimbangan tentang kualiti dimensi' },
     'verdict_reason_metric_quality_warning': { 'English': 'Metric quality concern', 'Mandarin': '指标质量问题', 'Japanese': 'メトリック品質懸念', 'Malay': 'Kebimbangan tentang kualiti metrik' },
     'verdict_reason_volume_driven_aggregate': { 'English': 'Ranking mostly follows row counts', 'Mandarin': '排名主要反映各组行数', 'Japanese': '順位は主に行数を反映', 'Malay': 'Kedudukan kebanyakannya mengikut bilangan baris' },
+    'verdict_reason_small_sample_leader': { 'English': 'Leading group rests on very few rows', 'Mandarin': '领先分组仅基于极少行', 'Japanese': '上位グループの行数が非常に少ない', 'Malay': 'Kumpulan teratas berdasarkan sangat sedikit baris' },
+    'verdict_reason_tied_leading_values': { 'English': 'Shown groups share one value', 'Mandarin': '显示的分组数值完全相同', 'Japanese': '表示中のグループが同じ値', 'Malay': 'Kumpulan yang dipaparkan berkongsi satu nilai' },
+    'verdict_reason_cross_series_aggregate': { 'English': 'Combines series that measure different things', 'Mandarin': '合并了含义不同的数据系列', 'Japanese': '意味の異なる系列を合算している', 'Malay': 'Menggabungkan siri yang mengukur perkara berbeza' },
+    'verdict_reason_series_scope_warning': { 'English': 'Series are not comparable on one axis', 'Mandarin': '各数据系列不能在同一坐标轴上比较', 'Japanese': '系列を同じ軸で比較できない', 'Malay': 'Siri tidak boleh dibandingkan pada satu paksi' },
     'verdict_reason_unclassified_share_warning': { 'English': 'High unclassified data share', 'Mandarin': '未分类数据占比过高', 'Japanese': '未分類データの割合が高い', 'Malay': 'Bahagian data yang tidak dikelaskan tinggi' },
 
     // --- Card expand/collapse ---
@@ -3748,6 +3801,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'technical_data_safety': { 'English': 'Data safety:', 'Mandarin': '数据安全：', 'Japanese': 'データ安全性：', 'Malay': 'Keselamatan data:' },
     'technical_next_state': { 'English': 'Next state:', 'Mandarin': '下一状态：', 'Japanese': '次の状態：', 'Malay': 'Keadaan seterusnya:' },
     'task_error_details': { 'English': 'Technical error details', 'Mandarin': '技术错误详情', 'Japanese': '技術的なエラー詳細', 'Malay': 'Butiran ralat teknikal' },
+    'card_value_no_data': { 'English': 'No data', 'Mandarin': '无数据', 'Japanese': 'データなし', 'Malay': 'Tiada data' },
     'table_no_data': { 'English': 'No data to display.', 'Mandarin': '没有可显示的数据。', 'Japanese': '表示するデータがありません。', 'Malay': 'Tiada data untuk dipaparkan.' },
     'spreadsheet_search_placeholder': { 'English': "Search table or ask AI (e.g., 'show rows where column_3 > 100')", 'Mandarin': "搜索表格或询问 AI（例如：'显示 column_3 > 100 的行'）", 'Japanese': "テーブル検索またはAIに質問（例：'column_3 > 100の行を表示'）", 'Malay': 'Cari dalam jadual atau tanya AI (cth., \'tunjukkan baris dengan column_3 > 100\')' },
     'spreadsheet_ask_ai': { 'English': 'Ask AI', 'Mandarin': '询问 AI', 'Japanese': 'AIに質問', 'Malay': 'Tanya AI' },
@@ -3818,6 +3872,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'card_controls_show_label': { 'English': 'Show', 'Mandarin': '显示', 'Japanese': '表示', 'Malay': 'Tunjukkan' },
     'card_controls_all': { 'English': 'All', 'Mandarin': '全部', 'Japanese': 'すべて', 'Malay': 'Semua' },
     'card_controls_top_n': { 'English': 'Top {n}', 'Mandarin': '前 {n}', 'Japanese': 'トップ {n}', 'Malay': '{n} teratas' },
+    'card_controls_bottom_n': { 'English': 'Lowest {n}', 'Mandarin': '最低 {n}', 'Japanese': '下位 {n}', 'Malay': '{n} terendah' },
     'card_controls_hide_others': { 'English': 'Hide "Others"', 'Mandarin': '隐藏"其他"', 'Japanese': '「その他」を非表示', 'Malay': 'Sembunyikan "Lain-lain"' },
     'card_others': { 'English': 'Others', 'Mandarin': '其他', 'Japanese': 'その他', 'Malay': 'Lain-lain' },
     'card_controls_show_columns': { 'English': 'Show columns', 'Mandarin': '显示列', 'Japanese': '列を表示', 'Malay': 'Tunjukkan lajur' },
@@ -4292,6 +4347,206 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Mandarin': '{column} 的业务角色',
         'Japanese': '{column} のビジネス役割',
         'Malay': 'Peranan perniagaan bagi {column}',
+    },
+
+    // --- Structure review reason codes (plain-language explanations) ---
+    'structure_review_reason_boundary_incomplete': {
+        'English': 'The app could not find where the column headers and the data rows start.',
+        'Mandarin': '无法确定列标题和数据行从哪里开始。',
+        'Japanese': 'ヘッダー行とデータ行の開始位置を特定できませんでした。',
+        'Malay': 'Aplikasi tidak dapat menentukan di mana tajuk lajur dan baris data bermula.',
+    },
+    'structure_review_reason_header_shape_drift': {
+        'English': 'The header row has a different number of columns than the data rows.',
+        'Mandarin': '标题行的列数与数据行不一致。',
+        'Japanese': 'ヘッダー行とデータ行の列数が一致しません。',
+        'Malay': 'Baris tajuk mempunyai bilangan lajur yang berbeza daripada baris data.',
+    },
+    'structure_review_reason_runtime_boundary_ambiguous': {
+        'English': 'The table boundaries are unclear, so the file can be read in more than one way.',
+        'Mandarin': '表格边界不明确，文件可能有多种解读方式。',
+        'Japanese': '表の境界があいまいで、ファイルを複数の方法で解釈できます。',
+        'Malay': 'Sempadan jadual tidak jelas, jadi fail boleh ditafsir dengan lebih daripada satu cara.',
+    },
+    'structure_review_reason_runtime_boundary_rejected': {
+        'English': 'The detected table boundaries did not pass validation.',
+        'Mandarin': '检测到的表格边界未通过验证。',
+        'Japanese': '検出した表の境界が検証に合格しませんでした。',
+        'Malay': 'Sempadan jadual yang dikesan tidak lulus pengesahan.',
+    },
+    'structure_review_reason_repeated_header_leakage': {
+        'English': 'Repeated header rows are still mixed into the data.',
+        'Mandarin': '重复的标题行仍混在数据中。',
+        'Japanese': '繰り返しのヘッダー行がデータに残っています。',
+        'Malay': 'Baris tajuk berulang masih bercampur dengan data.',
+    },
+    'structure_review_reason_repeated_header_leakage_rate': {
+        'English': 'Repeated header rows are still mixed into the data.',
+        'Mandarin': '重复的标题行仍混在数据中。',
+        'Japanese': '繰り返しのヘッダー行がデータに残っています。',
+        'Malay': 'Baris tajuk berulang masih bercampur dengan data.',
+    },
+    'structure_review_reason_low_structure_confidence': {
+        'English': 'The app is not confident that it read the table layout correctly.',
+        'Mandarin': '系统对表格结构的识别把握不足。',
+        'Japanese': '表のレイアウトを正しく読み取れたか確信が持てません。',
+        'Malay': 'Aplikasi tidak pasti susun atur jadual telah dibaca dengan betul.',
+    },
+    'structure_review_reason_structure_proposal_verification_failed': {
+        'English': 'The suggested table layout did not pass the data checks.',
+        'Mandarin': '建议的表格结构未通过数据检查。',
+        'Japanese': '提案された表のレイアウトがデータチェックに合格しませんでした。',
+        'Malay': 'Susun atur jadual yang dicadangkan tidak lulus semakan data.',
+    },
+    'structure_review_reason_complex_report_requires_confirmation': {
+        'English': 'This looks like a complex report layout, so please confirm it before analysis.',
+        'Mandarin': '这看起来是复杂的报表结构，请在分析前确认。',
+        'Japanese': '複雑なレポート形式のため、分析の前に確認してください。',
+        'Malay': 'Ini kelihatan seperti susun atur laporan yang kompleks, jadi sila sahkan sebelum analisis.',
+    },
+    'structure_review_reason_empty_dataset_guard': {
+        'English': 'No data rows remain after preparation.',
+        'Mandarin': '准备后没有剩余的数据行。',
+        'Japanese': '準備後にデータ行が残っていません。',
+        'Malay': 'Tiada baris data yang tinggal selepas penyediaan.',
+    },
+    'structure_review_reason_raw_inspection_completed': {
+        'English': 'The original file has not been fully inspected yet.',
+        'Mandarin': '原始文件尚未完成检查。',
+        'Japanese': '元のファイルの検査がまだ完了していません。',
+        'Malay': 'Fail asal belum diperiksa sepenuhnya.',
+    },
+    'structure_review_reason_dominant_block_resolved': {
+        'English': 'The file contains several blocks, and the main data table has not been separated yet.',
+        'Mandarin': '文件包含多个区块，尚未分离出主数据表。',
+        'Japanese': 'ファイルに複数のブロックがあり、主なデータ表をまだ分離できていません。',
+        'Malay': 'Fail mengandungi beberapa blok, dan jadual data utama belum diasingkan.',
+    },
+    'structure_review_reason_mixed_report_block_resolution': {
+        'English': 'The report mixes several tables, and the main one has not been separated yet.',
+        'Mandarin': '报表混合了多个表格，尚未分离出主表。',
+        'Japanese': 'レポートに複数の表が混在し、主な表をまだ分離できていません。',
+        'Malay': 'Laporan mencampurkan beberapa jadual, dan jadual utama belum diasingkan.',
+    },
+    'structure_review_reason_label_layer_retention_complete': {
+        'English': 'Some header label levels would be lost when the table is reshaped.',
+        'Mandarin': '重塑表格时会丢失部分标题层级。',
+        'Japanese': '表を変換すると、見出しの階層の一部が失われます。',
+        'Malay': 'Sebahagian tahap label tajuk akan hilang apabila jadual dibentuk semula.',
+    },
+    'structure_review_reason_multi_header_layer_retention_rate': {
+        'English': 'Not every row of the multi-row header was kept.',
+        'Mandarin': '多行标题未被完整保留。',
+        'Japanese': '複数行ヘッダーの一部の行が保持されていません。',
+        'Malay': 'Tidak semua baris tajuk berbilang baris dikekalkan.',
+    },
+    'structure_review_reason_wide_reshape_contract_complete': {
+        'English': 'The reshaped table is missing required key or value columns.',
+        'Mandarin': '重塑后的表格缺少必要的键列或数值列。',
+        'Japanese': '変換後の表に必要なキー列または値列がありません。',
+        'Malay': 'Jadual yang dibentuk semula tiada lajur kunci atau nilai yang diperlukan.',
+    },
+    'structure_review_reason_summary_like_series_key_leakage': {
+        'English': 'Total or subtotal labels are still mixed into the category values.',
+        'Mandarin': '分类值中仍混有合计或小计标签。',
+        'Japanese': 'カテゴリ値に合計または小計のラベルが残っています。',
+        'Malay': 'Label jumlah atau subjumlah masih bercampur dengan nilai kategori.',
+    },
+    'structure_review_reason_summary_series_exclusion_rate': {
+        'English': 'Total columns are being treated as regular data columns.',
+        'Mandarin': '合计列被当作普通数据列处理。',
+        'Japanese': '合計列が通常のデータ列として扱われています。',
+        'Malay': 'Lajur jumlah sedang dianggap sebagai lajur data biasa.',
+    },
+    'structure_review_reason_suspicious_collapse_score': {
+        'English': 'Reshaping would collapse the data into too few groups.',
+        'Mandarin': '重塑会让数据坍缩成过少的分组。',
+        'Japanese': '変換するとデータが少なすぎるグループにまとまってしまいます。',
+        'Malay': 'Pembentukan semula akan meringkaskan data kepada terlalu sedikit kumpulan.',
+    },
+    'structure_review_reason_hierarchy_depth_retention_rate': {
+        'English': 'The rows look grouped into levels, such as sections and items, and that grouping would be lost.',
+        'Mandarin': '数据行看起来按层级分组（例如章节与明细），这些层级会丢失。',
+        'Japanese': '行がセクションと明細などの階層に分かれているように見え、その階層が失われます。',
+        'Malay': 'Baris kelihatan dikumpulkan mengikut tahap, seperti bahagian dan item, dan pengumpulan itu akan hilang.',
+    },
+    'structure_review_reason_noise_leakage_rate': {
+        'English': 'Blank, header, or footer rows are still mixed into the data.',
+        'Mandarin': '数据中仍混有空白、标题或页脚行。',
+        'Japanese': '空白行、ヘッダー行、フッター行がデータに残っています。',
+        'Malay': 'Baris kosong, tajuk atau pengaki masih bercampur dengan data.',
+    },
+    'structure_review_reason_numeric_parse_rate': {
+        'English': 'Some values in number columns could not be read as numbers.',
+        'Mandarin': '数值列中有部分值无法识别为数字。',
+        'Japanese': '数値列の一部の値を数値として読み取れません。',
+        'Malay': 'Sebahagian nilai dalam lajur nombor tidak dapat dibaca sebagai nombor.',
+    },
+    'structure_review_reason_detail_series_coverage_rate': {
+        'English': 'The table still looks wide, for example one column per month, so it may need reshaping.',
+        'Mandarin': '表格仍是宽表格式（例如每月一列），可能需要转换。',
+        'Japanese': '表がまだ横長の形式（月ごとに1列など）のため、変換が必要な場合があります。',
+        'Malay': 'Jadual masih kelihatan lebar, contohnya satu lajur bagi setiap bulan, jadi ia mungkin perlu dibentuk semula.',
+    },
+    'structure_review_reason_descriptor_preservation_rate': {
+        'English': 'Some descriptive columns, such as names or categories, would be lost.',
+        'Mandarin': '部分描述列（例如名称或分类）会丢失。',
+        'Japanese': '名前やカテゴリなどの説明列の一部が失われます。',
+        'Malay': 'Sebahagian lajur keterangan, seperti nama atau kategori, akan hilang.',
+    },
+    'structure_review_reason_header_band_resolved': {
+        'English': 'A heading band above the column names has not been resolved.',
+        'Mandarin': '列名上方的标题带尚未解析。',
+        'Japanese': '列名の上にある見出し帯をまだ解決できていません。',
+        'Malay': 'Jalur tajuk di atas nama lajur belum diselesaikan.',
+    },
+    'structure_review_reason_fact_key_uniqueness_rate': {
+        'English': 'Some records appear more than once for the same key values.',
+        'Mandarin': '部分记录在相同键值下重复出现。',
+        'Japanese': '同じキー値で重複しているレコードがあります。',
+        'Malay': 'Sebahagian rekod muncul lebih daripada sekali untuk nilai kunci yang sama.',
+    },
+    'structure_review_reason_needs_structure_review': {
+        'English': 'The table structure needs your confirmation.',
+        'Mandarin': '表格结构需要你确认。',
+        'Japanese': '表の構造の確認が必要です。',
+        'Malay': 'Struktur jadual memerlukan pengesahan anda.',
+    },
+    'structure_review_reason_structure_outcome_unavailable': {
+        'English': 'The structure check did not finish.',
+        'Mandarin': '结构检查未完成。',
+        'Japanese': '構造チェックが完了しませんでした。',
+        'Malay': 'Semakan struktur tidak selesai.',
+    },
+    'structure_review_reason_unknown': {
+        'English': 'The data structure did not pass an automatic check.',
+        'Mandarin': '数据结构未通过一项自动检查。',
+        'Japanese': 'データ構造が自動チェックに合格しませんでした。',
+        'Malay': 'Struktur data tidak lulus satu semakan automatik.',
+    },
+    'structure_review_required_message': {
+        'English': 'Automatic analysis is paused until you confirm the table structure.',
+        'Mandarin': '在你确认表格结构之前，自动分析已暂停。',
+        'Japanese': '表の構造を確認するまで、自動分析は一時停止しています。',
+        'Malay': 'Analisis automatik dijeda sehingga anda mengesahkan struktur jadual.',
+    },
+    'structure_review_no_blocking_reason': {
+        'English': 'No structure problem remains. You can still adjust the boundary below.',
+        'Mandarin': '没有剩余的结构问题。你仍可在下方调整边界。',
+        'Japanese': '構造の問題は残っていません。下で境界を調整することもできます。',
+        'Malay': 'Tiada masalah struktur yang tinggal. Anda masih boleh melaraskan sempadan di bawah.',
+    },
+    'structure_review_technical_details': {
+        'English': 'Technical details',
+        'Mandarin': '技术详情',
+        'Japanese': '技術的な詳細',
+        'Malay': 'Butiran teknikal',
+    },
+    'structure_review_technical_codes': {
+        'English': 'Check codes: {codes}',
+        'Mandarin': '检查代码：{codes}',
+        'Japanese': 'チェックコード: {codes}',
+        'Malay': 'Kod semakan: {codes}',
     },
 
     // --- Data Provenance Modal ---
@@ -5120,4 +5375,47 @@ export const getTranslation = (
         const value = params[token];
         return value === undefined ? `{${token}}` : String(value);
     });
+};
+
+/**
+ * Reason codes that the structure review can emit: resolver blocking reasons,
+ * shape-verification signal keys, and pipeline outcome fallbacks. Each has a
+ * `structure_review_reason_<code>` entry so end users never see the raw code.
+ */
+export const STRUCTURE_REVIEW_REASON_CODES = [
+    'boundary_incomplete',
+    'header_shape_drift',
+    'runtime_boundary_ambiguous',
+    'runtime_boundary_rejected',
+    'repeated_header_leakage',
+    'repeated_header_leakage_rate',
+    'low_structure_confidence',
+    'structure_proposal_verification_failed',
+    'complex_report_requires_confirmation',
+    'empty_dataset_guard',
+    'raw_inspection_completed',
+    'dominant_block_resolved',
+    'mixed_report_block_resolution',
+    'label_layer_retention_complete',
+    'multi_header_layer_retention_rate',
+    'wide_reshape_contract_complete',
+    'summary_like_series_key_leakage',
+    'summary_series_exclusion_rate',
+    'suspicious_collapse_score',
+    'hierarchy_depth_retention_rate',
+    'noise_leakage_rate',
+    'numeric_parse_rate',
+    'detail_series_coverage_rate',
+    'descriptor_preservation_rate',
+    'header_band_resolved',
+    'fact_key_uniqueness_rate',
+    'needs_structure_review',
+    'structure_outcome_unavailable',
+] as const;
+
+export const getStructureReviewReasonText = (code: string, language: string = 'English'): string => {
+    const key = `structure_review_reason_${code.trim()}`;
+    return translations[key]
+        ? getTranslation(key, language)
+        : getTranslation('structure_review_reason_unknown', language);
 };

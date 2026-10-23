@@ -98,6 +98,14 @@ export const formatAnalysisCellValue = (
     if (temporalDisplayValue) {
         return temporalDisplayValue;
     }
+    // A bare year in a time column ("Year" = 2013) is a label, not a quantity,
+    // so it must not get a thousands separator ("2,013").
+    if (isTemporalDisplayColumn(columnName)) {
+        const numericValue = coerceNumericValue(value);
+        if (numericValue !== null && Number.isInteger(numericValue) && numericValue >= 1000 && numericValue <= 9999) {
+            return String(numericValue);
+        }
+    }
 
     return formatAnalysisValue(value, maximumFractionDigits);
 };

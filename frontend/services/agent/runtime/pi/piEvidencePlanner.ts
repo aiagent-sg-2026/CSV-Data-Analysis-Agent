@@ -13,6 +13,7 @@ import type { StoreApi } from '../../types';
 import { createPiAppTools } from './piAppTools';
 import { createPiCompactionTelemetry, createPiProviderContextTransform, createPiProviderStream, resolvePiModel, resolvePiThinkingLevel } from './piProvider';
 import { createPiSkillTool } from './piSkillTool';
+import { assessSeriesMeasurePlan, buildSeriesMeasureGuidance, resolveSeriesMeasure } from '../../planning/seriesMeasureGuard';
 
 export const SUBMIT_EVIDENCE_PLAN_TOOL = 'submit_evidence_plan';
 // Tight limits: this runs once per research question inside the initial-analysis time budget.
@@ -36,12 +37,15 @@ const buildSystemPrompt = (params: {
     intent?: PlannerSemanticIntent | null;
     harnessSummary?: string | null;
     retryFeedback?: string | null;
+    seriesGuidance?: string | null;
 }): string => [
     'You design one evidence query for a CSV analysis question. The app validates and runs the query; you decide what to measure and how.',
     `Question: ${params.topic}`,
     `Columns:\n${params.columns.slice(0, MAX_COLUMNS_IN_PROMPT).map(describeColumn).join('\n')}`,
     params.intent?.preferredGroupBy ? `Planned grouping: ${params.intent.preferredGroupBy}` : '',
     params.intent?.preferredMetric ? `Planned metric: ${params.intent.preferredMetric}` : '',
+    params.intent?.preferredFilterIntent ? `Planned row filter: ${params.intent.preferredFilterIntent}` : '',
+    params.seriesGuidance ? `Series table:\n${params.seriesGuidance}` : '',
     params.harnessSummary ? `Earlier findings:\n${params.harnessSummary.slice(0, MAX_HARNESS_CHARS)}` : '',
     params.retryFeedback ? `Previous attempt feedback: ${params.retryFeedback}` : '',
     'How to work:',
@@ -76,6 +80,8 @@ export const runPiEvidencePlanner = async (params: {
     const columnNames = columns.map(column => column.name);
     const periodFamilies = detectPeriodColumnFamilies(columnNames);
     const semanticHints = extractSemanticHints(params.datasetContext);
+    const seriesMeasure = params.datasetContext?.seriesMeasure
+        ?? resolveSeriesMeasure({ canonicalBuildMeta: state.canonicalBuildMeta, columnProfiles: columns });
     let accepted: SqlEvidenceQueryPlan | null = null;
     let providerTurns = 0;
 
@@ -106,6 +112,8 @@ export const runPiEvidencePlanner = async (params: {
                 periodFamilies,
             });
             if (!validPlan) throw new Error(`The plan is invalid: ${errors.join('; ')}`);
+            const seriesCheck = assessSeriesMeasurePlan(validPlan, seriesMeasure);
+            if (seriesCheck.decision === 'reject') throw new Error(`The plan is invalid: ${seriesCheck.feedback ?? seriesCheck.reasonCodes.join(', ')}`);
             accepted = validPlan;
             return { details: undefined, content: [{ type: 'text' as const, text: 'Plan accepted.' }], terminate: true };
         },
@@ -120,7 +128,10 @@ export const runPiEvidencePlanner = async (params: {
     const settings = state.settings;
     const agent = new Agent({
         initialState: {
-            systemPrompt: buildSystemPrompt(params),
+            systemPrompt: buildSystemPrompt({
+                ...params,
+                seriesGuidance: seriesMeasure ? buildSeriesMeasureGuidance(seriesMeasure) : null,
+            }),
             model: resolvePiModel(settings),
             thinkingLevel: resolvePiThinkingLevel(settings),
             tools: [...dataTools, createPiSkillTool(store), submitTool],

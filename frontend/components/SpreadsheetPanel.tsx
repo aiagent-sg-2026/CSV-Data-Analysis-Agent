@@ -8,6 +8,7 @@ import { SpreadsheetControls } from './spreadsheet/SpreadsheetControls';
 import { useSpreadsheetLogic } from '../hooks/useSpreadsheetLogic';
 import { getTranslation } from '../utils/localization';
 import { CleaningRunBanner } from './cleaning/CleaningRunBanner';
+import { isStructureReviewPending } from './analysis-panel/nextStep';
 import { isPreviewDataQuery } from '../services/agent/execution/dataQueryContract';
 import { GroupByTest, ViewModeToggle } from './spreadsheet/GroupByTest';
 import type { UserColumnAnnotation } from '../types';
@@ -26,6 +27,7 @@ export const SpreadsheetPanel: React.FC<SpreadsheetPanelProps> = ({ isVisible })
     const removeColumnAnnotation = useAppStore(state => state.removeColumnAnnotation);
     const columnProfiles = useAppStore(state => state.columnProfiles);
     const initialAnalysisFailureKind = useAppStore(state => state.initialAnalysisFailureKind);
+    const structureReviewPending = useAppStore(state => isStructureReviewPending(state.pipelineOutcome, state.reportStructureResolution));
     const [isGroupByMode, setIsGroupByMode] = React.useState(false);
     const [annotatingColumn, setAnnotatingColumn] = React.useState<{ name: string; rect: DOMRect } | null>(null);
 
@@ -195,7 +197,7 @@ export const SpreadsheetPanel: React.FC<SpreadsheetPanelProps> = ({ isVisible })
                         </div>
                     )}
 
-                    {cleaningRun && cleaningRun.status !== 'completed' && initialAnalysisFailureKind !== 'provider' && initialAnalysisFailureKind !== 'cloud_consent_declined' && (
+                    {cleaningRun && cleaningRun.status !== 'completed' && initialAnalysisFailureKind !== 'provider' && initialAnalysisFailureKind !== 'cloud_consent_declined' && !structureReviewPending && (
                         <CleaningRunBanner
                             cleaningRun={cleaningRun}
                             onContinue={() => void resumeCleaningRun()}

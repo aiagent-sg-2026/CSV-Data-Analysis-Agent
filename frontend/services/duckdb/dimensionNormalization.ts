@@ -15,8 +15,37 @@ import type { ColumnProfile } from '../../types';
 
 // --- Constants ---
 
+/**
+ * Cell tokens that mean "no value", compared case-insensitively after trim.
+ * Public data uses many spellings (e.g. `na` and `N.A.` in the same file).
+ * Dimension GROUP BY collapses them to UNKNOWN_LABEL, and numeric aggregation
+ * treats them as NULL so a missing value is never counted, averaged or ranked
+ * as 0. `nan` is listed because DuckDB casts it to a NaN double, which would
+ * otherwise poison SUM/AVG instead of being skipped.
+ */
+export const MISSING_VALUE_MARKERS: readonly string[] = ['n/a', 'na', 'n.a.', 'null', 'none', 'nil', 'nan', '-', '--', '\u2013', '\u2014'];
+
+const MISSING_VALUE_MARKER_SET = new Set(MISSING_VALUE_MARKERS);
+
+/** True for null, undefined, a blank string, or a MISSING_VALUE_MARKERS token. */
+export const isMissingCellValue = (value: unknown): boolean => {
+    if (value === null || value === undefined) return true;
+    if (typeof value !== 'string') return false;
+    const text = value.trim().toLowerCase();
+    return text === '' || MISSING_VALUE_MARKER_SET.has(text);
+};
+
+/**
+ * SQL condition that is true when a trimmed VARCHAR expression is blank or a
+ * MISSING_VALUE_MARKERS token. Mirrors isMissingCellValue.
+ */
+export const buildMissingCellSqlCondition = (trimmedTextExpression: string): string => {
+    const tokens = MISSING_VALUE_MARKERS.map(token => `'${escapeSqlLiteral(token)}'`).join(', ');
+    return `(${trimmedTextExpression} = '' OR LOWER(${trimmedTextExpression}) IN (${tokens}))`;
+};
+
 /** Placeholder tokens treated as missing/unknown in dimension columns. */
-export const DEFAULT_DIMENSION_PLACEHOLDERS = ['n/a', 'na', 'null', 'none', '-', '--'];
+export const DEFAULT_DIMENSION_PLACEHOLDERS: string[] = [...MISSING_VALUE_MARKERS];
 
 /** Canonical label used to replace missing/placeholder dimension values. */
 export const UNKNOWN_LABEL = 'Unknown';
@@ -95,7 +124,7 @@ export const isColumnNormalized = (
  * ```sql
  * CASE
  *   WHEN TRIM(COALESCE(CAST("BRAND" AS VARCHAR), '')) = '' THEN 'Unknown'
- *   WHEN LOWER(TRIM(COALESCE(CAST("BRAND" AS VARCHAR), ''))) IN ('n/a','na','null','none','-','--') THEN 'Unknown'
+ *   WHEN LOWER(TRIM(COALESCE(CAST("BRAND" AS VARCHAR), ''))) IN ('n/a','na','n.a.',…) THEN 'Unknown'
  *   ELSE TRIM(COALESCE(CAST("BRAND" AS VARCHAR), ''))
  * END
  * ```

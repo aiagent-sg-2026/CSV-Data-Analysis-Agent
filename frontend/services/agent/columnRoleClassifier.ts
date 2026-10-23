@@ -23,12 +23,16 @@ const normalizeCell = (value: unknown): string =>
         .trim();
 
 // Structural numeric test — domain-agnostic (mirrors reportStructureNormalization).
+// After stripping symbols the remainder must parse as one whole number. A
+// prefix parse would read the year-month "2010-01" or the range "10-20" as a
+// number and make a period or code column look like a fact column. A trailing
+// minus ("1,234.56-", common in accounting exports) still marks a negative.
 const isNumericCandidate = (value: string) => {
     if (DATE_LIKE_PATTERN.test(value.trim())) {
         return false;
     }
-    const cleaned = value.replace(/[^0-9.\-]/g, '').trim();
-    return Boolean(cleaned) && cleaned !== '-' && cleaned !== '.' && Number.isFinite(Number.parseFloat(cleaned));
+    const cleaned = value.replace(/[^0-9.\-]/g, '').trim().replace(/^(\d[\d.]*)-$/, '-$1');
+    return Boolean(cleaned) && cleaned !== '-' && cleaned !== '.' && Number.isFinite(Number(cleaned));
 };
 
 // --- Types ---

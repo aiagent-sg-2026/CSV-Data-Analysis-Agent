@@ -22,6 +22,31 @@ export const normalizeReportCellText = (value: unknown): string =>
         .replace(/\s+/g, ' ')
         .trim();
 
+/**
+ * Intake moves summaryStartIndex back over trailing blank lines, so a file
+ * that ends with a newline reports a boundary at the final empty row even
+ * when it has no summary. For display and confirmation a boundary with only
+ * blank rows (or no rows) after it means "no summary rows" and maps to null.
+ */
+export const resolveEffectiveSummaryStartIndex = (
+    rows: readonly (readonly unknown[])[],
+    summaryStartIndex: number | null | undefined,
+): number | null => {
+    if (typeof summaryStartIndex !== 'number' || summaryStartIndex < 0) return null;
+    const hasContent = rows
+        .slice(summaryStartIndex)
+        .some(row => row.some(cell => normalizeReportCellText(cell).length > 0));
+    return hasContent ? summaryStartIndex : null;
+};
+
+/** Counts the non-blank rows from an effective summary start to the end of the file. */
+export const countSummaryContentRows = (
+    rows: readonly (readonly unknown[])[],
+    summaryStartIndex: number | null,
+): number => (summaryStartIndex === null
+    ? 0
+    : rows.slice(summaryStartIndex).filter(row => row.some(cell => normalizeReportCellText(cell).length > 0)).length);
+
 const uniqueNonEmpty = (values: string[]) => {
     const seen = new Set<string>();
     const deduped: string[] = [];

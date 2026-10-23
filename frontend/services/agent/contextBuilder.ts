@@ -20,6 +20,7 @@ import type { DatasetSemanticSnapshot } from '../../types';
 import { buildRuntimeSemanticUnderstanding } from './runtimeSemanticUnderstanding';
 import { isStructuralMetadataColumn } from './structuralMetadata';
 import { buildAnalysisColumnRoleMap } from './analysisColumnRoles';
+import { isMissingCellValue } from '../duckdb/dimensionNormalization';
 
 const formatMetadataPreview = (rows?: string[][], limit = 3): string | undefined => {
     if (!rows || rows.length === 0) return undefined;
@@ -47,7 +48,7 @@ const isLikelyMisclassifiedNumeric = (col: ColumnProfile, rows: CsvRow[]): boole
     const sample = rows.slice(0, 50);
     const nonEmpty = sample
         .map(row => String(row[col.name] ?? '').trim())
-        .filter(v => v !== '');
+        .filter(v => !isMissingCellValue(v));
     if (nonEmpty.length < 3) return false;
     const numericCount = nonEmpty.filter(v => {
         const cleaned = v.replace(/^['\u2018\u2019]/, '').replace(/[$,€£¥%\s]/g, '');

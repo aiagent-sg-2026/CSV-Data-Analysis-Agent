@@ -1368,9 +1368,9 @@ describe('topicProcessor', { timeout: 15000 }, () => {
             cardCreated: true,
             accepted: true,
         });
-        // The grouped SUM also runs its read-only volume check; the evidence query itself runs once.
+        // The grouped SUM also runs its read-only volume and sample-size checks; the evidence query itself runs once.
         const evidenceCalls = executeEvidenceQueryMock.mock.calls
-            .filter(([plan]) => !String(plan.title).startsWith('Volume check'));
+            .filter(([plan]) => !/^(Volume check|Sample size check)/.test(String(plan.title)));
         expect(evidenceCalls).toHaveLength(1);
     });
 
@@ -1462,6 +1462,83 @@ describe('topicProcessor', { timeout: 15000 }, () => {
             const { valueGate } = await runWithVolumeRows(volumeRows([[900, 12], [700, 12], [500, 12], [300, 12], [100, 12]]));
 
             expect(valueGate.reasonCodes).not.toContain('volume_driven_sum');
+        });
+    });
+
+    describe('leading-group sample size check', () => {
+        const medianPlan = {
+            title: 'Median price by storey range',
+            queryMode: 'aggregate',
+            query: {
+                select: ['Storey', 'median_price'],
+                groupBy: ['Storey'],
+                aggregates: [{ function: 'median', column: 'Price', as: 'median_price' }],
+                orderBy: [{ column: 'median_price', direction: 'desc' }],
+                limit: 20,
+            },
+            intentSummary: 'Compare the typical price per storey range.',
+            preferredResultShape: 'ranked_aggregate',
+        };
+        const evidenceRows = [
+            { Storey: '40 TO 42', median_price: 1_467_500 },
+            { Storey: '10 TO 12', median_price: 620_000 },
+            { Storey: '07 TO 09', median_price: 590_000 },
+            { Storey: '04 TO 06', median_price: 560_000 },
+            { Storey: '01 TO 03', median_price: 530_000 },
+        ];
+        const runWithGroupCounts = async (counts: Record<string, number>) => {
+            generateEvidenceQueryPlanWithRetryMock.mockResolvedValue(medianPlan);
+            const defaultEvidence = await executeEvidenceQueryMock.getMockImplementation()!({} as never);
+            executeEvidenceQueryMock.mockImplementation(async (plan: { title: string }) => (
+                String(plan.title).startsWith('Sample size check')
+                    ? { ...defaultEvidence, result: { ...defaultEvidence.result, rows: Object.entries(counts).map(([Storey, sample_size_rows]) => ({ Storey, sample_size_rows })) } }
+                    : { ...defaultEvidence, result: { ...defaultEvidence.result, rows: evidenceRows, appliedOrderBy: medianPlan.query.orderBy } }
+            ));
+            const { processSingleTopic } = await import('../services/agent/planning/topicProcessor');
+            const state = {
+                isChangingGoal: false,
+                columnProfiles: [
+                    { name: 'Storey', type: 'categorical', uniqueValues: 17 },
+                    { name: 'Price', type: 'numerical' },
+                ],
+                settings: { provider: 'google', geminiApiKey: 'test-key', openAIApiKey: '', language: 'English', autoConfirmGoal: true },
+                reportContextResolution: null, datasetSemanticSnapshot: null,
+                semanticDatasetVersion: null, dataPreparationPlan: null,
+                agentMemoryHistory: [], recordAgentEvent: vi.fn(),
+            } as any;
+            const store = { getState: () => state, setState: vi.fn() };
+            await processSingleTopic('Median price by storey range', {
+                fileName: 'resale.csv',
+                data: [{ Storey: '40 TO 42', Price: 1_467_500 }],
+            } as any, store, { tableName: 'session_clean_dataset', loadVersion: 'dataset-1' }, []);
+            const checkCall = executeEvidenceQueryMock.mock.calls.find(([plan]) => String(plan.title).startsWith('Sample size check'));
+            const valueGate = executePresentationPlanAndCreateCardMock.mock.calls[0]?.[5]?.valueGate;
+            return { checkCall, valueGate };
+        };
+
+        it('caveats a median ranking led by a group with two rows, without changing the decision', async () => {
+            const { checkCall, valueGate } = await runWithGroupCounts({
+                '40 TO 42': 2, '10 TO 12': 4200, '07 TO 09': 4600, '04 TO 06': 4400, '01 TO 03': 2100,
+            });
+
+            expect(checkCall?.[0].query).toMatchObject({
+                groupBy: ['Storey'],
+                aggregates: [{ function: 'count', column: 'Price', as: 'sample_size_rows' }],
+            });
+            expect(valueGate.reasonCodes).toContain('small_group_leader');
+            expect(valueGate.sampleSizeCaveat.leaders).toEqual([{ label: '40 TO 42', rows: 2, rank: 1 }]);
+            expect(valueGate.detail).toContain('#1 40 TO 42 (2 rows)');
+            expect(valueGate.decision).not.toBe('reject');
+        });
+
+        it('leaves a ranking whose leaders rest on adequate rows unflagged', async () => {
+            const { checkCall, valueGate } = await runWithGroupCounts({
+                '40 TO 42': 380, '10 TO 12': 4200, '07 TO 09': 4600, '04 TO 06': 4400, '01 TO 03': 2100,
+            });
+
+            expect(checkCall).toBeDefined();
+            expect(valueGate.reasonCodes).not.toContain('small_group_leader');
+            expect(valueGate.sampleSizeCaveat).toBeUndefined();
         });
     });
 });

@@ -14,6 +14,8 @@ import { normalizeAndValidatePlan } from '../../../utils/planValidator';
 import { emitAgentEvent } from '../monitoring/agentMonitor';
 import { agentMemoryCollector } from '../memory/agentMemoryCollector';
 import { PlanExecutionSoftError } from './planExecutionErrors';
+import { assessCardSeriesScope } from './cardSeriesScope';
+import { resolveSeriesMeasure } from '../planning/seriesMeasureGuard';
 
 type StoreApi = {
     getState: () => AppStore;
@@ -47,6 +49,16 @@ export const executePlanAndCreateCard = async (
             throw new Error(`Invalid plan: ${errors.join(', ')}`);
         }
         console.log(`${LOG_PREFIX} Plan validated for "${plan.title}".`);
+
+        // A melted period table's value means something different per series.
+        const seriesScope = assessCardSeriesScope(validPlan, resolveSeriesMeasure(getState()));
+        if (seriesScope.decision === 'reject') {
+            getState().addProgress(seriesScope.feedback, 'error');
+            if (options?.throwOnSoftFailure) {
+                throw new PlanExecutionSoftError('series_scope_rejected', seriesScope.feedback, { title: validPlan.title });
+            }
+            return null;
+        }
         emitAgentEvent(store, {
             phase: 'planning',
             step: 'plan_validated',
@@ -143,7 +155,10 @@ export const executePlanAndCreateCard = async (
         // Step 3: Create the card (which includes summary generation, state update, and vector store update)
         // Quality warnings are passed as metadata — they no longer block card creation.
         const qualityWarnings = insights.qualityWarning ? [insights.qualityWarning] : [];
-        const card = await createNewCard(validPlan, processedData, store, { qualityWarnings });
+        const card = await createNewCard(validPlan, processedData, store, {
+            qualityWarnings,
+            ...(seriesScope.evidenceValueGate ? { evidenceValueGate: seriesScope.evidenceValueGate } : {}),
+        });
         if (card) {
             agentMemoryCollector.markExplorationAsCard(explorationId);
         } else {

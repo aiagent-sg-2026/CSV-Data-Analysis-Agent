@@ -9,6 +9,7 @@ import type {
     EvidenceLoopState,
     EvidenceValueGateResult,
     RuntimeSemanticUnderstanding,
+    SqlEvidenceQueryPlan,
 } from '../../../types';
 import { emitAgentEvent } from '../monitoring/agentMonitor';
 import {
@@ -31,6 +32,8 @@ import { MAX_EXECUTION_ATTEMPTS, RETRYABLE_EXECUTION_CODES, SOFT_SKIP_CODES, get
 import { buildLearningHintsFromHistory } from './topicLearningHints';
 import { isRuntimeAbortError, throwIfAborted } from '../runtime/runtimeAbort';
 import { describeVolumeDependence, measureEvidenceVolumeDependence } from './volumeDrivenSum';
+import { measureLeadingGroupSampleSize } from './groupSampleSize';
+import { assessSeriesMeasurePlan, resolveSeriesMeasure } from './seriesMeasureGuard';
 
 type StoreApi = {
     getState: () => AppStore;
@@ -167,6 +170,10 @@ export const processSingleTopic = async (
             getState().dataPreparationPlan,
             getState().rawCsvData ?? data,
         );
+        const seriesMeasure = resolveSeriesMeasure(getState());
+        if (seriesMeasure && !datasetContext.seriesMeasure) {
+            datasetContext.seriesMeasure = seriesMeasure;
+        }
         const semanticUnderstanding = options?.semanticUnderstanding ?? buildRuntimeSemanticUnderstanding({
             columns: getState().columnProfiles,
             analysisBrief: buildAnalysisIntentBrief({
@@ -431,6 +438,68 @@ export const processSingleTopic = async (
                 }
             }
 
+            // A plan that aggregates a series-dependent measure across series of
+            // different meaning is replanned with the reason before it runs; the
+            // evidence gate rejects it again if it ever reaches execution.
+            const seriesCheck = assessSeriesMeasurePlan(evidencePlan, seriesMeasure);
+            if (seriesCheck.decision === 'reject') {
+                if (attempt < MAX_EXECUTION_ATTEMPTS) {
+                    emitPlannerEscalation('cross_series_replan', attempt, { reasonCodes: seriesCheck.reasonCodes });
+                    plannerFeedback = seriesCheck.feedback ?? undefined;
+                    recordStep({
+                        type: 'refine_hypothesis',
+                        status: 'succeeded',
+                        inputSummary: `Evidence plan for "${topic}" aggregates the series measure across series; retrying with series guidance.`,
+                        inputSummaryI18n: {
+                            key: 'analysis_trace_refine_hypothesis_input',
+                            vars: { topic },
+                        },
+                        outputSummary: seriesCheck.feedback ?? 'Cross-series aggregate — replanning.',
+                        outputSummaryI18n: {
+                            key: 'analysis_trace_refine_hypothesis_output_feedback',
+                            vars: { message: 'Cross-series aggregate of a series-dependent measure — replanning.' },
+                        },
+                        decision: 'plan_probe_query',
+                        hypothesisId: options?.hypothesisId ?? null,
+                        reasonCodes: ['cross_series_replan', ...seriesCheck.reasonCodes],
+                        queryTitle: evidencePlan.title,
+                        queryMode: evidencePlan.queryMode,
+                    });
+                    continue;
+                }
+                recordStep({
+                    type: 'evaluate_evidence',
+                    status: 'rejected',
+                    inputSummary: `Assess whether evidence query "${evidencePlan.title}" is worth presenting.`,
+                    inputSummaryI18n: {
+                        key: 'analysis_trace_evaluate_evidence_input',
+                        vars: { title: evidencePlan.title },
+                    },
+                    outputSummary: `Evidence gate decision: reject (${seriesCheck.reasonCodes.join(', ')} after ${attempt} attempts).`,
+                    outputSummaryI18n: {
+                        key: 'analysis_trace_evaluate_evidence_output',
+                        vars: { decision: 'reject' },
+                    },
+                    decision: 'reject_hypothesis',
+                    hypothesisId: options?.hypothesisId ?? null,
+                    reasonCodes: seriesCheck.reasonCodes,
+                    queryTitle: evidencePlan.title,
+                    queryMode: evidencePlan.queryMode,
+                });
+                completedResult = {
+                    status: 'completed',
+                    cardCreated: false,
+                    tableFirst: false,
+                    accepted: false,
+                    valueDecision: 'reject',
+                    evidenceLoopState: null,
+                    sourceStepIds,
+                    rejectionReason: seriesCheck.feedback ?? seriesCheck.reasonCodes.join(', '),
+                    valueReasonCodes: seriesCheck.reasonCodes,
+                };
+                break;
+            }
+
             // Pre-execution duplicate check: reject plans whose query or semantic
             // signature already matches an accepted output, saving the cost of SQL
             // execution + AI evaluation that would be wasted on a duplicate.
@@ -641,16 +710,26 @@ export const processSingleTopic = async (
                 const aiEvaluation = null;
                 // A grouped SUM is compared with the groups' row counts over the same population.
                 // Time dimensions and time-series plans are exempt: a total per period is a legitimate trend.
-                const volumeMeasurement = await measureEvidenceVolumeDependence(evidencePlan, checkPlan => executeEvidenceQuery(checkPlan, store, binding, {
+                const runCompanionQuery = (checkPlan: SqlEvidenceQueryPlan) => executeEvidenceQuery(checkPlan, store, binding, {
                     topic,
                     dataset: data,
                     suppressQueryStateUpdates: true,
                     abortSignal: options?.abortSignal,
-                }), {
+                });
+                const companionContext = {
                     profiles: getState().columnProfiles,
                     timeGrains: semanticUnderstanding.timeGrains,
                     signal: options?.abortSignal,
-                });
+                };
+                const volumeMeasurement = await measureEvidenceVolumeDependence(evidencePlan, runCompanionQuery, companionContext);
+                // A ranking led by a group with very few rows is caveated; the
+                // read-only COUNT companion uses the same population as the evidence.
+                const sampleSizeCaveat = await measureLeadingGroupSampleSize(
+                    evidencePlan,
+                    evidenceExecution.result.rows,
+                    runCompanionQuery,
+                    companionContext,
+                );
                 const valueGate = evaluateEvidenceValue({
                     semanticUnderstanding,
                     evidencePlan,
@@ -663,6 +742,8 @@ export const processSingleTopic = async (
                         totalIntentConfirmed: options?.totalIntent === true,
                         description: describeVolumeDependence(volumeMeasurement),
                     } : null,
+                    sampleSizeCaveat,
+                    seriesMeasure,
                 });
                 console.log(_elapsed(`value_gate=${valueGate.decision}`));
                 // PERF-307: Yield after value gate — break the chain between

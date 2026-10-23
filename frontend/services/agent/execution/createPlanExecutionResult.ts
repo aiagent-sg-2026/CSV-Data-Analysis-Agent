@@ -8,6 +8,8 @@ const buildCreatePlanRetryHint = (code?: PlanExecutionSoftErrorCode) => {
             return 'Retry analysis.create_plan with broader filters, a less specific slice, or a wider grouping so the query returns rows.';
         case 'duckdb_unavailable':
             return 'Retry analysis.create_plan only after a cleaned dataset is loaded into DuckDB, or use a non-SQL plan path.';
+        case 'series_scope_rejected':
+            return 'Retry analysis.create_plan restricted to one series, or grouped by the series column, as the message explains.';
         default:
             return 'Choose a different analysis plan or ask for clarification.';
     }
@@ -47,7 +49,8 @@ export const buildCreatePlanExecutionResult = (
                 status: 'blocked',
                 summary: message,
                 toolName: 'analysis.create_plan',
-                code: failure?.code,
+                // The observation vocabulary has no series code; the plan failed validation.
+                code: failure?.code === 'series_scope_rejected' ? 'validation_failed' : failure?.code,
                 retryHint,
                 detail: {
                     ...detail,

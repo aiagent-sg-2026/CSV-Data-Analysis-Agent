@@ -28,6 +28,7 @@ import { agentMemoryCollector } from '../memory/agentMemoryCollector';
 import { SqlAutoAnalysisError } from '../planning/planGenerator';
 import { mergeEvidencePreFilterIntoQuery } from '../planning/evidenceQuerySemantics';
 import { tryChronologicalSort } from '../../../utils/chronologicalSort';
+import { resolveRankDirectionFromQuery } from '../../../utils/rankedPresentation';
 import { isStructuralMetadataColumn } from '../structuralMetadata';
 import { buildPivotToolQuerySignature, buildPivotToolSemanticSignature } from '../evidenceValueGate';
 import type { ExistingAcceptedEvidence } from '../evidenceValueGate';
@@ -63,6 +64,8 @@ export const mapSqlAnalysisPlanToAnalysisPlan = (plan: SqlAnalysisPlan): Analysi
         defaultHideOthers: plan.defaultHideOthers,
         preFilter: plan.preFilter,
     };
+    const rankDirection = resolveRankDirectionFromQuery(plan.query, base.valueColumn);
+    if (rankDirection) base.rankDirection = rankDirection;
 
     // When AI specifies valueColumns (multi-series), map to matrixValueColumns
     // so the chart rendering pipeline picks them up automatically.
@@ -521,8 +524,16 @@ export const executePresentationPlanAndCreateCard = async (
         };
     }
 
+    // The rows arrive in the order the query applied; the card must keep that
+    // ranking direction rather than re-sorting it largest-first.
+    const appliedOrderBy = executionResult.result.appliedOrderBy;
+    const rankDirection = resolveRankDirectionFromQuery({
+        orderBy: appliedOrderBy?.length ? appliedOrderBy : evidencePlan.query?.orderBy,
+        aggregates: evidencePlan.query?.aggregates,
+    }, uiPlan.valueColumn) ?? uiPlan.rankDirection;
     const normalizedPlan: AnalysisPlan = {
         ...uiPlan,
+        ...(rankDirection ? { rankDirection } : {}),
         title: effectivePresentationPlan.title,
         description: effectivePresentationPlan.description,
         defaultTopN: effectivePresentationPlan.defaultTopN ?? uiPlan.defaultTopN,
@@ -585,7 +596,7 @@ export const executeSqlPlanAndCreateCard = async (
     plan: SqlAnalysisPlan,
     store: StoreApi,
     binding?: DuckDbAnalysisBinding | null,
-    options?: { topic?: string | null },
+    options?: { topic?: string | null; evidenceValueGate?: AnalysisCardData['evidenceValueGate'] },
 ): Promise<AnalysisCardData> => {
     const { getState } = store;
     const state = getState();
@@ -666,6 +677,7 @@ export const executeSqlPlanAndCreateCard = async (
             autoAnalysisEvaluation: null,
             qualityWarnings,
             queryTrace: execution.queryTrace,
+            ...(options?.evidenceValueGate ? { evidenceValueGate: options.evidenceValueGate } : {}),
         });
         const cardEvaluation = evaluateAutoAnalysisCards([card]).cards[0] ?? null;
         agentMemoryCollector.markExplorationAsCard(explorationId);

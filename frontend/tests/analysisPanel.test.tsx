@@ -1388,6 +1388,32 @@ describe('analysis panel rendering', () => {
         expect(screen.queryByRole('button', { name: 'Retry analysis' })).not.toBeInTheDocument();
     });
 
+    it('hides the cleaning banner while structure review is the pending next step', () => {
+        const store = createRecoveryStore();
+        store.cleaningRun = { status: 'failed' };
+        store.pipelineOutcome = { status: 'needs_structure_review', canAutoAnalyze: false };
+        store.reportStructureResolution = { requiresHumanReview: true };
+        store.rawIntakeIr = { normalizedRows: [['Town', 'Price']] };
+        (useAppStoreModule.useAppStore as unknown as ReturnType<typeof vi.fn>).mockImplementation((selector: (value: typeof store) => unknown) => selector(store));
+
+        render(<AnalysisPanel />);
+
+        expect(screen.getByRole('button', { name: 'Review and repair data structure' })).toBeInTheDocument();
+        expect(screen.queryByText(/Dataset cleaning stopped after an error/)).not.toBeInTheDocument();
+        expect(screen.queryByText('Continue cleaning')).not.toBeInTheDocument();
+        expect(screen.queryByText('Restart cleaning')).not.toBeInTheDocument();
+    });
+
+    it('keeps the cleaning banner when cleaning failed without a pending structure review', () => {
+        const store = createRecoveryStore();
+        store.cleaningRun = { status: 'failed' };
+        (useAppStoreModule.useAppStore as unknown as ReturnType<typeof vi.fn>).mockImplementation((selector: (value: typeof store) => unknown) => selector(store));
+
+        render(<AnalysisPanel />);
+
+        expect(screen.getByText(/Dataset cleaning stopped after an error/)).toBeInTheDocument();
+    });
+
     it('routes insufficient evidence to detailed results instead of structure repair', () => {
         const store = createRecoveryStore();
         (useAppStoreModule.useAppStore as unknown as ReturnType<typeof vi.fn>).mockImplementation((selector: (value: typeof store) => unknown) => selector(store));

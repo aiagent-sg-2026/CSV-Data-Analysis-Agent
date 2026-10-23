@@ -111,6 +111,8 @@ export const getPivotTooltipCallbacks = (plan: AnalysisPlan, data: CsvRow[]) => 
 };
 
 export const formatChartDataLabel = (value: unknown, chartWidth = Number.POSITIVE_INFINITY): string => {
+    // A missing measure draws no bar, so it gets no label; Number(null) would print "0.00".
+    if (value === null || value === undefined) return '';
     const numericValue = typeof value === 'number' ? value : Number(value);
     if (!Number.isFinite(numericValue)) {
         return formatAnalysisMeasureValue(value as number);

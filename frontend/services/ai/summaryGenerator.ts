@@ -25,6 +25,7 @@ import { runWithOverflowCompaction } from './overflowRetry';
 import { formatReportContextForPrompt, resolveEffectiveReportContext } from '../agent/reportContext';
 import { emitSilentFailure } from '../agent/monitoring/silentFailureTracker';
 import type { AnyStoreWithTelemetry } from '../agent/monitoring/silentFailureTracker';
+import { resolveSeriesMeasure } from '../agent/planning/seriesMeasureGuard';
 
 /**
  * Wraps a telemetry target (which may be a full AppStore) as the minimal
@@ -35,6 +36,24 @@ import type { AnyStoreWithTelemetry } from '../agent/monitoring/silentFailureTra
 const wrapAsTelemetryStore = (target: unknown): AnyStoreWithTelemetry => ({
     getState: () => (target ?? {}) as ReturnType<AnyStoreWithTelemetry['getState']>,
 });
+
+/**
+ * Summaries of a melted series table must keep every number tied to its
+ * series: the value column means different things per series, so a sentence
+ * such as "total ridership was 67" (really km of rail) is wrong.
+ */
+const buildSeriesMeasureSummarySections = (target: unknown) => {
+    const state = (target ?? {}) as Partial<Pick<AppState, 'canonicalBuildMeta' | 'columnProfiles'>>;
+    const semantics = resolveSeriesMeasure({ canonicalBuildMeta: state.canonicalBuildMeta, columnProfiles: state.columnProfiles });
+    if (!semantics) return [];
+    const { seriesColumn: s, measureColumn: m } = semantics;
+    const rule = semantics.additiveAcrossSeries
+        ? semantics.detailRowColumns.length > 0
+            ? `Detail series share one unit and add up to the published totals; a total or subtotal series is never added to its own components.`
+            : `The series share one unit and may be added or compared across series.`
+        : `The series measure different things in different units (${semantics.evidence.summary}) Never add, total, average or rank "${m}" across series; describe each number with the series it belongs to.`;
+    return [createContextSection('series_measure', `Series-dependent measure: every "${m}" belongs to one "${s}" value, named by each card's filter or grouping. ${rule}`, 'required', 'sticky')];
+};
 
 export const generateSummary = async (
     title: string,
@@ -149,6 +168,7 @@ export const generateCoreAnalysisSummary = async (
                         createContextSection('report_context', `Report context:\n${formatReportContextForPrompt(reportContext)}`, 'high', 'sticky'),
                         createContextSection('dataset_columns', `Dataset columns:\n${formatColumnNames(columns)}`, 'required', 'sticky'),
                         createContextSection('column_display_hints', `User-facing column label hints:\n${formatColumnDisplayHints(columns, planHints)}`, 'high', 'sticky'),
+                        ...buildSeriesMeasureSummarySections(telemetryTarget),
                         createContextSection('generated_cards', `Generated cards:\n${formatCardContext(displayCardContext)}`, 'required', 'sticky'),
                     ],
                     settings,
@@ -221,6 +241,7 @@ export const generateFinalSummary = async (
                     baseUserText: 'Create a structured executive brief from the completed analysis cards.',
                     sections: [
                         createContextSection('report_context', `Report context:\n${formatReportContextForPrompt(reportContext)}`, 'high', 'sticky'),
+                        ...buildSeriesMeasureSummarySections(telemetryTarget),
                         createContextSection('generated_card_summaries', `Narrative-ready card summaries:\n${narrativePayload || '[]'}`, 'required', 'sticky'),
                     ],
                     settings,

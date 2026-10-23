@@ -1,7 +1,8 @@
 export type PlanExecutionSoftErrorCode =
     | 'empty_result'
     | 'no_card_created'
-    | 'duckdb_unavailable';
+    | 'duckdb_unavailable'
+    | 'series_scope_rejected';
 
 export class PlanExecutionSoftError extends Error {
     code: PlanExecutionSoftErrorCode;

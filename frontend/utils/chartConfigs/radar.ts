@@ -1,12 +1,12 @@
 import { ChartConfigProps } from './types';
 import { COLORS, BORDER_COLORS, BG_COLORS, getCommonOptions, getPivotTooltipCallbacks } from './common';
-import { parseNumericValue } from '../dataHelpers';
+import { parseNullableNumericValue } from '../dataHelpers';
 
 export const createRadarChartConfig = ({ data, plan, selectedIndices, onElementClick, disableAnimation, showDataLabels }: ChartConfigProps): any => {
     const { groupByColumn, valueColumn } = plan;
     const valueKey = valueColumn || 'count';
     const labels = groupByColumn ? data.map(d => d[groupByColumn]) : [];
-    const values = valueKey ? data.map(d => parseNumericValue(d[valueKey])) : [];
+    const values = valueKey ? data.map(d => parseNullableNumericValue(d[valueKey])) : [];
 
     const commonOptions = getCommonOptions(onElementClick, disableAnimation, showDataLabels);
     const pivotTooltipCallbacks = getPivotTooltipCallbacks(plan, data);

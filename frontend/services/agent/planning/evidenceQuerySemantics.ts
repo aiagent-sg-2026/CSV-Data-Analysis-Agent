@@ -204,6 +204,8 @@ export const applyEvidenceQuerySemanticDefaults = (
     options?: {
         topic?: string | null;
         steering?: EvidenceHarnessContext | null;
+        /** Series column of a melted period-series table, when the dataset is one. */
+        seriesColumn?: string | null;
     },
 ): SqlEvidenceQueryPlan => {
     const nextPlan: SqlEvidenceQueryPlan = {
@@ -262,11 +264,18 @@ export const applyEvidenceQuerySemanticDefaults = (
         ? columns.some(col => col.name.toLowerCase() === detailRowFilter.column.toLowerCase())
         : false;
     const isSummaryRowTopic = SUMMARY_ROW_TOPIC_PATTERN.test(normalizeTopicText(options?.topic ?? ''));
+    // A plan that names its series reads exactly those rows; a published
+    // total or subtotal series would vanish under a detail-row filter.
+    const seriesColumn = options?.seriesColumn?.trim().toLowerCase() ?? null;
+    const selectsNamedSeries = Boolean(seriesColumn) && (nextPlan.query.where?.predicates ?? []).some(predicate =>
+        predicate.column.trim().toLowerCase() === seriesColumn
+        && (predicate.operator === 'eq' || predicate.operator === 'in'));
     const detailRowFilterApplied = Boolean(
         detailRowFilter?.column
         && detailRowFilter?.value
         && detailRowColumnExists
         && !isSummaryRowTopic
+        && !selectsNamedSeries
     );
     if (detailRowFilterApplied && detailRowFilter) {
         nextPlan.preFilter = appendPreFilterClause(nextPlan.preFilter, {

@@ -230,10 +230,16 @@ const scoreCandidate = (sample: string, candidate: DialectCandidate): CandidateS
     const headerPlausibility = buildHeaderPlausibility(nonEmptyRows);
     const unbalancedQuote = hasUnbalancedQuote(sample, candidate.quoteChar);
     const delimiterHits = countDelimiterHits(sample, candidate.delimiter, candidate.quoteChar);
+    // The sample covers only the first lines of the file. When it contains no
+    // quotes, RFC 4180 double quoting is the safe default: an unused `"`
+    // changes nothing in the sample, but a quoted field further down
+    // ("1,438") would be split and shift every later value if the file were
+    // parsed without quoting. Ties keep candidate order, so `"` wins over the
+    // no-quote parse. Single quotes stay a weaker guess without evidence.
     const quotedStability = candidate.quoteChar
         ? sample.includes(candidate.quoteChar)
             ? (unbalancedQuote ? 0.15 : 1)
-            : 0.8
+            : candidate.quoteChar === '"' ? 1 : 0.8
         : 1;
     const delimiterStrength = delimiterHits === 0
         ? (dominantWidth > 1 ? 0.2 : 0.35)

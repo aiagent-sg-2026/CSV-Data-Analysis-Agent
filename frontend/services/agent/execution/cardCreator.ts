@@ -47,7 +47,7 @@ const buildFallbackSummary = (
     language: LocalizedText['language'],
 ): LocalizedText => {
     const formatValue = (v: unknown): string => {
-        if (v == null) return 'n/a';
+        if (v == null) return getTranslation('card_value_no_data', language);
         if (typeof v === 'number') return Number.isInteger(v) ? String(v) : parseFloat(v.toFixed(2)).toLocaleString();
         return String(v);
     };

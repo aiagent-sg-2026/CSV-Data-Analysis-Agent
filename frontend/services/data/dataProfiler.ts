@@ -1,5 +1,8 @@
 import { CsvRow, ColumnProfile, ColumnRole } from '../../types';
 import { collectOrderedColumnNames } from './columnRegistry';
+// The same marker list that DuckDB aggregation treats as NULL, so a column the
+// profiler calls numerical is aggregated with exactly these cells skipped.
+import { isMissingCellValue } from '../duckdb/dimensionNormalization';
 
 export const robustParseFloat = (value: any): number | null => {
     if (value === null || value === undefined) return null;
@@ -53,6 +56,28 @@ export const robustParseFloat = (value: any): number | null => {
     return isNegative ? -num : num;
 };
 
+const isBlankCellValue = (value: unknown): boolean =>
+    value === null || value === undefined || (typeof value === 'string' && value.trim() === '');
+
+/**
+ * True when every present cell is a number and at least one is. Only such a
+ * column reads missing markers (`na`, `-`) as missing: in a text column they
+ * are real values, such as `NA` for North America.
+ */
+export const isNumericValueColumn = (values: readonly unknown[]): boolean => {
+    let numericCount = 0;
+    for (const value of values) {
+        if (isMissingCellValue(value)) continue;
+        if (robustParseFloat(value) === null) return false;
+        numericCount += 1;
+    }
+    return numericCount > 0;
+};
+
+/** Missing check for one column: markers count as missing only in a numeric column. */
+export const buildColumnMissingCheck = (values: readonly unknown[]): ((value: unknown) => boolean) =>
+    isNumericValueColumn(values) ? isMissingCellValue : isBlankCellValue;
+
 export const profileData = (data: CsvRow[]): { profiles: ColumnProfile[], issues: string[] } => {
     if (!data || data.length === 0) return { profiles: [], issues: [] };
     const headers = collectOrderedColumnNames(data);
@@ -64,25 +89,40 @@ export const profileData = (data: CsvRow[]): { profiles: ColumnProfile[], issues
         let isNumerical = true;
         const values = data.map(row => row[header]);
         let numericCount = 0;
-        
+        let blankCount = 0;
+        let markerCount = 0;
+
+        // Missing markers (`na`, `-`, `N.A.`) are skipped while inferring the
+        // type, so one suppressed median does not turn a measure into a
+        // category. They count as missing only when the column comes out
+        // numerical; in a text column (`NA` for North America) they are values.
         for (const value of values) {
-            const parsedNum = robustParseFloat(value);
-            if (value !== null && String(value).trim() !== '') {
-                if (parsedNum === null) {
-                    isNumerical = false;
-                    break;
-                }
-                numericCount++;
+            if (isBlankCellValue(value)) {
+                blankCount++;
+                continue;
             }
+            if (isMissingCellValue(value)) {
+                markerCount++;
+                continue;
+            }
+            if (!isNumerical) continue;
+            if (robustParseFloat(value) === null) {
+                isNumerical = false;
+                continue;
+            }
+            numericCount++;
         }
-        
-        const missingPercentage = (values.filter(v => v === null || String(v).trim() === '').length / data.length);
+
+        const missingPercentage = (blankCount + (isNumerical && numericCount > 0 ? markerCount : 0)) / data.length;
         if (missingPercentage > MISSING_VALUE_THRESHOLD) {
             issues.push(`Column '${header}' has a high percentage of missing values (${(missingPercentage * 100).toFixed(0)}%).`);
         }
 
         if (isNumerical && numericCount > 0) {
-            const numericValues = values.map(robustParseFloat).filter((v): v is number => v !== null);
+            const numericValues = values
+                .filter(v => !isMissingCellValue(v))
+                .map(robustParseFloat)
+                .filter((v): v is number => v !== null);
             // Detect comma-formatted thousands separators (e.g. "1,234.56") so downstream
             // SQL can be warned to strip commas before CAST.
             const COMMA_THOUSANDS_PATTERN = /\d{1,3}(,\d{3})+/;
@@ -124,11 +164,16 @@ export const profileData = (data: CsvRow[]): { profiles: ColumnProfile[], issues
 };
 
 /**
- * Last-resort lightweight profiler used when both the web worker and the
- * full main-thread `profileData` are unavailable or throw.
+ * Lightweight profiler. It is the fallback when the web worker and the full
+ * main-thread `profileData` are unavailable or throw, and it also profiles the
+ * canonical analysis dataset (`resolveAnalysisDatasetProfiles`), so its column
+ * types decide which columns the analysis can aggregate as measures.
  *
  * Design constraints:
- *  - Samples at most `maxRows` rows via stratified head/middle/tail split
+ *  - Infers types from at most `maxRows` rows via stratified head/middle/tail split
+ *  - Counts missing cells (blank, or a missing marker in a numeric column)
+ *    over every row, because
+ *    the percentage is reported to the model and the user as a dataset fact
  *  - Uses simple Number() conversion (not robustParseFloat) — fewer failure modes
  *  - Never throws on any input
  *  - Returns a compatible { profiles, issues } shape
@@ -177,17 +222,22 @@ export const profileDataLightweight = (
         const COMMA_THOUSANDS_PATTERN_LW = /\d{1,3}(,\d{3})+/;
         const APOSTROPHE_PREFIX_PATTERN_LW = /^['\u2018\u2019]/;
         const profiles: ColumnProfile[] = headers.map(header => {
-            let nullCount = 0;
+            let blankCount = 0;
+            let markerCount = 0;
             let numericCount = 0;
             let commaFormattedCount = 0;
             let apostrophePrefixedCount = 0;
             const seen = new Set<string>();
+            const seenMarkers = new Set<string>();
 
             for (const row of sample) {
                 const val = row[header];
                 const str = val === null || val === undefined ? '' : String(val).trim();
                 if (str === '') {
-                    nullCount += 1;
+                    blankCount += 1;
+                } else if (isMissingCellValue(str)) {
+                    markerCount += 1;
+                    seenMarkers.add(str);
                 } else {
                     seen.add(str);
                     const stripped = str.replace(/^['\u2018\u2019]/, '').replace(/[$,%\s]/g, '');
@@ -203,16 +253,26 @@ export const profileDataLightweight = (
                 }
             }
 
-            const nonNullCount = sample.length - nullCount;
-            const isNumeric = nonNullCount > 0 && numericCount / nonNullCount > 0.8;
+            // Markers are skipped while inferring the type and count as missing
+            // only in a numeric column; in a text column they are values.
+            const presentCount = sample.length - blankCount - markerCount;
+            const isNumeric = presentCount > 0 && numericCount / presentCount > 0.8;
             const hasFormattedNumbers = isNumeric && commaFormattedCount > 0;
             const hasApostrophePrefixedNumbers = isNumeric && apostrophePrefixedCount > 0;
-            const missingPercentage = (nullCount / sample.length) * 100;
+            const isMissing = isNumeric ? isMissingCellValue : isBlankCellValue;
+            let missingCount = blankCount + (isNumeric ? markerCount : 0);
+            if (sample !== data) {
+                missingCount = 0;
+                for (const row of data) {
+                    if (isMissing(row[header])) missingCount += 1;
+                }
+            }
+            const missingPercentage = (missingCount / data.length) * 100;
 
             return {
                 name: header,
                 type: isNumeric ? ('numerical' as const) : ('categorical' as const),
-                uniqueValues: seen.size,
+                uniqueValues: isNumeric ? seen.size : seen.size + seenMarkers.size,
                 missingPercentage,
                 ...(hasFormattedNumbers ? { hasFormattedNumbers: true } : {}),
                 ...(hasApostrophePrefixedNumbers ? { hasApostrophePrefixedNumbers: true } : {}),

@@ -36,6 +36,27 @@ describe('AnalysisCardSummary', () => {
         expect(screen.queryByText(/Scope: Full dataset; "Others" hidden/)).not.toBeInTheDocument();
     });
 
+    it('labels the window of a lowest-first ranking as the lowest groups, not the top', () => {
+        render(<AnalysisCardSummary
+            cardId="lowest-first"
+            plan={{ ...plan, aggregation: 'median', rankDirection: 'asc' }}
+            totalValue={0}
+            overallTotalValue={0}
+            displayedRowCount={8}
+            totalRowCount={20}
+            displayedMetricLabel="Median Pay"
+            displayedGroupLabel="School"
+            topN={8}
+            rankDirection="asc"
+            hideOthers={false}
+            hiddenLabelCount={0}
+            language="English"
+        />);
+
+        expect(screen.getByText('Lowest 8 view')).toBeInTheDocument();
+        expect(screen.queryByText('Top 8 view')).not.toBeInTheDocument();
+    });
+
     it('describes table-only results without promising a chart', () => {
         render(<AnalysisCardSummary
             cardId="table-only"

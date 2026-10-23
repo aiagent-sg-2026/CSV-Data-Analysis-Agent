@@ -2,7 +2,7 @@
 import React from 'react';
 import { AnalysisPlan, CsvRow } from '../../types';
 import { formatAnalysisMeasureValue, formatAnalysisValue, normalizeCategoryLabel } from '../../utils/analysisCardPresentation';
-import { parseNumericValue } from '../../utils/dataHelpers';
+import { parseNullableNumericValue } from '../../utils/dataHelpers';
 import { useAppStore } from '../../store/useAppStore';
 import { getTranslation } from '../../utils/localization';
 
@@ -26,8 +26,9 @@ const InteractiveLegendComponent: React.FC<InteractiveLegendProps> = ({ data, to
         <div className="text-sm space-y-1 max-h-48 overflow-y-auto pr-2" data-export-exclude>
             {data.map((item, index) => {
                 const label = normalizeCategoryLabel(item[groupByKey]);
-                const value = parseNumericValue(item[valueKey]);
-                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
+                // A group without a value (NULL aggregate) shows "No data", never 0.00 or a 0% share.
+                const value = parseNullableNumericValue(item[valueKey]);
+                const percentage = value === null ? null : total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
                 const isHidden = hiddenLabels.includes(label);
                 const color = COLORS[index % COLORS.length];
 
@@ -46,8 +47,12 @@ const InteractiveLegendComponent: React.FC<InteractiveLegendProps> = ({ data, to
                             <span className={`truncate text-sm ${isHidden ? 'line-through text-slate-400' : 'text-slate-700'}`}>{label}</span>
                         </div>
                         <div className="flex items-baseline ml-2 flex-shrink-0">
-                            <span className={`font-semibold text-sm ${isHidden ? 'text-slate-400' : 'text-slate-800'}`}>{aggregation === 'count' ? formatAnalysisValue(value, 0) : formatAnalysisMeasureValue(value)}</span>
-                            {showPercentage && <span className="text-xs text-slate-500 ml-1.5 w-12 text-right">({percentage}%)</span>}
+                            {value === null ? (
+                                <span className="text-sm italic text-slate-400">{getTranslation('card_value_no_data', language)}</span>
+                            ) : (
+                                <span className={`font-semibold text-sm ${isHidden ? 'text-slate-400' : 'text-slate-800'}`}>{aggregation === 'count' ? formatAnalysisValue(value, 0) : formatAnalysisMeasureValue(value)}</span>
+                            )}
+                            {showPercentage && percentage !== null && <span className="text-xs text-slate-500 ml-1.5 w-12 text-right">({percentage}%)</span>}
                         </div>
                     </button>
                 );

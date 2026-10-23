@@ -33,6 +33,7 @@ const DataTableComponent: React.FC<DataTableProps> = ({ data, plan, displayColum
     }
 
     const headers = collectOrderedColumnNames(data);
+    const noDataLabel = getTranslation('card_value_no_data', language);
     const rawNumericColumns = getNumericColumns(data, headers);
     // Exclude GROUP BY columns from numeric formatting — they are identifiers, not measures
     const groupByCol = plan?.groupByColumn;
@@ -94,6 +95,19 @@ const DataTableComponent: React.FC<DataTableProps> = ({ data, plan, displayColum
                         return (
                             <tr key={rowIndex} className="border-b border-slate-200 last:border-b-0">
                                 {headers.map(header => {
+                                    const cell = row[header];
+                                    // An empty measure (e.g. a NULL median) is "no data", not a value or an "Unknown" label.
+                                    if (numericColumns.has(header) && (cell === null || cell === undefined || (typeof cell === 'string' && cell.trim() === ''))) {
+                                        return (
+                                            <td
+                                                key={`${rowIndex}-${header}`}
+                                                className="p-2 text-right italic text-slate-400 whitespace-nowrap align-top"
+                                                title={noDataLabel}
+                                            >
+                                                {noDataLabel}
+                                            </td>
+                                        );
+                                    }
                                     const displayValue = numericColumns.has(header)
                                         ? formatAnalysisMeasureValue(
                                             row[header],

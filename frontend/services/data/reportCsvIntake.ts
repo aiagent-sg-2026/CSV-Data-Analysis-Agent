@@ -17,6 +17,7 @@ import {
     FOOTER_PATTERN,
     SUMMARY_LABEL_PATTERN,
     SUMMARY_TOKEN_PATTERN,
+    isMissingValueMarker,
     isNumericLike,
 } from '../agent/reportShapeUtils';
 import { buildMergedBoundaryHeaders } from '../agent/reportStructureNormalization';
@@ -57,7 +58,10 @@ const appendDetectionWarning = (
     };
 };
 
-const sanitizeCellValue = (value: unknown): string => {
+// Excel's accounting format exports a zero as an apostrophe-prefixed dash.
+const ZERO_PLACEHOLDER_PATTERN = /^['\u2018\u2019]\s*-+\s*$/;
+
+const sanitizeCellValue = (value: unknown, isZeroValueColumn = false): string => {
     if (value === null || value === undefined) return '';
     const str = String(value).replace(BOM_PREFIX_PATTERN, '');
     if (str.startsWith('=')) return `'${str}`;
@@ -65,8 +69,10 @@ const sanitizeCellValue = (value: unknown): string => {
     // (e.g. '-852.81 → -852.81). Only matches quote + optional minus + digit to
     // avoid stripping apostrophes from legitimate text or formula-prefixed values.
     if (/^['\u2018\u2019]-?\d/.test(str)) return str.substring(1);
-    // Strip bare zero-value placeholder markers: '-, ' -, '--, etc.
-    if (/^['\u2018\u2019]\s*-+\s*$/.test(str)) return '';
+    // In a numeric column an apostrophe-prefixed dash ('-, ' -, '--) is a
+    // reported 0; elsewhere it is blanked as before. A bare `-` or `na` stays
+    // a missing marker (the SingStat/HDB convention).
+    if (ZERO_PLACEHOLDER_PATTERN.test(str.trim())) return isZeroValueColumn ? '0' : '';
     return str;
 };
 
@@ -81,7 +87,7 @@ const sanitizeHeaderValue = (rawHeader: string | undefined, index: number, seen:
     return count > 0 ? `${cleanHeader}_${count + 1}` : cleanHeader;
 };
 
-const normalizeRowLengths = (rows: RawCsvRow[], columnCount: number): RawCsvRow[] =>
+const normalizeRowLengths = (rows: RawCsvRow[], columnCount: number, zeroValueColumns: ReadonlySet<number>): RawCsvRow[] =>
     rows.map(row => {
         const nextRow = [...row];
         while (nextRow.length < columnCount) {
@@ -90,7 +96,7 @@ const normalizeRowLengths = (rows: RawCsvRow[], columnCount: number): RawCsvRow[
         if (nextRow.length > columnCount) {
             nextRow.length = columnCount;
         }
-        return nextRow.map(cell => sanitizeCellValue(cell));
+        return nextRow.map((cell, index) => sanitizeCellValue(cell, zeroValueColumns.has(index)));
     });
 
 const getNonEmptyCells = (row: RawCsvRow) => row.map(value => String(value ?? '').trim()).filter(Boolean);
@@ -264,6 +270,60 @@ const isCodeSeriesHeaderRow = (row: RawCsvRow, followingRow: RawCsvRow | undefin
     const labelLikeCount = nextValues.filter(value => value && !isNumericLike(value) && !CODE_LIKE_PATTERN.test(value)).length;
     return labelLikeCount >= Math.max(3, Math.floor(detailValues.length * 0.25));
 };
+
+const DATA_PATTERN_SAMPLE_ROWS = 6;
+const DATA_PATTERN_LOOKAHEAD_ROWS = 12;
+
+/**
+ * Detects a candidate header-continuation row that is really the first body
+ * row. Public datasets often begin with rows whose measure is missing
+ * ("2011-Q2,ANG MO KIO,1-RM,na"), which removes the numeric evidence that
+ * isLikelyDataRow relies on. A genuine header layer carries labels in the
+ * measure columns ("Net Sales", "Qty"), while a data row only carries numbers
+ * or missing markers there. The row must also tie itself to the rows below:
+ * either an explicit missing marker in a measure column or a shared value in
+ * a categorical key column, so a sub-header that only labels the descriptor
+ * columns ("Country,State,City,,") is still kept as a header layer.
+ */
+const findContinuedDataPatternRow = (rows: RawCsvRow[], candidateIndex: number): RawCsvRow | null => {
+    const candidate = rows[candidateIndex];
+    if (!candidate) return null;
+
+    const sampleRows: RawCsvRow[] = [];
+    const lookaheadEnd = Math.min(rows.length, candidateIndex + 1 + DATA_PATTERN_LOOKAHEAD_ROWS);
+    for (let index = candidateIndex + 1; index < lookaheadEnd && sampleRows.length < DATA_PATTERN_SAMPLE_ROWS; index += 1) {
+        const row = rows[index];
+        if (isBlankRow(row)) continue;
+        if (isLikelyDataRow(row)) sampleRows.push(row);
+    }
+    if (sampleRows.length === 0) return null;
+
+    const columnCount = Math.max(candidate.length, ...sampleRows.map(row => row.length));
+    const majority = Math.floor(sampleRows.length / 2) + 1;
+    let measureColumnCount = 0;
+    let explicitMissingMarkerCount = 0;
+    let sharedKeyValueCount = 0;
+    for (let column = 0; column < columnCount; column += 1) {
+        const sampleValues = sampleRows.map(row => String(row[column] ?? '').trim());
+        const numericCount = countMatches(sampleValues, isNumericLike);
+        const textCount = sampleValues.filter(value => value && !isNumericLike(value) && !isMissingValueMarker(value)).length;
+        const candidateValue = String(candidate[column] ?? '').trim();
+        if (numericCount >= majority) {
+            measureColumnCount += 1;
+            if (!candidateValue || isNumericLike(candidateValue)) continue;
+            if (!isMissingValueMarker(candidateValue)) return null;
+            explicitMissingMarkerCount += 1;
+        } else if (textCount >= majority && candidateValue && sampleValues.includes(candidateValue)) {
+            sharedKeyValueCount += 1;
+        }
+    }
+    return measureColumnCount > 0 && (explicitMissingMarkerCount > 0 || sharedKeyValueCount > 0)
+        ? sampleRows[0]
+        : null;
+};
+
+const continuesFollowingDataPattern = (rows: RawCsvRow[], candidateIndex: number) =>
+    findContinuedDataPatternRow(rows, candidateIndex) !== null;
 
 const areRowsEquivalent = (left: RawCsvRow, right: RawCsvRow) =>
     left.length === right.length
@@ -465,6 +525,18 @@ const findBodyStartAfterHeader = (
                 bodyEvidenceKind: 'hierarchical_sequence' as const,
             };
         }
+        // A leading body row whose measure is missing ("…,1-RM,na") has no
+        // numeric evidence of its own; it starts the body when it continues
+        // the data pattern below it, instead of being dropped as metadata.
+        const continuedDataRow = findContinuedDataPatternRow(rows, index);
+        if (continuedDataRow) {
+            return {
+                bodyStartIndex: index,
+                parameterRowIndexes: skippedParameterRows,
+                repeatedHeaderRowIndexes: repeatedHeaderRows,
+                bodyEvidenceKind: detectBodyEvidenceKind(continuedDataRow),
+            };
+        }
         if (isLikelyMetadataPairRow(row) || isLikelyParameterLabelRow(row) || isSparseLongTextRow(row)) {
             skippedParameterRows.push(index);
             continue;
@@ -602,6 +674,7 @@ const selectReportHeader = (rows: RawCsvRow[]): HeaderSelection | null => {
                 continue;
             }
             if (!isHeaderContinuationRow(candidate) || isLikelyDataRow(candidate)) break;
+            if (continuesFollowingDataPattern(rows, nextIndex)) break;
             blockIndexes.push(nextIndex);
         }
 
@@ -799,8 +872,40 @@ const buildFallbackCsvData = (
     };
 };
 
-const ZERO_PLACEHOLDER_PATTERN = /^['\u2018\u2019]\s*-+\s*$/;
 const ZERO_PLACEHOLDER_THRESHOLD = 0.3; // 30% of non-blank rows
+// Header and title rows put a little text above any numeric column.
+const MAX_HEADER_TEXT_CELLS = 2;
+const MAX_TEXT_SHARE_OF_NUMBERS = 0.2;
+
+const isNumericRawCell = (value: string) => isNumericLike(value
+    .replace(/^['\u2018\u2019]/, '')
+    .replace(/[$\u20ac\u00a3\u00a5%\s]/g, '')
+    .replace(/^\((.*)\)$/, '-$1'));
+
+/**
+ * Columns whose apostrophe-dash cells are accounting zeros: they hold at least
+ * one such cell and otherwise numbers, missing markers or blanks, apart from a
+ * few header or title cells. A column of text keeps '- as blank.
+ */
+const detectZeroValueColumns = (rawRows: RawCsvRow[], columnCount: number): Set<number> => {
+    const zeroValueColumns = new Set<number>();
+    for (let col = 0; col < columnCount; col += 1) {
+        let placeholders = 0;
+        let numbers = 0;
+        let texts = 0;
+        for (const row of rawRows) {
+            const cell = String(row[col] ?? '').trim();
+            if (cell === '') continue;
+            if (ZERO_PLACEHOLDER_PATTERN.test(cell)) placeholders += 1;
+            else if (isNumericRawCell(cell)) numbers += 1;
+            else if (!isMissingValueMarker(cell)) texts += 1;
+        }
+        if (placeholders > 0 && texts <= Math.max(MAX_HEADER_TEXT_CELLS, Math.floor(numbers * MAX_TEXT_SHARE_OF_NUMBERS))) {
+            zeroValueColumns.add(col);
+        }
+    }
+    return zeroValueColumns;
+};
 
 /**
  * Scan raw (pre-sanitized) rows to detect columns where ≥30% of cells are
@@ -837,7 +942,7 @@ export const buildReportIntakeIr = (
     // Detect zero-placeholder columns BEFORE sanitization strips them
     const zeroPlaceholderColumnIndexes = detectZeroPlaceholderColumns(coercedRows, columnCount);
 
-    const normalizedRows = normalizeRowLengths(coercedRows, columnCount);
+    const normalizedRows = normalizeRowLengths(coercedRows, columnCount, detectZeroValueColumns(coercedRows, columnCount));
     const preScanSignals = buildPreScanSignals(normalizedRows);
     const selection = preScanSignals.deterministicSelection
         ? selectReportHeader(normalizedRows)
@@ -1105,6 +1210,14 @@ export const validateAiBoundary = (
     for (const idx of boundary.headerLayerIndexes ?? []) {
         if (!Number.isInteger(idx) || idx < 0 || idx >= boundary.bodyStartIndex) {
             return { valid: false, rejectionReason: `headerLayerIndex ${idx} out of valid range [0, ${boundary.bodyStartIndex})` };
+        }
+    }
+    // The same data-pattern guard as deterministic intake: a row that
+    // continues the body below it (for example a first record whose measure
+    // is "na") must not become a column name or a header layer.
+    for (const idx of [boundary.headerRowIndex, ...(boundary.headerLayerIndexes ?? [])]) {
+        if (continuesFollowingDataPattern(rows, idx)) {
+            return { valid: false, rejectionReason: `Header row ${idx} continues the data pattern of the body rows below it` };
         }
     }
     for (const idx of boundary.parameterRowIndexes ?? []) {

@@ -79,7 +79,7 @@ describe('buildDimensionNormExpr', () => {
         const expr = buildDimensionNormExpr('"BRAND"');
         expect(expr).toContain('CASE');
         expect(expr).toContain("WHEN TRIM(COALESCE(CAST(\"BRAND\" AS VARCHAR), '')) = '' THEN 'Unknown'");
-        expect(expr).toContain("IN ('n/a', 'na', 'null', 'none', '-', '--')");
+        expect(expr).toContain("IN ('n/a', 'na', 'n.a.', 'null', 'none', 'nil', 'nan', '-', '--', '\u2013', '\u2014')");
         expect(expr).toContain('ELSE');
         expect(expr).toContain('END');
     });

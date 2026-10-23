@@ -1,9 +1,13 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { getTranslation } from '../../utils/localization';
+import { getStructureReviewReasonText, getTranslation } from '../../utils/localization';
 import type { ReportBoundary } from '../../types';
 import { useDialogAccessibility } from '../../hooks/useDialogAccessibility';
+import {
+    countSummaryContentRows,
+    resolveEffectiveSummaryStartIndex,
+} from '../../services/agent/reportStructureNormalization';
 
 const MAX_PREVIEW_COLS = 7;
 const MAX_BODY_PREVIEW_ROWS = 4;
@@ -36,10 +40,14 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
     useEffect(() => {
         if (isOpen && reportStructureResolution) {
             setBodyStart(reportStructureResolution.bodyStartIndex ?? 0);
-            setSummaryStart(reportStructureResolution.summaryStartIndex ?? null);
+            // A boundary followed only by trailing blank lines is "no summary".
+            setSummaryStart(resolveEffectiveSummaryStartIndex(
+                rawIntakeIr?.normalizedRows ?? [],
+                reportStructureResolution.summaryStartIndex,
+            ));
             setConfirming(false);
         }
-    }, [isOpen, reportStructureResolution]);
+    }, [isOpen, reportStructureResolution, rawIntakeIr]);
 
     if (!isOpen || !reportStructureResolution) return null;
 
@@ -47,6 +55,21 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
     const totalRows = rows.length;
     const headerLayerIdxs = reportStructureResolution.headerLayerRowIndexes;
     const headerDepth = headerLayerIdxs.length || 1;
+    // Reason codes are internal check identifiers; end users get plain
+    // explanations and the codes stay in the technical details disclosure.
+    const structureReviewPending = pipelineOutcome?.status === 'needs_structure_review'
+        || reportStructureResolution.requiresHumanReview === true;
+    const blockingReasonCodes = reportStructureResolution.blockingReasons ?? [];
+    const reasonCodes = blockingReasonCodes.length > 0
+        ? blockingReasonCodes
+        : structureReviewPending && pipelineOutcome?.reasonCode
+            ? [pipelineOutcome.reasonCode]
+            : [];
+    const reasonTexts = Array.from(new Set(reasonCodes.map(code => getStructureReviewReasonText(code, language))));
+    const technicalMessages = Array.from(new Set(
+        [reportStructureResolution.decision?.reason, pipelineOutcome?.message]
+            .filter((message): message is string => Boolean(message)),
+    ));
 
     // Build preview: header rows + first body rows + summary rows
     type PreviewRow = { rowIndex: number; role: 'header' | 'body' | 'summary'; cells: string[] };
@@ -66,7 +89,8 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
         }
     }
 
-    const effectiveSummaryStart = summaryStart !== null ? summaryStart : null;
+    const effectiveSummaryStart = summaryStart !== null && summaryStart < totalRows ? summaryStart : null;
+    const summaryRowCount = countSummaryContentRows(rows, effectiveSummaryStart);
     const dataRowCount = effectiveSummaryStart !== null
         ? Math.max(0, effectiveSummaryStart - bStart)
         : Math.max(0, totalRows - bStart);
@@ -134,11 +158,21 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
                         <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
                             <div>
                                 <dt className="font-semibold text-slate-700">{t('guided_repair_detected')}</dt>
-                                <dd className="mt-1 text-slate-600">{reportStructureResolution.decision.reason}</dd>
+                                <dd className="mt-1 text-slate-600">
+                                    {reasonTexts.length > 0 ? (
+                                        <ul className="list-disc space-y-1 pl-4">
+                                            {reasonTexts.map(text => <li key={text}>{text}</li>)}
+                                        </ul>
+                                    ) : t('structure_review_no_blocking_reason')}
+                                </dd>
                             </div>
                             <div>
                                 <dt className="font-semibold text-slate-700">{t('guided_repair_why_blocked')}</dt>
-                                <dd className="mt-1 text-slate-600">{pipelineOutcome?.message ?? t('guided_repair_default_block_reason')}</dd>
+                                <dd className="mt-1 text-slate-600">
+                                    {structureReviewPending
+                                        ? t('structure_review_required_message')
+                                        : pipelineOutcome?.message ?? t('guided_repair_default_block_reason')}
+                                </dd>
                             </div>
                             <div>
                                 <dt className="font-semibold text-slate-700">{t('guided_repair_attempted')}</dt>
@@ -153,6 +187,17 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
                                 <dd className="mt-1 text-slate-600">{t('guided_repair_required_action')}</dd>
                             </div>
                         </dl>
+                        {(reasonCodes.length > 0 || technicalMessages.length > 0) && (
+                            <details className="mt-3 text-xs text-slate-600">
+                                <summary className="cursor-pointer font-medium text-slate-700">{t('structure_review_technical_details')}</summary>
+                                <div className="mt-2 space-y-1 break-words font-mono">
+                                    {reasonCodes.length > 0 && (
+                                        <p>{t('structure_review_technical_codes', { codes: reasonCodes.join(', ') })}</p>
+                                    )}
+                                    {technicalMessages.map(message => <p key={message}>{message}</p>)}
+                                </div>
+                            </details>
+                        )}
                     </section>
 
                     {/* Summary cards */}
@@ -176,10 +221,10 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
                         <div className="bg-amber-50 rounded-lg p-3">
                             <div className="text-xs text-amber-600 font-medium mb-0.5">{t('boundary_confirm_summary_rows')}</div>
                             <div className="text-xl font-semibold text-amber-800">
-                                {effectiveSummaryStart !== null ? totalRows - effectiveSummaryStart : 0}
+                                {summaryRowCount}
                             </div>
                             <div className="text-xs text-amber-500">
-                                {effectiveSummaryStart !== null
+                                {effectiveSummaryStart !== null && summaryRowCount > 0
                                     ? t('boundary_confirm_summary_rows_from', { row: effectiveSummaryStart + 1 })
                                     : t('boundary_confirm_no_summary')}
                             </div>

@@ -193,7 +193,8 @@ export const buildGroundedRankedShareReply = (params: {
 
     const aggregate = sumAggregates[0];
     const rankedRows = result.rows
-        .map(row => ({ row, value: Number(row[aggregate.as]) }))
+        // Number(null) is 0: a group with a NULL sum would otherwise win the lowest share.
+        .map(row => ({ row, value: readFiniteMetric(row[aggregate.as]) }))
         .filter((entry): entry is { row: typeof entry.row; value: number } => Number.isFinite(entry.value));
     const overall = rankedRows.reduce((total, entry) => total + entry.value, 0);
     if (rankedRows.length === 0 || overall === 0) return null;
