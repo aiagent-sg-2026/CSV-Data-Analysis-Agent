@@ -42,6 +42,8 @@ export interface AnalysisDatasetContext {
     qualityHintsSummary?: string;
     /** Structured steering bundle derived from harness and quality governance. */
     analysisSteering?: import('../../types').EvidenceHarnessContext | null;
+    /** Meaning of the value column of a melted period-series table, recorded at intake. */
+    seriesMeasure?: import('../../types').SeriesMeasureSemantics | null;
 }
 
 /**

@@ -3411,6 +3411,8 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'verdict_reason_volume_driven_aggregate': { 'English': 'Ranking mostly follows row counts', 'Mandarin': '排名主要反映各组行数', 'Japanese': '順位は主に行数を反映', 'Malay': 'Kedudukan kebanyakannya mengikut bilangan baris' },
     'verdict_reason_small_sample_leader': { 'English': 'Leading group rests on very few rows', 'Mandarin': '领先分组仅基于极少行', 'Japanese': '上位グループの行数が非常に少ない', 'Malay': 'Kumpulan teratas berdasarkan sangat sedikit baris' },
     'verdict_reason_tied_leading_values': { 'English': 'Shown groups share one value', 'Mandarin': '显示的分组数值完全相同', 'Japanese': '表示中のグループが同じ値', 'Malay': 'Kumpulan yang dipaparkan berkongsi satu nilai' },
+    'verdict_reason_cross_series_aggregate': { 'English': 'Combines series that measure different things', 'Mandarin': '合并了含义不同的数据系列', 'Japanese': '意味の異なる系列を合算している', 'Malay': 'Menggabungkan siri yang mengukur perkara berbeza' },
+    'verdict_reason_series_scope_warning': { 'English': 'Series are not comparable on one axis', 'Mandarin': '各数据系列不能在同一坐标轴上比较', 'Japanese': '系列を同じ軸で比較できない', 'Malay': 'Siri tidak boleh dibandingkan pada satu paksi' },
     'verdict_reason_unclassified_share_warning': { 'English': 'High unclassified data share', 'Mandarin': '未分类数据占比过高', 'Japanese': '未分類データの割合が高い', 'Malay': 'Bahagian data yang tidak dikelaskan tinggi' },
 
     // --- Card expand/collapse ---

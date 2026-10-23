@@ -14,6 +14,7 @@ import { buildCanonicalAnalysisSteering, cloneAnalysisSteering } from '../analys
 import type { DataInvestigationFindings } from './dataInvestigationHarness';
 import type { StoreApi, DuckDbAnalysisBinding } from './analysisSessionHelpers';
 import { requireDuckDbBinding } from './analysisSessionHelpers';
+import { resolveSeriesMeasure } from '../planning/seriesMeasureGuard';
 
 export type RefreshedAnalysisContext = {
     inputData: CsvData;
@@ -200,6 +201,10 @@ export const refreshAnalysisContext = async (
         dataPreparationPlan ?? null,
         store.getState().rawCsvData ?? inputData,
     );
+    datasetContext.seriesMeasure = resolveSeriesMeasure({
+        canonicalBuildMeta: store.getState().canonicalBuildMeta,
+        columnProfiles,
+    });
     const semanticUnderstanding = buildRuntimeSemanticUnderstanding({
         columns: columnProfiles,
         analysisBrief: buildAnalysisIntentBrief({

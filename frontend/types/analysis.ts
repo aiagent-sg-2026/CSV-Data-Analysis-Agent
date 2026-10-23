@@ -113,6 +113,10 @@ export interface ResearchPlanQuestion {
     comparison: string | null;
     /** True when Pi stated that a SUM question is explicitly about total volume or value. */
     totalIntent?: boolean;
+    /** Exact series value Pi named for a melted period-series table. */
+    series?: string;
+    /** Row filter the app attached so the question reads only comparable rows (one series, or detail rows). */
+    filter?: { column: string; value: string };
 }
 
 /** The research plan Pi drafted for the initial analysis, consumed once by the evidence stage. */
@@ -323,7 +327,17 @@ export type EvidenceValueGateReasonCode =
     /** The same volume-driven ranking where the question explicitly asked for a total; informational only. */
     | 'volume_driven_total'
     /** A leading group of the ranking rests on very few source rows; a caveat, not a rejection. */
-    | 'small_group_leader';
+    | 'small_group_leader'
+    /** Aggregates a series-dependent measure across series not verified to share a unit; rejected. */
+    | 'cross_series_aggregate'
+    /** Sums a series-dependent measure over a published total and its own components; rejected. */
+    | 'series_hierarchy_double_count'
+    /** Compares series not verified to share a unit on one axis; kept as a table. */
+    | 'mixed_unit_series_comparison'
+    /** Shows a published total next to its own components; kept as a table. */
+    | 'series_hierarchy_mix'
+    /** Counts records per series or period of a melted table, which only reflects publication coverage. */
+    | 'series_record_count';
 
 /** A leading group whose value is computed from very few source rows. */
 export interface EvidenceSmallGroupLeader {
@@ -563,7 +577,9 @@ export type AutoAnalysisEvaluationReasonCode =
     | 'unclassified_share_warning'
     | 'volume_driven_aggregate'
     | 'small_sample_leader'
-    | 'tied_leading_values';
+    | 'tied_leading_values'
+    | 'cross_series_aggregate'
+    | 'series_scope_warning';
 
 export type AnalysisQualitySeverity = 'info' | 'warning' | 'critical';
 export type AnalysisDimensionQualityAction = 'allow' | 'avoid' | 'block';

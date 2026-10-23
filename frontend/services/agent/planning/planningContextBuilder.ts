@@ -15,6 +15,7 @@ import {
 import { formatColumnDisplayHints } from '../../dashboard/businessLabelResolver';
 import { formatAnalysisSteeringBundle } from '../analysisSteering';
 import type { AnalysisDatasetContext, PlanLearningHints } from '../../prompts/analysisPrompts';
+import { buildSeriesMeasureGuidance } from './seriesMeasureGuard';
 
 // ─── Dataset overview text ─────────────────────────────────────
 
@@ -98,6 +99,11 @@ export const createPlannerSections = (
     createContextSection('dataset_overview', buildDatasetOverviewText(datasetContext), 'high', 'sticky'),
     createContextSection('column_roles', `Dimensions: ${datasetContext.dimensionColumns.join(', ') || 'None detected'}\nMetrics: ${datasetContext.metricColumns.join(', ') || 'None detected'}`, 'high', 'sticky'),
     createContextSection('planning_hints', buildPlanningHintsText(datasetContext), 'high', 'sticky'),
+    // The value column of a melted series table means different things per
+    // series; the planner must know before it chooses any aggregate.
+    ...(datasetContext.seriesMeasure
+        ? [createContextSection('series_measure', `Series-dependent measure:\n${buildSeriesMeasureGuidance(datasetContext.seriesMeasure)}`, 'required', 'sticky')]
+        : []),
     ...(datasetContext.analysisSteering
         ? [createContextSection('analysis_steering', formatAnalysisSteeringBundle(datasetContext.analysisSteering) ?? 'No structured steering bundle.', 'high', 'sticky')]
         : []),

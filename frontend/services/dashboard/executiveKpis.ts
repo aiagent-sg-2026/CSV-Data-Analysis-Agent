@@ -1,4 +1,4 @@
-import type { AnalysisCardData, ColumnProfile, CsvData, CsvRow, Settings } from '../../types';
+import type { AnalysisCardData, ColumnProfile, CsvData, CsvRow, SeriesMeasureSemantics, Settings } from '../../types';
 import { getCsvDataRowCount } from '../../utils/datasetId';
 import {
     buildGroupCountKpiDetail,
@@ -219,12 +219,15 @@ export const buildExecutiveKpis = ({
     csvData,
     language,
     currentDatasetVersion,
+    seriesMeasure,
 }: {
     cards: AnalysisCardData[] | undefined;
     columnProfiles: ColumnProfile[] | undefined;
     csvData: CsvData | null | undefined;
     language?: Settings['language'];
     currentDatasetVersion?: string | null;
+    /** Meaning of the value column of a melted period-series table, recorded at intake. */
+    seriesMeasure?: SeriesMeasureSemantics | null;
 }): ExecutiveKpi[] => {
     const safeCards = Array.isArray(cards) ? cards : [];
     const safeProfiles = Array.isArray(columnProfiles) ? columnProfiles : [];
@@ -274,7 +277,16 @@ export const buildExecutiveKpis = ({
     const leadLabel = lowestFirst
         ? getTranslation('executive_kpi_lowest_group_label', language, { group: groupLabel })
         : buildTopGroupKpiLabel(groupLabel, language);
-    if (!isAdditiveAggregation(primaryCard.plan.aggregation)) {
+    // Adding up a measure whose meaning depends on the series (km of rail,
+    // average daily riders) across rows gives no total, even within one series.
+    // The melted table's only business measure is its value column, and card
+    // value columns are query aliases, so any non-count card is treated as one.
+    const isSeriesDependentMeasure = Boolean(
+        seriesMeasure
+        && !seriesMeasure.additiveAcrossSeries
+        && primaryCard.plan.aggregation !== 'count',
+    );
+    if (!isAdditiveAggregation(primaryCard.plan.aggregation) || isSeriesDependentMeasure) {
         return [
             buildInteractiveKpi({
                 id: 'top-group',

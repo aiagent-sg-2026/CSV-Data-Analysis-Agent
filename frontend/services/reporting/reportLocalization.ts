@@ -126,6 +126,12 @@ export const REASON_CODE_LABELS: Record<string, string> = {
     small_group_leader: 'Leading group rests on very few rows',
     small_sample_leader: 'Leading group rests on very few rows',
     tied_leading_values: 'Shown groups share one value',
+    cross_series_aggregate: 'Combines series that measure different things',
+    series_hierarchy_double_count: 'Adds a total to its own components',
+    mixed_unit_series_comparison: 'Compares series of different units',
+    series_hierarchy_mix: 'Shows a total next to its components',
+    series_record_count: 'Counts published periods, not a measure',
+    series_scope_warning: 'Series are not comparable on one axis',
 };
 
 export const humanizeReasonCode = (code: string): string =>

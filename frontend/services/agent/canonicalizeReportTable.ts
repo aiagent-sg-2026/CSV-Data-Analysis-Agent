@@ -13,7 +13,7 @@ import { applyDataOperations } from './execution/dataOperationRunner';
 import { buildDeterministicCleaningFallbackAction } from './orchestration/deterministicCleaningFallback';
 import { getPrimaryReshapeHypothesis } from './reportShapeHypothesis';
 import { detectReportShape } from './reportShapeDetector';
-import { buildPeriodWideReshape, type PeriodWideReshape } from './reportShapePeriodWide';
+import { buildPeriodWideReshape, describePeriodWideSeriesMeasure, type PeriodWideReshape } from './reportShapePeriodWide';
 import {
     buildMergedBoundaryHeaders,
     inferFactColumns,
@@ -994,6 +994,7 @@ const buildPeriodWideCanonicalTable = (
             excludedRowCounts,
             carryForwardAppliedCounts: {},
             footerTotalsMatched: null,
+            seriesMeasure: describePeriodWideSeriesMeasure(reshape),
         },
     };
 };

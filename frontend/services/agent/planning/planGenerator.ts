@@ -58,6 +58,7 @@ import {
 } from './semanticTextMatching';
 import { createPlannerSections } from './planningContextBuilder';
 import { inferPreferredResultShape, adaptEvidencePlanToSqlAnalysisPlan } from './evidencePlanAdapter';
+import { buildSeriesMeasureFallbackTopics, resolveTopicSeriesFilter } from './seriesMeasureGuard';
 
 // --- Merged from sqlAnalysisErrors.ts ---
 
@@ -150,6 +151,12 @@ export const buildDeterministicTopics = (
     columns: ColumnProfile[],
     datasetContext: AnalysisDatasetContext,
 ): string[] => {
+    // In a melted series table every generic "metric by dimension" topic would
+    // aggregate the value across series; a trend of one series is always valid.
+    if (datasetContext.seriesMeasure) {
+        const seriesTopics = buildSeriesMeasureFallbackTopics(datasetContext.seriesMeasure);
+        if (seriesTopics.length > 0) return seriesTopics;
+    }
     const blockedSet = new Set(datasetContext.blockedDimensions ?? []);
     const avoidedDimensions = new Set(datasetContext.avoidGrainColumns ?? []);
     const safeDimensionSet = new Set(datasetContext.dimensionColumns ?? []);
@@ -682,6 +689,7 @@ export const generateEvidenceQueryPlanWithRetry = async (
             }, columns, {
                 topic,
                 steering: plannerDatasetContext.analysisSteering ?? null,
+                seriesColumn: plannerDatasetContext.seriesMeasure?.seriesColumn ?? null,
             });
             const semanticHints = extractSemanticHints(plannerDatasetContext);
             const { validPlan, errors } = normalizeAndValidateSqlEvidenceQueryPlan(
@@ -848,7 +856,15 @@ export const generateEvidenceQueryPlanStepped = async (
     const inferredCountGroupBy = countIntent
         ? inferSteppedGroupByTarget(topic, dimensions.map(column => column.name))
         : null;
-    const explicitGroupBy = inferredCountGroupBy
+    // A topic that names one series of a melted table ("where DataSeries =
+    // 'X'") is a trend of that series over the period column.
+    const seriesMeasure = datasetContext?.seriesMeasure ?? null;
+    const topicSeries = resolveTopicSeriesFilter(topic, seriesMeasure);
+    const seriesTrendGroupBy = topicSeries && seriesMeasure && !planningIntent?.preferredGroupBy
+        ? dimensions.find(column => column.name === seriesMeasure.periodColumn)?.name ?? null
+        : null;
+    const explicitGroupBy = seriesTrendGroupBy
+        ?? inferredCountGroupBy
         ?? dimensions.find(column => column.name === planningIntent?.preferredGroupBy)?.name
         ?? inferSteppedGroupByTarget(topic, dimensions.map(column => column.name))
         ?? dimensions.find(column => topicMentionsColumn(topic, column.name))?.name
@@ -956,6 +972,17 @@ export const generateEvidenceQueryPlanStepped = async (
             });
         }
     }
+    // Adding up a series-dependent value over periods has no meaning unless
+    // the intake verified the series as additive.
+    if (
+        aggColumn
+        && aggFunction === 'sum'
+        && seriesMeasure
+        && !seriesMeasure.additiveAcrossSeries
+        && aggColumn === seriesMeasure.measureColumn
+    ) {
+        aggFunction = 'avg';
+    }
     if (
         aggColumn
         && aggFunction === 'sum'
@@ -976,14 +1003,18 @@ export const generateEvidenceQueryPlanStepped = async (
 
     // Step 3: Decide WHERE filters
     let wherePredicates: Array<{ column: string; operator: 'eq' | 'neq'; value: string }> = [];
-    if (steering?.detailRowColumn && steering.detailRowValue) {
+    if (topicSeries && seriesMeasure) {
+        wherePredicates.push({ column: seriesMeasure.seriesColumn, operator: 'eq', value: topicSeries });
+    } else if (steering?.detailRowColumn && steering.detailRowValue) {
+        // One named series needs no detail-row filter; a parent series such
+        // as a published total is a detail of its own trend.
         wherePredicates.push({
             column: steering.detailRowColumn,
             operator: 'eq',
             value: steering.detailRowValue,
         });
     }
-    if (!deterministicOnly && (harnessSummary || steering)) {
+    if (!deterministicOnly && !topicSeries && (harnessSummary || steering)) {
         const step3Response = await callSmallAiStep(settings, systemPrompt,
             `Topic: "${topic}"\nGroupBy: ${groupBy}\nAggregate: ${aggFunction.toUpperCase()}(${aggColumn ?? '*'})\n${retryFeedback ? `Retry guidance: ${retryFeedback}\n` : ''}${steering ? `Structured steering:\n${formatAnalysisSteeringBundle(steering)}\n` : ''}\nData findings:\n${harnessSummary ?? 'None'}\n\nWhat additional WHERE filters are needed? Reply as one predicate per line using the exact column name, for example:\n"Row Class" = fact\nCountry <> Internal\nOr reply NONE if no extra filters are needed.`,
             abortSignal,
@@ -1040,6 +1071,7 @@ export const generateEvidenceQueryPlanStepped = async (
     const semanticDefaultsApplied = applyEvidenceQuerySemanticDefaults(plan, columns, {
         topic,
         steering,
+        seriesColumn: seriesMeasure?.seriesColumn ?? null,
     });
     const steppedSemanticHints = extractSemanticHints(datasetContext);
     const { validPlan, errors } = normalizeAndValidateSqlEvidenceQueryPlan(semanticDefaultsApplied, columns, {

@@ -28,6 +28,7 @@ import { resolveEffectiveReportContext } from '../services/agent/reportContext';
 import { getCurrentAnalysisDatasetVersion } from '../services/agent/artifactProvenance';
 import { getCsvDataRowCount } from '../utils/datasetId';
 import { resolveAnalysisCompletionGate } from '../services/agent/analysisCompletionGate';
+import { resolveSeriesMeasure } from '../services/agent/planning/seriesMeasureGuard';
 import { DEFAULT_AUTO_ANALYSIS_GOAL } from '../services/agent/analysisDefaults';
 import { hasOpenableLatestReport, isLatestReportPartial, resolveLatestReportBlockedInfo } from '../services/reporting/reportArtifactManifest';
 import { forgetCloudAiConsentDecline } from '../services/privacy/cloudAiConsent';
@@ -38,7 +39,7 @@ const AnalysisPanelComponent: React.FC = () => {
     const _renderT0 = performance.now(); // PERF-309 diagnostic
     // PERF-303: Full aiTaskStatus object moved to AnalysisStatusSection (independent subscription).
     // Only aiTaskDone (boolean) is kept here for conditional rendering logic.
-    const { cards, finalSummary, finalSummaryProvenance, isGeneratingReport, isBusy, language, reportTemplate, setReportTemplate, reportGenerationProgress, aiTaskDone, cleaningRun, isSpreadsheetVisible, resumeCleaningRun, restartCleaningRun, handleInitialAnalysis, confirmedAnalysisGoal, generateAnalystReport, cancelReportGeneration, openLatestAnalystReport, exportLatestAnalystReportPdf, csvData, canonicalCsvData, rawCsvData, reportContextResolution, reportStructureResolution, pipelineOutcome, initialAnalysisFailureKind, rawIntakeIr, columnProfiles, dataPreparationPlan, runWorkspaceDataQuery, setIsSpreadsheetVisible, addProgress, handleShowCardFromChat, setIsDataPreparationModalOpen, setIsReportBoundaryConfirmModalOpen, setIsSettingsModalOpen, currentDatasetId, provider, hasLatestAnalystReport, reportBlockedInfo, isReportPartial, initialAnalysisStatus, latestAnalysisSession, visibleAnalysisTrace, storeResultsViewMode, setStoreResultsViewMode } = useAppStore(
+    const { cards, finalSummary, finalSummaryProvenance, isGeneratingReport, isBusy, language, reportTemplate, setReportTemplate, reportGenerationProgress, aiTaskDone, cleaningRun, isSpreadsheetVisible, resumeCleaningRun, restartCleaningRun, handleInitialAnalysis, confirmedAnalysisGoal, generateAnalystReport, cancelReportGeneration, openLatestAnalystReport, exportLatestAnalystReportPdf, csvData, canonicalCsvData, rawCsvData, reportContextResolution, reportStructureResolution, pipelineOutcome, initialAnalysisFailureKind, rawIntakeIr, columnProfiles, dataPreparationPlan, runWorkspaceDataQuery, setIsSpreadsheetVisible, addProgress, handleShowCardFromChat, setIsDataPreparationModalOpen, setIsReportBoundaryConfirmModalOpen, setIsSettingsModalOpen, currentDatasetId, provider, hasLatestAnalystReport, reportBlockedInfo, isReportPartial, initialAnalysisStatus, latestAnalysisSession, visibleAnalysisTrace, storeResultsViewMode, setStoreResultsViewMode, canonicalBuildMeta } = useAppStore(
         (state: AppStore) => ({
             cards: state.analysisCards,
             finalSummary: state.finalSummary,
@@ -89,6 +90,7 @@ const AnalysisPanelComponent: React.FC = () => {
             visibleAnalysisTrace: state.visibleAnalysisTrace ?? [],
             storeResultsViewMode: state.resultsViewMode ?? 'simple',
             setStoreResultsViewMode: state.setResultsViewMode,
+            canonicalBuildMeta: state.canonicalBuildMeta ?? null,
         }),
         shallow
     );
@@ -146,7 +148,8 @@ const AnalysisPanelComponent: React.FC = () => {
         csvData: canonicalCsvData ?? csvData,
         language,
         currentDatasetVersion: getCurrentAnalysisDatasetVersion({ canonicalCsvData, csvData }),
-    }), [cards, columnProfiles, canonicalCsvData, csvData, language]);
+        seriesMeasure: resolveSeriesMeasure({ canonicalBuildMeta, columnProfiles }),
+    }), [cards, columnProfiles, canonicalCsvData, canonicalBuildMeta, csvData, language]);
     const completionGate = useMemo(() => resolveAnalysisCompletionGate({
         cards,
         currentDatasetVersion: getCurrentAnalysisDatasetVersion({ canonicalCsvData, csvData }),

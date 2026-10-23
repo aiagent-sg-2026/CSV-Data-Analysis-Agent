@@ -18,7 +18,9 @@ export type AutoAnalysisEvaluationReasonCode =
     | 'unclassified_share_warning'
     | 'volume_driven_aggregate'
     | 'small_sample_leader'
-    | 'tied_leading_values';
+    | 'tied_leading_values'
+    | 'cross_series_aggregate'
+    | 'series_scope_warning';
 
 export type AutoAnalysisCardVerdict = 'trusted' | 'caveated' | 'weak';
 
@@ -141,6 +143,9 @@ const AGGREGATION_QUALITY_WARNING_FLAGS = new Set([
     'repeated_bundle_dimension',
 ]);
 
+const SERIES_INVALID_GATE_CODES = new Set<string>(['cross_series_aggregate', 'series_hierarchy_double_count']);
+const SERIES_CAVEAT_GATE_CODES = new Set<string>(['mixed_unit_series_comparison', 'series_hierarchy_mix', 'series_record_count']);
+
 export const evaluateAutoAnalysisCards = (
     cards: AnalysisCardData[],
     options?: {
@@ -217,6 +222,17 @@ export const evaluateAutoAnalysisCards = (
                 reasonCodes.push('small_sample_leader');
                 detailParts.push(`smallSampleLeaders=${smallLeaders.map(leader => `${leader.label}:${leader.rows}`).join(', ')}`);
             }
+            // A series-dependent measure aggregated across series of different
+            // meaning is wrong, not merely caveated; scoped-but-mixed views stay
+            // visible as tables and never become trusted headlines.
+            const gateReasonCodes = card.evidenceValueGate?.reasonCodes ?? [];
+            if (gateReasonCodes.some(code => SERIES_INVALID_GATE_CODES.has(code))) {
+                reasonCodes.push('cross_series_aggregate');
+                detailParts.push(`crossSeries=${gateReasonCodes.filter(code => SERIES_INVALID_GATE_CODES.has(code)).join(', ')}`);
+            } else if (gateReasonCodes.some(code => SERIES_CAVEAT_GATE_CODES.has(code))) {
+                reasonCodes.push('series_scope_warning');
+                detailParts.push(`seriesScope=${gateReasonCodes.filter(code => SERIES_CAVEAT_GATE_CODES.has(code)).join(', ')}`);
+            }
             const tiedWindow = findTiedLeadingWindow(card);
             if (tiedWindow) {
                 reasonCodes.push('tied_leading_values');
@@ -292,7 +308,8 @@ export const evaluateAutoAnalysisCards = (
                 code === 'fallback_plan'
                 || code === 'narrative_ineligible'
                 || code === 'helper_exposure'
-                || code === 'value_gate_reject',
+                || code === 'value_gate_reject'
+                || code === 'cross_series_aggregate',
             );
             // unsafe_business_narrative on a table_only card is caveated, not weak —
             // the chart would be misleading, but the data table itself is fine.

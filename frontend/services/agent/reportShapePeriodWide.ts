@@ -1,4 +1,4 @@
-import type { CsvData, CsvRow, DataOperation, RowRoleCandidate } from '../../types';
+import type { CsvData, CsvRow, DataOperation, RowRoleCandidate, SeriesMeasureSemantics } from '../../types';
 import {
     PLACEHOLDER_PATTERN,
     SUBTOTAL_ROW_PATTERN,
@@ -50,6 +50,8 @@ export interface PeriodWideReshape {
     sourceRows: CsvRow[];
     operations: DataOperation[];
     hasHierarchy: boolean;
+    /** Hierarchy aligned with `sourceRows`; null when the labels carry none. */
+    hierarchy: PeriodWideRowHierarchy[] | null;
 }
 
 export const PERIOD_WIDE_OUTPUT_COLUMNS = {
@@ -346,7 +348,7 @@ export const buildPeriodWideReshape = (data: CsvData | null): PeriodWideReshape 
         },
     ];
 
-    return { detection, sourceRows, operations, hasHierarchy: Boolean(hierarchy) };
+    return { detection, sourceRows, operations, hasHierarchy: Boolean(hierarchy), hierarchy };
 };
 
 /**
@@ -378,4 +380,175 @@ export const buildPeriodWideRowRoles = (
             depth: entry?.level ?? 0,
         };
     });
+};
+
+// A published parent must equal the sum of its children in at least this
+// share of the periods where both are published; SingStat-style tables round
+// each cell, so an exact match is not required.
+const MIN_PARENT_MATCH_RATIO = 0.9;
+const PARENT_RELATIVE_TOLERANCE = 0.005;
+
+const parsePeriodCell = (value: unknown): number | null => {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value !== 'string' || !isNumericLike(value)) return null;
+    const parsed = Number(value.replace(/,/g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
+};
+
+const countDecimals = (value: unknown): number => {
+    const match = /\.(\d+)$/.exec(String(value ?? '').trim());
+    return match ? match[1].length : 0;
+};
+
+/** Compares one parent with the sum of its children, period by period. */
+const verifyParentSum = (
+    parentRow: CsvRow,
+    childRows: CsvRow[],
+    periodColumns: string[],
+): { checked: number; matched: number } => {
+    let checked = 0;
+    let matched = 0;
+    for (const column of periodColumns) {
+        const parentValue = parsePeriodCell(parentRow[column]);
+        const childValues = childRows
+            .map(row => parsePeriodCell(row[column]))
+            .filter((value): value is number => value !== null);
+        if (parentValue === null || childValues.length === 0) continue;
+        checked += 1;
+        const decimals = Math.max(countDecimals(parentRow[column]), ...childRows.map(row => countDecimals(row[column])));
+        // Every rounded cell can be off by half a unit of its last digit.
+        const roundingTolerance = (childValues.length + 1) * 0.5 * 10 ** -decimals;
+        const tolerance = Math.max(Math.abs(parentValue) * PARENT_RELATIVE_TOLERANCE, roundingTolerance);
+        const sum = childValues.reduce((total, value) => total + value, 0);
+        if (Math.abs(parentValue - sum) <= tolerance) matched += 1;
+    }
+    return { checked, matched };
+};
+
+const describeAdditivity = (params: {
+    additive: boolean;
+    seriesCount: number;
+    hasHierarchy: boolean;
+    rootCount: number;
+    verifiedParents: number;
+    parentCount: number;
+    matched: number;
+    checked: number;
+}): string => {
+    const periods = `${params.matched}/${params.checked} parent periods match`;
+    if (params.additive) {
+        return `One published total covers all ${params.seriesCount} series and every published parent equals the sum of its children (${periods}), so detail series share one unit.`;
+    }
+    if (!params.hasHierarchy) {
+        return `No published total ties the ${params.seriesCount} series together, so their values may measure different things.`;
+    }
+    if (params.rootCount !== 1) {
+        return `${params.rootCount} top-level series are not covered by one published total, so their values may measure different things.`;
+    }
+    return `Only ${params.verifiedParents} of ${params.parentCount} published parent series equal the sum of their children (${periods}), so the series are not verified to share one unit.`;
+};
+
+/**
+ * Decides, from the published numbers only, whether the series of a melted
+ * table can be summed with each other. The rule is conservative: the series
+ * are additive only when one published total covers every series and every
+ * published parent equals the sum of its children for almost all periods.
+ * Labels and units are never guessed, so a table of unrelated series (for
+ * example rail length next to daily ridership) is non-additive even when one
+ * of its families adds up.
+ */
+export const describePeriodWideSeriesMeasure = (reshape: PeriodWideReshape): SeriesMeasureSemantics | null => {
+    const { detection, sourceRows, hierarchy } = reshape;
+    const seriesColumn = detection.labelColumns.length === 1 ? detection.labelColumns[0] : null;
+    if (!seriesColumn || sourceRows.length === 0) return null;
+    const periodColumns = detection.periodColumns.map(entry => entry.column);
+    const labels = sourceRows.map(row => String(row[seriesColumn] ?? '').trim());
+    const isFlatHierarchy = Boolean(hierarchy?.every(entry => entry.parentIndex === null));
+
+    const childrenByParent = new Map<number, number[]>();
+    if (hierarchy && isFlatHierarchy) {
+        // Without indentation only explicit total rows are flagged, so a single
+        // total row is checked against every detail row.
+        const flagged = hierarchy.flatMap((entry, index) => (entry.rowClass === 'fact' ? [] : [index]));
+        if (flagged.length === 1 && hierarchy[flagged[0]].rowClass === 'total') {
+            childrenByParent.set(flagged[0], hierarchy.flatMap((entry, index) => (entry.rowClass === 'fact' ? [index] : [])));
+        }
+    } else if (hierarchy) {
+        hierarchy.forEach((entry, index) => {
+            if (entry.parentIndex === null) return;
+            childrenByParent.set(entry.parentIndex, [...(childrenByParent.get(entry.parentIndex) ?? []), index]);
+        });
+    }
+
+    const parentIndexes = hierarchy
+        ? hierarchy.flatMap((entry, index) => (entry.rowClass === 'fact' ? [] : [index]))
+        : [];
+    let checked = 0;
+    let matched = 0;
+    const unitFamilies: SeriesMeasureSemantics['unitFamilies'] = [];
+    for (const parentIndex of parentIndexes) {
+        const childIndexes = childrenByParent.get(parentIndex) ?? [];
+        if (childIndexes.length === 0) continue;
+        const result = verifyParentSum(sourceRows[parentIndex], childIndexes.map(index => sourceRows[index]), periodColumns);
+        checked += result.checked;
+        matched += result.matched;
+        if (result.checked > 0 && result.matched / result.checked >= MIN_PARENT_MATCH_RATIO) {
+            unitFamilies.push({ parent: labels[parentIndex], children: childIndexes.map(index => labels[index]) });
+        }
+    }
+
+    const rootIndexes = !hierarchy
+        ? labels.map((_, index) => index)
+        : isFlatHierarchy
+            ? hierarchy.flatMap((entry, index) => (entry.rowClass === 'total' ? [index] : []))
+            : hierarchy.flatMap((entry, index) => (entry.parentIndex === null ? [index] : []));
+    const additiveAcrossSeries = Boolean(hierarchy)
+        && rootIndexes.length === 1
+        && childrenByParent.has(rootIndexes[0])
+        && parentIndexes.length > 0
+        && unitFamilies.length === parentIndexes.length;
+
+    const periodStartByColumn = new Map(detection.periodColumns.map(entry => [entry.column, entry.period.start]));
+    const series = sourceRows.map((row, index) => {
+        const published = periodColumns.filter(column => parsePeriodCell(row[column]) !== null);
+        const entry = hierarchy?.[index];
+        return {
+            name: labels[index],
+            parent: entry && entry.parentIndex !== null ? labels[entry.parentIndex] : null,
+            rowClass: entry?.rowClass ?? 'fact',
+            observations: published.length,
+            latestPeriod: published.length > 0 ? periodStartByColumn.get(published[published.length - 1]) ?? null : null,
+        };
+    });
+
+    return {
+        seriesColumn,
+        measureColumn: PERIOD_WIDE_OUTPUT_COLUMNS.value,
+        periodColumn: PERIOD_WIDE_OUTPUT_COLUMNS.period,
+        periodGrain: detection.grain,
+        parentColumn: hierarchy ? PERIOD_WIDE_OUTPUT_COLUMNS.parent : null,
+        // The canonical table copies RowClass into RowRole and ResolvedRowRole.
+        detailRowColumns: hierarchy ? [PERIOD_WIDE_OUTPUT_COLUMNS.rowClass, 'RowRole', 'ResolvedRowRole'] : [],
+        detailRowValue: 'fact',
+        additiveAcrossSeries,
+        unitFamilies,
+        evidence: {
+            rootSeries: rootIndexes.length,
+            parentSeriesChecked: parentIndexes.length,
+            parentSeriesVerified: unitFamilies.length,
+            parentPeriodsChecked: checked,
+            parentPeriodsMatched: matched,
+            summary: describeAdditivity({
+                additive: additiveAcrossSeries,
+                seriesCount: labels.length,
+                hasHierarchy: Boolean(hierarchy),
+                rootCount: rootIndexes.length,
+                verifiedParents: unitFamilies.length,
+                parentCount: parentIndexes.length,
+                matched,
+                checked,
+            }),
+        },
+        series,
+    };
 };

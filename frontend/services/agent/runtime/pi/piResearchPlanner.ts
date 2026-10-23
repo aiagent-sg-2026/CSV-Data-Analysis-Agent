@@ -1,6 +1,6 @@
 import { Agent, type AgentTool, type StreamFn } from '@earendil-works/pi-agent-core';
 import { Type } from '@earendil-works/pi-ai';
-import type { ColumnAdditivity, ColumnProfile, ResearchPlan } from '../../../../types';
+import type { ColumnAdditivity, ColumnProfile, ResearchPlan, SeriesMeasureSemantics } from '../../../../types';
 import { getCurrentAnalysisDatasetVersion } from '../../artifactProvenance';
 import { emitAgentEvent } from '../../monitoring/agentMonitor';
 import { emitSilentFailure } from '../../monitoring/silentFailureTracker';
@@ -12,6 +12,7 @@ import {
     applyColumnAdditivity,
     buildResearchPlan,
     checkQuestionMethods,
+    checkQuestionSeriesScope,
     checkSumVolumeDependence,
     MAX_PLAN_QUESTIONS,
     MIN_PLAN_QUESTIONS,
@@ -23,6 +24,7 @@ import {
 import { createPiSkillTool } from './piSkillTool';
 import { executeEvidenceQuery } from '../../execution/sqlCardExecutor';
 import { buildVolumeCheckQuery, readVolumeCheckRows } from '../../planning/volumeDrivenSum';
+import { buildSeriesMeasureGuidance, resolveSeriesMeasure } from '../../planning/seriesMeasureGuard';
 
 export const SUBMIT_RESEARCH_PLAN_TOOL = 'submit_research_plan';
 const PLANNER_MAX_PROVIDER_TURNS = 9;
@@ -45,11 +47,18 @@ const buildPlannerSystemPrompt = (params: {
     fileName: string;
     rowCount: number | null;
     columns: ColumnProfile[];
+    seriesMeasure?: SeriesMeasureSemantics | null;
 }): string => [
     'You plan the first analysis of a CSV dataset for a business reader. You decide which questions are worth answering and how to measure them; the app then runs the queries and verifies the numbers.',
     `File: ${params.fileName}${params.rowCount !== null ? ` (${params.rowCount.toLocaleString()} rows)` : ''}`,
     `Research goal: ${params.goal}`,
     `Columns:\n${params.columns.slice(0, MAX_COLUMNS_IN_PROMPT).map(describeColumn).join('\n')}`,
+    ...(params.seriesMeasure
+        ? [
+            `Series table:\n${buildSeriesMeasureGuidance(params.seriesMeasure)}`,
+            `For a question about one series, set \`series\` to its exact ${params.seriesMeasure.seriesColumn} value and use ${params.seriesMeasure.periodColumn} as the dimension, e.g. a trend of one series over time. Compare series only by using ${params.seriesMeasure.seriesColumn} as the dimension.`,
+        ]
+        : []),
     'How to work:',
     '1. Read the choose-metric-and-aggregation skill first, and any other listed skill that matches.',
     '2. Look at the data only as much as needed (data_describe, data_value_counts, data_missing, data_outliers, data_query) so your choices rest on what the columns actually contain.',
@@ -65,6 +74,7 @@ const optionalString = (description: string) => Type.Optional(Type.Union([Type.S
 
 const buildSubmitTool = (params: {
     columns: ColumnProfile[];
+    seriesMeasure?: SeriesMeasureSemantics | null;
     datasetVersion: string;
     measureGroups: MeasureGroupSumAndCount;
     signal: AbortSignal;
@@ -84,6 +94,7 @@ const buildSubmitTool = (params: {
                 aggregation: optionalString('sum, avg, median, count, count_distinct, min, max or percentile.'),
                 comparison: optionalString('Optional comparison intent such as "trend over time".'),
                 total_intent: Type.Optional(Type.Boolean({ description: 'Only with sum: true when the question is explicitly about total volume or value, not about comparing typical values.' })),
+                series: optionalString('Only for a table of named series (one row per series and period): the exact series value this question measures, or null.'),
             })),
             columns: Type.Optional(Type.Array(Type.Object({
                 column: Type.String({ description: 'Exact numeric column name.' }),
@@ -104,8 +115,10 @@ const buildSubmitTool = (params: {
             const additivity = validateColumnAdditivity((args as { columns?: unknown })?.columns, params.columns);
             // Hold each question to the model's own additivity judgement, then check grouped sums against the data.
             const methods = checkQuestionMethods(validation.questions, { ...readProfileAdditivity(params.columns), ...additivity.accepted });
-            const volume = await checkSumVolumeDependence(methods.questions, params.measureGroups, { profiles: params.columns, signal: params.signal });
-            const methodRejections = [...methods.rejected, ...volume.rejected];
+            // A melted series table's value only has meaning per series.
+            const scoped = checkQuestionSeriesScope(methods.questions, params.seriesMeasure);
+            const volume = await checkSumVolumeDependence(scoped.questions, params.measureGroups, { profiles: params.columns, signal: params.signal });
+            const methodRejections = [...methods.rejected, ...scoped.rejected, ...volume.rejected];
             const checked = { questions: volume.questions, rejected: [...validation.rejected, ...methodRejections] };
             // A method problem is worth a corrected resubmission rather than silently dropping the question.
             if (methodRejections.length > 0 && submissions < PLANNER_MAX_SUBMISSIONS) {
@@ -170,6 +183,7 @@ export const runPiResearchPlanner = async (params: {
     const dataset = getPreferredAnalysisDataset(state);
     const columns = (state.columnProfiles ?? []) as ColumnProfile[];
     if (!dataset || columns.length === 0) return null;
+    const seriesMeasure = resolveSeriesMeasure({ canonicalBuildMeta: state.canonicalBuildMeta, columnProfiles: columns });
     const datasetVersion = getCurrentAnalysisDatasetVersion(state) ?? params.datasetVersionFallback;
 
     let accepted: ResearchPlan | null = null;
@@ -192,6 +206,7 @@ export const runPiResearchPlanner = async (params: {
         createPiSkillTool(store),
         buildSubmitTool({
             columns,
+            seriesMeasure,
             datasetVersion,
             measureGroups: params.measureGroups ?? createEvidenceQueryMeasure(store, planningController.signal),
             signal: planningController.signal,
@@ -207,6 +222,7 @@ export const runPiResearchPlanner = async (params: {
                 fileName: state.csvData?.fileName ?? 'dataset',
                 rowCount: state.csvData?.backing?.rowCount ?? dataset.data?.length ?? null,
                 columns,
+                seriesMeasure,
             }),
             model: resolvePiModel(settings),
             thinkingLevel: resolvePiThinkingLevel(settings),

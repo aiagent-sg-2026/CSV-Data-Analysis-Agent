@@ -203,6 +203,51 @@ export interface CanonicalReshapeProvenance {
     rowCountAfter: number;
 }
 
+/** One published series of a melted period-header wide table. */
+export interface PeriodSeriesInfo {
+    name: string;
+    parent: string | null;
+    rowClass: 'fact' | 'subtotal' | 'total';
+    /** Periods with a published (non-missing) value. */
+    observations: number;
+    /** ISO start date of the latest period with a published value. */
+    latestPeriod: string | null;
+}
+
+/**
+ * What the value column of a melted period-header wide table means. Each row
+ * holds one series in one period, and different series can measure different
+ * things (km of rail, daily riders, passenger-km), so the value is only
+ * comparable or summable across series when the intake verified it.
+ */
+export interface SeriesMeasureSemantics {
+    seriesColumn: string;
+    measureColumn: string;
+    periodColumn: string;
+    periodGrain: 'year' | 'quarter' | 'month';
+    parentColumn: string | null;
+    /** Columns carrying the row class (RowClass and its RowRole copies); empty without a hierarchy. */
+    detailRowColumns: string[];
+    detailRowValue: string;
+    /**
+     * True only when one published total covers every series and each published
+     * parent equals the sum of its children for almost all periods, so detail
+     * (fact) series share one unit and can be summed.
+     */
+    additiveAcrossSeries: boolean;
+    /** Families verified to share a unit: a published parent equal to the sum of its children. */
+    unitFamilies: Array<{ parent: string; children: string[] }>;
+    evidence: {
+        rootSeries: number;
+        parentSeriesChecked: number;
+        parentSeriesVerified: number;
+        parentPeriodsChecked: number;
+        parentPeriodsMatched: number;
+        summary: string;
+    };
+    series: PeriodSeriesInfo[];
+}
+
 export interface CanonicalBuildMeta {
     shape: CanonicalizationDecision['targetShape'];
     source: CanonicalBuildSource;
@@ -214,6 +259,8 @@ export interface CanonicalBuildMeta {
     carryForwardAppliedCounts: Record<string, number>;
     footerTotalsMatched: boolean | null;
     reshapeProvenance?: CanonicalReshapeProvenance;
+    /** Set when the canonical table is a melted period-header wide table. */
+    seriesMeasure?: SeriesMeasureSemantics | null;
 }
 
 export interface CanonicalDatasetArtifact {
