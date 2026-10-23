@@ -113,6 +113,24 @@
   - In progress:
     - Worker R: `na`/`N.A.`/`-` become NULL, not 0, in numeric aggregation ("School of Law = 0" on the live card).
     - Worker S: recognise the SingStat wide shape through the existing wide-reshape/unpivot path, without double-counting subtotals, plus visitor intake speed.
+  - Integrated afterwards:
+    - R: missing markers become NULL in DuckDB, Arquero and in-process aggregation.
+    - S: `reportShapePeriodWide.ts` melts period-header wide tables into `DataSeries/ParentSeries/HierarchyDepth/RowClass/Period/Value`. Visitor intake went from 27.6 s to 1.6 s.
+    - T: marker-aware column typing in `profileData`/`profileDataLightweight`; a whole-string numeric parse, so `2010-01` is no longer read as 2010; quality repair offered only on columns that `data.mutate` can reach.
+    - Manager fixes:
+      - the simple view gains a "Show the N cards to review" button when no card is verified;
+      - a bare year shows as `2013`, not `2,013`.
+  - Full gate before T: 446 files / 4,223 tests.
+  - **Real-AI runs on local candidates under the live origin (2026-10-23)**. All 9 datasets now pass intake with no structure-review dialog. The gateway's 20-request session limit was hit mid-run several times, and the app opened a new session and continued each time.
+    - COE (before T): 94 s, 2 cards, both "need review". The simple view was empty, which is now fixed with the review button.
+    - Rent:
+      - Before T: only record counts, because `median_rent` was typed as text.
+      - After T: median rent by flat type, by town, and the quarterly trend. Independently verified: 5-RM 2,600, EXEC 2,500, 4-RM 2,400, 2-RM 2,200, 3-RM 2,000.
+      - Bug: `1-RM` has no reported rent but shows `0.00`, because the presentation layer turns NULL into 0. Worker V is fixing this.
+    - Graduate employment: 5 cards; the small-sample caveat shows. The `ï¿½` in some school names is in the MOE source file itself.
+    - Transport, **P0**: SUM(Value) across series with different units ("Total ridership 11.2M", marked Verified), and a summary line "total ridership was 67" (67 is rail length in km). Worker U is fixing this: series additivity at intake, and a gate that requires a per-series analysis.
+    - Business formation: 3 cards; the top-4 medians are verified (Wholesale 777, Professional Services 615, Retail 405, Finance 323). "Max Value by Period" is generic and low-value.
+    - Visitor arrivals: 4 cards; total by market verified (Indonesia 42,399,967, China 36,552,383, ...).
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
