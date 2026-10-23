@@ -284,16 +284,41 @@ const getSuspiciousCollapseScore = (
     return roundRatio(Math.max(0, 1 - retention));
 };
 
+const HEADER_LAYER_JOINER = ' :: ';
+
+const normalizeLayerLabel = (value: unknown) => String(value ?? '').trim().toLowerCase();
+
+/**
+ * Intake can fold the header layers into the column names ("Order :: Date",
+ * "FY2025 :: Q1") instead of reshaping the table. Nothing is lost then, and no
+ * reshape is needed to keep the layers. This holds only when every non-empty
+ * band label of every raw header layer still appears as a part of some cleaned
+ * column name; a layer that was dropped leaves its labels unreferenced.
+ */
+const areHeaderLayersFoldedIntoColumns = (rawData: CsvData | null, cleanedData: CsvData | null): boolean => {
+    const bandLabels = new Set((rawData?.headerLayers ?? [])
+        .flatMap(layer => layer.map(normalizeLayerLabel))
+        .filter(Boolean));
+    if (bandLabels.size === 0) return false;
+    // A band row can also repeat a plain column name (a leaf label printed on the band row), which a kept
+    // column already preserves, so every column name counts, not only the joined ones.
+    const foldedParts = new Set(getColumns(cleanedData)
+        .flatMap(column => column.split(HEADER_LAYER_JOINER).map(normalizeLayerLabel)));
+    return [...bandLabels].every(label => foldedParts.has(label));
+};
+
 const getMultiHeaderLayerRetentionRate = (
     rawProfileHypothesis: ReshapeHypothesis | null,
     plan: DataPreparationPlan | null | undefined,
     requiresReshape: boolean,
+    foldedIntoColumns: boolean,
 ) => {
     if (!requiresReshape) return 1;
     if (!rawProfileHypothesis) return 1;
     if (rawProfileHypothesis.seriesLabelColumns.length === 0) return 1;
     const labelColumns = getUnpivotLabelColumns(plan);
-    if (labelColumns.length === 0) return 0;
+    // Without an unpivot the layers can only survive inside the column names.
+    if (labelColumns.length === 0) return foldedIntoColumns && !getUnpivotOperation(plan) ? 1 : 0;
     const expectedColumns = rawProfileHypothesis.seriesLabelColumns.map(column => column.outputColumn);
     const retainedColumns = labelColumns.filter(column => expectedColumns.includes(column.outputColumn)).length;
     return roundRatio(retainedColumns / expectedColumns.length);
@@ -412,11 +437,14 @@ const getDetailSeriesCoverageRate = (
     detailSeriesColumns: string[],
     plan: DataPreparationPlan | null | undefined,
     requiresReshape: boolean,
+    foldedIntoColumns = false,
 ) => {
     if (!requiresReshape) return 1;
     if (detailSeriesColumns.length === 0) return 1;
     const unpivot = getUnpivotOperation(plan);
-    if (!unpivot) return 0;
+    // A table whose header layers are folded into its column names ("FY2025 :: Q1") is melted by
+    // canonicalization with the band labels kept; only an unfolded wide table has nothing handling it.
+    if (!unpivot) return foldedIntoColumns ? 1 : 0;
     const covered = detailSeriesColumns.filter(column => unpivot.sourceColumns.includes(column)).length;
     return roundRatio(covered / detailSeriesColumns.length);
 };
@@ -598,8 +626,9 @@ export const buildCleaningVerificationReport = (
     );
     const requiresRawInspection = shouldRequireRawInspection(rawData, rawProfile);
 
-    const detailSeriesCoverageRate = getDetailSeriesCoverageRate(detailSeriesColumns, plan, rawRequiresReshape);
-    const multiHeaderLayerRetentionRate = getMultiHeaderLayerRetentionRate(primaryHypothesis, plan, rawRequiresReshape);
+    const headerLayersFolded = areHeaderLayersFoldedIntoColumns(rawData, cleanedData);
+    const detailSeriesCoverageRate = getDetailSeriesCoverageRate(detailSeriesColumns, plan, rawRequiresReshape, headerLayersFolded);
+    const multiHeaderLayerRetentionRate = getMultiHeaderLayerRetentionRate(primaryHypothesis, plan, rawRequiresReshape, headerLayersFolded);
     const multiHeaderLayerRetentionDetail = getMultiHeaderLayerRetentionDetail(primaryHypothesis, plan, rawRequiresReshape);
     const labelLayerRetentionComplete = multiHeaderLayerRetentionRate === 1;
     const summarySeriesExclusionRate = getSummarySeriesExclusionRate(summarySeriesCandidates, plan, rawRequiresReshape);
