@@ -7,14 +7,19 @@ import { summarizeDataQualityForEndUser } from '../services/data/dataProfiler';
 import { getTranslation } from '../utils/localization';
 
 const DataQualityWarningsComponent: React.FC = () => {
-    const { dataWarnings, intakeWarnings, language } = useAppStore((state: AppStore) => ({
+    const { dataWarnings, intakeWarnings, intakeStrategy, language } = useAppStore((state: AppStore) => ({
         dataWarnings: state.agentMemoryRun?.findings.warnings.map(w => w.message) ?? state.dataQualityIssues ?? [],
         intakeWarnings: state.csvData?.intakeDetection?.warnings ?? [],
+        intakeStrategy: state.csvData?.intakeDetection?.strategy ?? null,
         language: state.settings.language,
     }), shallow);
 
     const warningMessages = Array.isArray(dataWarnings) ? dataWarnings : [];
-    const intakeWarningMessages = intakeWarnings.map(warning => warning.message);
+    // Warning messages are English diagnostics; the not-delimited note is shown
+    // in the user's language because it explains why the columns may be wrong.
+    const intakeWarningMessages = intakeWarnings.map(warning => warning.code === 'not_delimited_text'
+        ? getTranslation(intakeStrategy === 'fixed_width_layout' ? 'data_warnings_intake_not_delimited_split' : 'data_warnings_intake_not_delimited_unsplit', language)
+        : warning.message);
     const hasWarnings = warningMessages.length > 0 || intakeWarningMessages.length > 0;
     if (!hasWarnings) return null;
 

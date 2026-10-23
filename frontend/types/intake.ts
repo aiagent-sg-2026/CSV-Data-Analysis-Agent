@@ -5,14 +5,17 @@
 export type CsvCellValue = string | number | boolean | null;
 export type CsvRow = { [key: string]: CsvCellValue };
 
-export type CsvIntakeDetectionStrategy = 'scored_candidate' | 'papaparse_auto_fallback' | 'raw_line_fallback';
+export type CsvIntakeDetectionStrategy = 'scored_candidate' | 'papaparse_auto_fallback' | 'raw_line_fallback' | 'fixed_width_layout';
 export type CsvIntakeConfidence = 'high' | 'medium' | 'low';
 export type CsvIntakeWarningCode =
     | 'mixed_delimiter'
     | 'malformed_quote'
     | 'header_shape_drift'
+    | 'stacked_sections'
     | 'low_confidence'
-    | 'parse_errors';
+    | 'parse_errors'
+    /** The file is a space-aligned text report, not a delimited CSV. */
+    | 'not_delimited_text';
 
 export interface CsvIntakeWarning {
     code: CsvIntakeWarningCode;
@@ -126,6 +129,23 @@ export interface IntakePreScanSignals {
     deterministicSummaryStartIndex?: number;
 }
 
+/**
+ * A second table stacked below the analysed table in the same file (a title
+ * line plus its own header). Its rows are kept out of the analysis table.
+ */
+export interface IntakeSetAsideSection {
+    /** First row of the block, including the blank spacer rows above its title. */
+    rowStart: number;
+    /** Last row of the block (the row before the next set-aside block or the end of the file). */
+    rowEnd: number;
+    titleRowIndex: number;
+    headerRowIndex: number;
+    title: string;
+    headerLabels: string[];
+    /** Data rows under the block's own header. */
+    rowCount: number;
+}
+
 export interface ReportIntakeDiagnostics {
     hasRepeatedHeader: boolean;
     hasParameterRowsBetweenHeaderAndBody: boolean;
@@ -161,6 +181,8 @@ export interface ReportIntakeDiagnostics {
     syntheticHeaderApplied?: boolean;
     /** Column indexes (0-based) where ≥30% of raw cells were zero-placeholder markers ('-, etc.). */
     zeroPlaceholderColumnIndexes?: number[];
+    /** Other tables stacked below the analysed table; they sit after `summaryStartIndex`. */
+    setAsideSections?: IntakeSetAsideSection[];
 }
 
 export interface AiIntakeStructureBoundary {

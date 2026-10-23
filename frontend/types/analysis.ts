@@ -95,6 +95,9 @@ export interface ColumnProfile {
      *  thousands separators (e.g. "1,234.56"). DuckDB cannot CAST these directly;
      *  replace_values must strip commas first. */
     hasFormattedNumbers?: boolean;
+    /** Set when the column proves the European number style (`1.234,56`). Such a column must
+     *  never be comma-stripped; its ambiguous cells (`4.567`) read as thousands. */
+    numberFormat?: 'decimal_comma';
     /** True when the column is typed numerical but raw values contain apostrophe-prefixed
      *  numbers (e.g. "'-852.81"). DuckDB cannot CAST these directly;
      *  replace_values must strip the leading apostrophe first. */

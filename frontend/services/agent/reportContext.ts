@@ -69,6 +69,8 @@ const normalizeLineList = (lines: Array<string | null | undefined>, limit: numbe
     for (const line of lines) {
         const value = normalizeText(line);
         if (!value) continue;
+        // A rule such as "-----" or "=====" is decoration, never a title or parameter.
+        if (!/[\p{L}\p{N}]/u.test(value)) continue;
         const key = value.toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);

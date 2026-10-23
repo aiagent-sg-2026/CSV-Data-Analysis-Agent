@@ -678,6 +678,43 @@ describe('Pi production runtime', () => {
         });
         expect(store.getState().csvData.data).toEqual([{Town:'A',Amount:10}]);
     });
+    it('leaves an earlier failed cleaning run and its text untouched when a new run starts', async () => {
+        const seen: Array<{ status?: string; lastError?: string | null }> = [];
+        stageMock.mockImplementation(async ({ toolName, phase, context }) => {
+            const run = context.store.getState().cleaningRun;
+            seen.push({ status: run?.status, lastError: run?.lastError });
+            return {
+                decision: 'pass', phase, toolName, datasetVersion: context.request.datasetVersion,
+                summary: 'ok', warningCodes: [], artifactRefs: [], transformationIds: [], cardIds: [],
+            };
+        });
+        const store = createStore();
+        store.setState({ cleaningRun: { runId: 'old', status: 'failed', lastError: 'Numeric reconciliation failed.', steps: [], currentStep: 0 } });
+        await runPiInitialAnalysis({ appSessionId: 'session-1', datasetId: 'dataset-1', datasetVersion: 'version-1',
+            researchGoal: 'Find patterns.', provider: { provider: 'openai', modelId: 'mock' } }, store as never, stageToolStream());
+        expect(seen[0]).toEqual({ status: 'failed', lastError: 'Numeric reconciliation failed.' });
+        expect(store.getState().cleaningRun.lastError).toBe('Numeric reconciliation failed.');
+    });
+    it.each([
+        ['an idle run', { runId: 'r', status: 'running', steps: [], currentStep: 0 }, 'initial_analysis'],
+        ['a failure the cleaning loop wrote', { runId: 'r', status: 'failed', lastError: 'Numeric reconciliation failed.', steps: [], currentStep: 0 }, null],
+    ])('marks only an analysis-caused failure as such in a qualified run: %s', async (_name, cleaningRun, expectedOrigin) => {
+        const store = createStore();
+        store.setState({ cleaningRun, confirmedAnalysisGoal: 'Find patterns.', datasetBundle: createSingleTableDatasetBundle({
+            datasetId: 'synthetic', sourceFingerprint: 'synthetic', file: { name: 'synthetic.csv', size: 20, lastModified: 1 }, data: store.getState().csvData,
+        }) });
+        stageMock.mockImplementation(async ({ toolName, phase, context }) => ({
+            decision: 'fail', phase, toolName, datasetVersion: context.request.datasetVersion,
+            summary: 'Independent host meaning is unavailable.', warningCodes: ['validation_host_contract_required'],
+            artifactRefs: [], transformationIds: [], cardIds: [],
+        }));
+        await runPiInitialAnalysis({ appSessionId: 'session-1', datasetId: 'synthetic', datasetVersion: getCurrentAnalysisDatasetVersion(store.getState())!,
+            researchGoal: 'Find patterns.', provider: { provider: 'openai', modelId: 'mock' } }, store as never, stageToolStream(),
+            { codingPreparation: { enabled: true, qualified: true } });
+        expect(store.getState().cleaningRun.status).toBe('failed');
+        expect(store.getState().cleaningRun.failureOrigin ?? null).toBe(expectedOrigin);
+        localStorage.removeItem('pi-initial-analysis-v1:session-1');
+    });
     it('preserves optional skips with preparation enabled',async()=>{
         const names:string[]=[];passingStages(names);
         const result=await runPiInitialAnalysis({appSessionId:'session-1',datasetId:'dataset-1',datasetVersion:'version-1',researchGoal:'Find patterns.',provider:{provider:'openai',modelId:'mock'}},

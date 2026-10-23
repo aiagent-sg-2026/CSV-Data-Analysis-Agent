@@ -17,7 +17,7 @@ const HUMAN_CONFIRMABLE_INTAKE_BLOCKS = new Set([
     'intake_diagnostics_missing',
 ]);
 
-const HUMAN_CONFIRMABLE_VERIFICATION_SIGNALS = new Set([
+export const HUMAN_CONFIRMABLE_VERIFICATION_SIGNALS = new Set([
     'header_band_resolved',
     // Boolean terminal alias for multi_header_layer_retention_rate.
     'label_layer_retention_complete',
@@ -76,7 +76,8 @@ export const resolvePipelineOutcome = (input: {
         && HUMAN_CONFIRMABLE_VERIFICATION_SIGNALS.has(input.verificationReport.signalKey),
     );
 
-    if (input.cleaningRun?.status === 'failed') {
+    // A run marked failed only because the initial analysis stopped says nothing about the data.
+    if (input.cleaningRun?.status === 'failed' && input.cleaningRun.failureOrigin !== 'initial_analysis') {
         return {
             status: 'cleaning_failed',
             canAutoAnalyze: false,
@@ -103,7 +104,9 @@ export const resolvePipelineOutcome = (input: {
             canAutoAnalyze: false,
             severity: 'warning',
             reasonCode: structure.blockingReasons[0] ?? 'needs_structure_review',
-            message: `Structure review is required before automatic analysis. ${structure.decision.reason}`,
+            // The check codes stay in `reasonCode` and `structure.decision.reason` (technical details only);
+            // this message is shown to users as-is by several surfaces.
+            message: 'Structure review is required before automatic analysis.',
         };
     }
 

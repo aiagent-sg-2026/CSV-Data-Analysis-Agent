@@ -3,8 +3,20 @@ import { collectOrderedColumnNames } from './columnRegistry';
 // The same marker list that DuckDB aggregation treats as NULL, so a column the
 // profiler calls numerical is aggregated with exactly these cells skipped.
 import { isMissingCellValue } from '../duckdb/dimensionNormalization';
+import {
+    canonicalizeNumberBody,
+    resolveDecimalCommaColumns,
+    stripNumberDecorations,
+    type NumberStyle,
+} from './numberLocale';
 
-export const robustParseFloat = (value: any): number | null => {
+/**
+ * Reads one cell as a number. Without `style` the cell decides for itself and a
+ * cell valid in both styles (`1,234`, `4.567`) keeps the US reading. Callers
+ * that know the column (see `resolveDecimalCommaColumns`) pass its style so those
+ * ambiguous cells follow the column.
+ */
+export const robustParseFloat = (value: any, style?: NumberStyle | null): number | null => {
     if (value === null || value === undefined) return null;
 
     let s = String(value).trim();
@@ -23,19 +35,17 @@ export const robustParseFloat = (value: any): number | null => {
         isNegative = true;
     }
     
-    // 2. Remove common currency symbols and percentage signs
-    s = s.replace(/[$\s€£¥%]/g, '');
+    // 2. Remove currency symbols, percentage signs, spaces and Swiss apostrophes
+    s = stripNumberDecorations(s);
 
-    // 3. Standardize decimal separator
-    const lastComma = s.lastIndexOf(',');
-    const lastDot = s.lastIndexOf('.');
-    
-    if (lastComma > lastDot) {
-        // European format: 1.234,56 -> 1234.56
-        s = s.replace(/\./g, '').replace(',', '.');
-    } else {
-        // US format: 1,234.56 -> 1234.56
-        s = s.replace(/,/g, '');
+    // 3. Standardize separators per number, e.g. 1.234,56 and 1,234.56 -> 1234.56
+    const signed = s.startsWith('-') || s.startsWith('+');
+    const canonical = canonicalizeNumberBody(signed ? s.slice(1) : s, style);
+    if (canonical !== null) {
+        s = (signed ? s[0] : '') + canonical;
+    } else if (/^[+-]?[\d.,]+$/.test(s)) {
+        // Digits and separators that fit neither style, e.g. a date 04.03.2026.
+        return null;
     }
 
     // 4. Parse the cleaned string
@@ -85,9 +95,14 @@ export const profileData = (data: CsvRow[]): { profiles: ColumnProfile[], issues
     const issues: string[] = [];
     const MISSING_VALUE_THRESHOLD = 0.5; // 50%
 
+    // Columns that prove the decimal comma (1.234,56), or inherit it from the
+    // dataset, read their cells with it. Everything else keeps the per-cell rules.
+    const decimalCommaColumns = resolveDecimalCommaColumns(data, headers);
+
     for (const header of headers) {
         let isNumerical = true;
         const values = data.map(row => row[header]);
+        const numberStyle = decimalCommaColumns.has(header) ? 'decimal_comma' as const : null;
         let numericCount = 0;
         let blankCount = 0;
         let markerCount = 0;
@@ -106,7 +121,7 @@ export const profileData = (data: CsvRow[]): { profiles: ColumnProfile[], issues
                 continue;
             }
             if (!isNumerical) continue;
-            if (robustParseFloat(value) === null) {
+            if (robustParseFloat(value, numberStyle) === null) {
                 isNumerical = false;
                 continue;
             }
@@ -119,14 +134,19 @@ export const profileData = (data: CsvRow[]): { profiles: ColumnProfile[], issues
         }
 
         if (isNumerical && numericCount > 0) {
+            // Ambiguous cells such as 4.567 read as thousands in a decimal-comma
+            // column, so its range is not 1000x off.
+            const decimalComma = numberStyle === 'decimal_comma';
             const numericValues = values
                 .filter(v => !isMissingCellValue(v))
-                .map(robustParseFloat)
+                .map(v => robustParseFloat(v, numberStyle))
                 .filter((v): v is number => v !== null);
             // Detect comma-formatted thousands separators (e.g. "1,234.56") so downstream
             // SQL can be warned to strip commas before CAST.
             const COMMA_THOUSANDS_PATTERN = /\d{1,3}(,\d{3})+/;
-            const hasFormattedNumbers = values.some(v => {
+            // Stripping commas would corrupt a decimal-comma column (161,30 -> 16130),
+            // so it is never flagged as comma-formatted.
+            const hasFormattedNumbers = !decimalComma && values.some(v => {
                 const s = String(v ?? '').trim();
                 return s !== '' && COMMA_THOUSANDS_PATTERN.test(s);
             });
@@ -142,8 +162,12 @@ export const profileData = (data: CsvRow[]): { profiles: ColumnProfile[], issues
                 valueRange: [Math.min(...numericValues), Math.max(...numericValues)],
                 missingPercentage: missingPercentage * 100,
                 ...(hasFormattedNumbers ? { hasFormattedNumbers: true } : {}),
+                ...(decimalComma ? { numberFormat: 'decimal_comma' as const } : {}),
                 ...(hasApostrophePrefixedNumbers ? { hasApostrophePrefixedNumbers: true } : {}),
             });
+            if (decimalComma) {
+                issues.push(`Column '${header}' uses decimal commas (e.g. '1.234,56'); values are read as 1234.56.`);
+            }
             if (hasFormattedNumbers) {
                 issues.push(`Column '${header}' contains comma-formatted numbers (e.g. '1,234.56'). Strip commas with replace_values before casting to avoid SQL type errors.`);
             }
@@ -219,6 +243,7 @@ export const profileDataLightweight = (
             issues.push(`Lightweight profiler used a stratified sample of ${maxRows} rows (head/middle/tail) from ${data.length} total rows.`);
         }
 
+        const decimalCommaColumnsLw = resolveDecimalCommaColumns(sample, headers);
         const COMMA_THOUSANDS_PATTERN_LW = /\d{1,3}(,\d{3})+/;
         const APOSTROPHE_PREFIX_PATTERN_LW = /^['\u2018\u2019]/;
         const profiles: ColumnProfile[] = headers.map(header => {
@@ -257,7 +282,8 @@ export const profileDataLightweight = (
             // only in a numeric column; in a text column they are values.
             const presentCount = sample.length - blankCount - markerCount;
             const isNumeric = presentCount > 0 && numericCount / presentCount > 0.8;
-            const hasFormattedNumbers = isNumeric && commaFormattedCount > 0;
+            const decimalComma = isNumeric && decimalCommaColumnsLw.has(header);
+            const hasFormattedNumbers = isNumeric && !decimalComma && commaFormattedCount > 0;
             const hasApostrophePrefixedNumbers = isNumeric && apostrophePrefixedCount > 0;
             const isMissing = isNumeric ? isMissingCellValue : isBlankCellValue;
             let missingCount = blankCount + (isNumeric ? markerCount : 0);
@@ -275,6 +301,7 @@ export const profileDataLightweight = (
                 uniqueValues: isNumeric ? seen.size : seen.size + seenMarkers.size,
                 missingPercentage,
                 ...(hasFormattedNumbers ? { hasFormattedNumbers: true } : {}),
+                ...(decimalComma ? { numberFormat: 'decimal_comma' as const } : {}),
                 ...(hasApostrophePrefixedNumbers ? { hasApostrophePrefixedNumbers: true } : {}),
             } satisfies ColumnProfile;
         });
@@ -288,6 +315,7 @@ export const profileDataLightweight = (
 
 const HIGH_MISSING_VALUE_PATTERN = /^Column '(.+)' has a high percentage of missing values \((\d+)%\)\.$/;
 const COMMA_FORMATTED_PATTERN = /^Column '(.+)' contains comma-formatted numbers/;
+const DECIMAL_COMMA_PATTERN = /^Column '(.+)' uses decimal commas/;
 
 export const summarizeDataQualityIssues = (issues: string[]): string | null => {
     if (!Array.isArray(issues) || issues.length === 0) return null;
@@ -305,7 +333,12 @@ export const summarizeDataQualityIssues = (issues: string[]): string | null => {
         .filter((match): match is RegExpMatchArray => Boolean(match))
         .map(match => match[1]);
 
-    const knownIssueCount = parsedMissingWarnings.length + parsedFormattedWarnings.length;
+    const parsedDecimalCommaWarnings = issues
+        .map(issue => issue.match(DECIMAL_COMMA_PATTERN))
+        .filter((match): match is RegExpMatchArray => Boolean(match))
+        .map(match => match[1]);
+
+    const knownIssueCount = parsedMissingWarnings.length + parsedFormattedWarnings.length + parsedDecimalCommaWarnings.length;
 
     if (knownIssueCount === issues.length) {
         const parts: string[] = [];
@@ -320,6 +353,11 @@ export const summarizeDataQualityIssues = (issues: string[]): string | null => {
             const examples = parsedFormattedWarnings.slice(0, 3).join(', ');
             const remainder = parsedFormattedWarnings.length - Math.min(parsedFormattedWarnings.length, 3);
             parts.push(`${parsedFormattedWarnings.length} column${parsedFormattedWarnings.length > 1 ? 's' : ''} contain comma-formatted numbers (e.g. "1,234.56"): ${examples}${remainder > 0 ? `, and ${remainder} more` : ''}. Use replace_values to strip commas, then cast_column to numeric before running SQL aggregations.`);
+        }
+        if (parsedDecimalCommaWarnings.length > 0) {
+            const examples = parsedDecimalCommaWarnings.slice(0, 3).join(', ');
+            const remainder = parsedDecimalCommaWarnings.length - Math.min(parsedDecimalCommaWarnings.length, 3);
+            parts.push(`${parsedDecimalCommaWarnings.length} column${parsedDecimalCommaWarnings.length > 1 ? 's use' : ' uses'} decimal commas (e.g. "1.234,56"): ${examples}${remainder > 0 ? `, and ${remainder} more` : ''}. They are read as ordinary numbers and the file is not changed.`);
         }
         return parts.join(' ');
     }
@@ -345,7 +383,12 @@ export const summarizeDataQualityForEndUser = (issues: string[]): { userSummary:
         .filter((match): match is RegExpMatchArray => Boolean(match))
         .map(match => match[1]);
 
-    const knownIssueCount = parsedMissingWarnings.length + parsedFormattedWarnings.length;
+    const parsedDecimalCommaWarnings = issues
+        .map(issue => issue.match(DECIMAL_COMMA_PATTERN))
+        .filter((match): match is RegExpMatchArray => Boolean(match))
+        .map(match => match[1]);
+
+    const knownIssueCount = parsedMissingWarnings.length + parsedFormattedWarnings.length + parsedDecimalCommaWarnings.length;
 
     if (knownIssueCount === issues.length) {
         const userParts: string[] = [];
@@ -364,6 +407,12 @@ export const summarizeDataQualityForEndUser = (issues: string[]): { userSummary:
             const remainder = parsedFormattedWarnings.length - Math.min(parsedFormattedWarnings.length, 3);
             userParts.push(`${parsedFormattedWarnings.length} numeric column${parsedFormattedWarnings.length > 1 ? 's' : ''} contained formatting (e.g. "1,234.56") that was auto-corrected during cleaning${examples ? `: ${examples}` : ''}${remainder > 0 ? ` +${remainder}` : ''}.`);
             techParts.push(`Comma-formatted columns (auto-corrected): ${parsedFormattedWarnings.join(', ')}. Commas were stripped and values cast to numeric during cleaning.`);
+        }
+        if (parsedDecimalCommaWarnings.length > 0) {
+            const examples = parsedDecimalCommaWarnings.slice(0, 3).join(', ');
+            const remainder = parsedDecimalCommaWarnings.length - Math.min(parsedDecimalCommaWarnings.length, 3);
+            userParts.push(`${parsedDecimalCommaWarnings.length} numeric column${parsedDecimalCommaWarnings.length > 1 ? 's use' : ' uses'} decimal commas (e.g. "1.234,56") and ${parsedDecimalCommaWarnings.length > 1 ? 'are' : 'is'} read as ordinary numbers: ${examples}${remainder > 0 ? ` +${remainder}` : ''}.`);
+            techParts.push(`Decimal-comma columns: ${parsedDecimalCommaWarnings.join(', ')}. Do not strip commas; the app reads them per column.`);
         }
 
         return {

@@ -81,6 +81,9 @@ const runPostImportPipeline = (
                     ...prev.cleaningRun,
                     status: 'failed',
                     lastError: message,
+                    // The initial analysis stopped; cleaning itself did not fail. The structure gate ignores this
+                    // marker so a Retry or a confirmed structure can start again.
+                    failureOrigin: 'initial_analysis' as const,
                     updatedAt: new Date(),
                     shouldAutoResume: false,
                 }
@@ -404,7 +407,8 @@ export async function* orchestrateFileUpload(
             yield {
                 type: 'progress',
                 messageType: 'warning',
-                message: `The saved transformation lineage could not be reproduced (${replay.reasonCodes.join(', ')}). The original CSV was imported unchanged and a fresh governed analysis will run.`,
+                // The replay reason codes stay in the agent event detail below; this line is shown to users.
+                message: 'The saved transformation lineage could not be reproduced. The original CSV was imported unchanged and a fresh governed analysis will run.',
             };
             emitAgentEvent(store, {
                 phase: 'file',

@@ -3,6 +3,8 @@ import { buildDataPreparationWorkflowBundle } from '../../services/agent/buildDa
 import { summarizeTraceContract } from '../../services/agent/traceContractView';
 import type { AgentEvent } from '../../types';
 import { AgentActivityView } from '../agent-activity/AgentActivityView';
+import { useAppStore } from '../../store/useAppStore';
+import { getStructureReviewReasonText, getTranslation } from '../../utils/localization';
 
 type WorkflowBundle = ReturnType<typeof buildDataPreparationWorkflowBundle>;
 
@@ -67,6 +69,7 @@ export const DataPreparationWorkflowContent: React.FC<DataPreparationWorkflowCon
     onSaveStructureBoundaryOverride,
 }) => {
     const [showTechnicalDetails, setShowTechnicalDetails] = React.useState(defaultDetailMode === 'full');
+    const language = useAppStore(state => state.settings.language);
     const latestPipelineTrace = summarizeTraceContract(workflow.operationalSignals.latestPipelineTrace);
     const latestToolTrace = summarizeTraceContract(workflow.operationalSignals.latestToolTrace);
     const latestTelemetryTrace = summarizeTraceContract(workflow.operationalSignals.latestTelemetryTrace);
@@ -429,10 +432,16 @@ export const DataPreparationWorkflowContent: React.FC<DataPreparationWorkflowCon
                         <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                             <p className="font-semibold">Blocking reasons</p>
                             <ul className="mt-2 space-y-1 list-disc list-inside">
-                                {structureReview.blockingReasons.map(reason => (
-                                    <li key={reason}>{reason}</li>
+                                {Array.from(new Set(structureReview.blockingReasons.map(reason => getStructureReviewReasonText(reason, language)))).map(text => (
+                                    <li key={text}>{text}</li>
                                 ))}
                             </ul>
+                            <details className="mt-2 text-xs">
+                                <summary className="cursor-pointer font-medium">{getTranslation('structure_review_technical_details', language)}</summary>
+                                <p className="mt-1 break-words font-mono">
+                                    {getTranslation('structure_review_technical_codes', language, { codes: structureReview.blockingReasons.join(', ') })}
+                                </p>
+                            </details>
                         </div>
                     )}
                     <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3">

@@ -220,7 +220,7 @@ export const detectPeriodWideTableFromCsvData = (data: CsvData | null): PeriodWi
     return detectPeriodWideTable(columns, getCsvBodyCells(data, columns));
 };
 
-const measureIndent = (label: string) => {
+export const measureIndent = (label: string) => {
     const leading = /^[\s ]*/.exec(label)?.[0] ?? '';
     return [...leading].reduce((width, char) => width + (char === '\t' ? 4 : 1), 0);
 };
@@ -473,7 +473,7 @@ const countDecimals = (value: unknown): number => {
 };
 
 /** Compares one parent with the sum of its children, period by period. */
-const verifyParentSum = (
+export const verifyParentSum = (
     parentRow: CsvRow,
     childRows: CsvRow[],
     periodColumns: string[],

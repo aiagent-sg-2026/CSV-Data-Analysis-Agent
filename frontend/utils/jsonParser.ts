@@ -50,7 +50,9 @@ export const robustlyParseJsonArray = (responseText: string): any[] => {
  */
 export const robustlyParseJsonObject = (responseText: string): any => {
     let content = responseText.trim();
-
+    if (!content) {
+        throw new Error('AI response was empty or incomplete.');
+    }
     // 1. Try to extract JSON from markdown code blocks
     const markdownMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (markdownMatch && markdownMatch[1]) {

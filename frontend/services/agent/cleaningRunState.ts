@@ -63,9 +63,11 @@ export const updateCleaningRun = (
     return {
         ...baseRun,
         ...updates,
+        // The origin describes one specific failure write; any later update supersedes it.
+        failureOrigin: updates.failureOrigin ?? null,
         updatedAt: new Date(),
     };
 };
 
-export const shouldResumeCleaningRun = (run: CleaningRun | null) =>
+export const shouldResumeCleaningRun =(run: CleaningRun | null) =>
     Boolean(run && (run.status === 'running' || run.shouldAutoResume));

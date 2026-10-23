@@ -1414,6 +1414,35 @@ describe('analysis panel rendering', () => {
         expect(screen.getByText(/Dataset cleaning stopped after an error/)).toBeInTheDocument();
     });
 
+    it('offers a retry with the plain reason when a stale failure blocks the run, in the detailed view too', async () => {
+        const store = createRecoveryStore();
+        store.pipelineOutcome = { status: 'cleaning_failed', canAutoAnalyze: false, reasonCode: 'cleaning_failed', message: 'raw cleaning_failed text' } as never;
+        (store as unknown as { resultsViewMode: string }).resultsViewMode = 'explore';
+        (useAppStoreModule.useAppStore as unknown as ReturnType<typeof vi.fn>).mockImplementation((selector: (value: typeof store) => unknown) => selector(store));
+
+        render(<AnalysisPanel />);
+
+        expect(screen.getByText('An earlier preparation attempt stopped before it finished.')).toBeInTheDocument();
+        expect(screen.queryByText(/cleaning_failed/)).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Review analysis evidence' })).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Retry analysis' }));
+        await waitFor(() => expect(store.handleInitialAnalysis).toHaveBeenCalled());
+    });
+
+    it('lets the user inspect an import or shape-verification block instead of leaving a dead end', () => {
+        const store = createRecoveryStore();
+        store.pipelineOutcome = { status: 'blocked_by_shape_verification', canAutoAnalyze: false, reasonCode: 'noise_leakage_rate', message: 'Shape verification failed after canonicalization.' } as never;
+        store.reportStructureResolution = { requiresHumanReview: false };
+        store.rawIntakeIr = { normalizedRows: [['Town', 'Price']] };
+        (useAppStoreModule.useAppStore as unknown as ReturnType<typeof vi.fn>).mockImplementation((selector: (value: typeof store) => unknown) => selector(store));
+
+        render(<AnalysisPanel />);
+
+        expect(screen.queryByText(/noise_leakage_rate/)).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Review and repair data structure' }));
+        expect(store.setIsReportBoundaryConfirmModalOpen).toHaveBeenCalledWith(true);
+    });
+
     it('routes insufficient evidence to detailed results instead of structure repair', () => {
         const store = createRecoveryStore();
         (useAppStoreModule.useAppStore as unknown as ReturnType<typeof vi.fn>).mockImplementation((selector: (value: typeof store) => unknown) => selector(store));

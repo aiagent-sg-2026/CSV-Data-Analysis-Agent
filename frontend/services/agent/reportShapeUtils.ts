@@ -49,7 +49,9 @@ export const getNonEmptyValues = (row: CsvRow | undefined) =>
 
 export const normalizeText = (value: string) => value.trim().toLowerCase();
 
-export const isNumericLike = (value: string) => /^-?\d[\d,]*(?:\.\d+)?$/.test(value.trim());
+// A currency symbol in front of an exact number ("$9,499") is formatting, not
+// text: a measure column that mixes it with plain numbers is still numeric.
+export const isNumericLike = (value: string) => /^-?(?:[$\u20ac\u00a3\u00a5]\s*)?\d[\d,]*(?:\.\d+)?$/.test(value.trim());
 
 // Explicit "no value" tokens that public and exported datasets place in
 // measure cells (for example "na" or "-" for a suppressed median). An empty

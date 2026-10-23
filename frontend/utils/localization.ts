@@ -3483,6 +3483,8 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'data_warnings_title': { 'English': 'Data Warnings', 'Mandarin': '数据警告', 'Japanese': 'データ警告', 'Malay': 'Amaran data' },
     'data_warnings_intake_label': { 'English': 'CSV Structure Warnings', 'Mandarin': 'CSV 结构警告', 'Japanese': 'CSV構造警告', 'Malay': 'Amaran struktur CSV' },
     'data_warnings_intake_reported': { 'English': 'CSV structure check found {count} issue(s) during import.', 'Mandarin': 'CSV 结构检查在导入时发现 {count} 个问题。', 'Japanese': 'CSVインポート時に {count} 件の構造問題が見つかりました。', 'Malay': 'Semakan struktur CSV menemui {count} isu semasa import.' },
+    'data_warnings_intake_not_delimited_split': { 'English': 'This file is a text report with space-aligned columns, not a delimited CSV. The app split the columns by character position, so please check them.', 'Mandarin': '该文件是用空格对齐列的文本报表，而不是带分隔符的 CSV。系统按字符位置拆分了列，请检查结果。', 'Japanese': 'このファイルは区切り文字付きのCSVではなく、空白で桁を揃えたテキストレポートです。文字位置で列を分割したため、結果を確認してください。', 'Malay': 'Fail ini ialah laporan teks dengan lajur yang dijajarkan menggunakan ruang, bukan CSV berpemisah. Aplikasi memisahkan lajur mengikut kedudukan aksara, jadi sila semak lajur tersebut.' },
+    'data_warnings_intake_not_delimited_unsplit': { 'English': 'This file is a text report with space-aligned columns, not a delimited CSV. The columns could not be separated reliably, so the imported table is probably wrong.', 'Mandarin': '该文件是用空格对齐列的文本报表，而不是带分隔符的 CSV。无法可靠地拆分列，因此导入的表格很可能不正确。', 'Japanese': 'このファイルは区切り文字付きのCSVではなく、空白で桁を揃えたテキストレポートです。列を確実に分割できなかったため、取り込んだ表は正しくない可能性があります。', 'Malay': 'Fail ini ialah laporan teks dengan lajur yang dijajarkan menggunakan ruang, bukan CSV berpemisah. Lajur tidak dapat dipisahkan dengan pasti, jadi jadual yang diimport mungkin tidak betul.' },
     'data_warnings_technical_toggle': { 'English': 'Show technical details', 'Mandarin': '查看技术详情', 'Japanese': '技術的詳細を表示', 'Malay': 'Tunjukkan butiran teknikal' },
     'data_warnings_footer': { 'English': 'Full diagnostics are available in the Data Preparation Workflow.', 'Mandarin': '完整诊断信息可在数据准备工作流中查看。', 'Japanese': '詳細な診断情報はデータ準備ワークフローで確認できます。', 'Malay': 'Diagnostik penuh tersedia dalam Aliran Kerja Penyediaan Data.' },
 
@@ -3767,6 +3769,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Japanese': '分析を続ける前にデータ構造の確認が必要です。',
         'Malay': 'Semakan struktur data memerlukan penelitian anda sebelum analisis boleh diteruskan.',
     },
+    'analysis_results_next_step_reason_blocked': {
+        'English': 'A data check stopped the analysis before it produced a result. Your imported data is still available.',
+        'Mandarin': '一项数据检查在分析得出结果前将其中止；已导入的数据仍可使用。',
+        'Japanese': 'データチェックにより、結果が出る前に分析が停止しました。取り込んだデータは保持されています。',
+        'Malay': 'Satu semakan data menghentikan analisis sebelum hasil dihasilkan. Data yang anda import masih tersedia.',
+    },
     'analysis_results_next_step_reason_provider': {
         'English': 'The selected AI provider did not complete this analysis. Your imported data is still available.',
         'Mandarin': '所选 AI provider 未能完成分析；已导入的数据仍可使用。',
@@ -3802,6 +3810,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Mandarin': '预期结果：确认数据边界与字段角色，重新验证后，再根据修正的数据集生成新证据。',
         'Japanese': '期待される結果：データ境界とフィールド役割を確認し、再検証後に修正済みデータから新しい根拠を生成します。',
         'Malay': 'Hasil yang dijangka: sahkan sempadan data dan peranan medan, jalankan semula pengesahan, kemudian jana bukti baharu daripada set data yang dibetulkan.',
+    },
+    'analysis_results_next_step_outcome_blocked': {
+        'English': 'Retry to run the checks again on the prepared data.',
+        'Mandarin': '重试即可对已准备的数据重新运行检查。',
+        'Japanese': '再試行すると、準備済みのデータでチェックをやり直します。',
+        'Malay': 'Cuba lagi untuk menjalankan semula semakan pada data yang telah disediakan.',
     },
     'analysis_results_next_step_outcome_provider': {
         'English': 'Retry with this provider or choose another provider in Settings.',
@@ -4422,6 +4436,18 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Japanese': 'ヘッダー行とデータ行の列数が一致しません。',
         'Malay': 'Baris tajuk mempunyai bilangan lajur yang berbeza daripada baris data.',
     },
+    'structure_review_reason_stacked_sections_set_aside': {
+        'English': 'The file stacks several different tables. Only the first table is analysed, and the other tables were set aside so their rows are not mixed in.',
+        'Mandarin': '文件中堆叠了多个不同的表格。仅分析第一个表格，其余表格已被单独搁置，避免其数据混入。',
+        'Japanese': 'ファイルに異なる表が縦に並んでいます。最初の表だけを分析し、他の表は行が混ざらないよう別に扱っています。',
+        'Malay': 'Fail ini mengandungi beberapa jadual berbeza yang disusun bertindan. Hanya jadual pertama dianalisis, dan jadual lain diketepikan supaya barisnya tidak bercampur.',
+    },
+    'structure_review_reason_not_delimited_text': {
+        'English': 'The file looks like a text report with space-aligned columns, not a delimited CSV, so the column layout needs a check.',
+        'Mandarin': '该文件看起来是用空格对齐列的文本报表，而不是带分隔符的 CSV，因此需要确认列的划分。',
+        'Japanese': 'このファイルは区切り文字付きのCSVではなく、空白で桁を揃えたテキストレポートのようです。列の分割を確認してください。',
+        'Malay': 'Fail ini kelihatan seperti laporan teks dengan lajur yang dijajarkan menggunakan ruang, bukan CSV berpemisah, jadi susun atur lajur perlu disemak.',
+    },
     'structure_review_reason_runtime_boundary_ambiguous': {
         'English': 'The table boundaries are unclear, so the file can be read in more than one way.',
         'Mandarin': '表格边界不明确，文件可能有多种解读方式。',
@@ -4577,6 +4603,66 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Mandarin': '结构检查未完成。',
         'Japanese': '構造チェックが完了しませんでした。',
         'Malay': 'Semakan struktur tidak selesai.',
+    },
+    'structure_review_reason_canonicalization_missing': {
+        'English': 'The analysis table could not be built from the detected layout.',
+        'Mandarin': '无法按检测到的版式生成分析用表格。',
+        'Japanese': '検出したレイアウトから分析用の表を作成できませんでした。',
+        'Malay': 'Jadual analisis tidak dapat dibina daripada susun atur yang dikesan.',
+    },
+    'structure_review_reason_shape_verification_failed': {
+        'English': 'The reshaped table did not match the source file.',
+        'Mandarin': '重塑后的表格与源文件不一致。',
+        'Japanese': '変換後の表が元のファイルと一致しませんでした。',
+        'Malay': 'Jadual yang dibentuk semula tidak sepadan dengan fail sumber.',
+    },
+    'structure_review_reason_cleaning_failed': {
+        'English': 'An earlier preparation attempt stopped before it finished.',
+        'Mandarin': '之前的一次数据准备在完成前中断了。',
+        'Japanese': '以前のデータ準備が完了前に停止しました。',
+        'Malay': 'Percubaan penyediaan data sebelum ini berhenti sebelum selesai.',
+    },
+    'structure_review_reason_blocked_by_intake': {
+        'English': 'The import check found a problem with how the file was read.',
+        'Mandarin': '导入检查发现文件的读取方式存在问题。',
+        'Japanese': 'インポートチェックで、ファイルの読み取り方に問題が見つかりました。',
+        'Malay': 'Semakan import mendapati masalah pada cara fail dibaca.',
+    },
+    'structure_review_reason_parse_errors': {
+        'English': 'Some rows of the file could not be read cleanly.',
+        'Mandarin': '文件中有部分行无法被正确读取。',
+        'Japanese': 'ファイルの一部の行を正しく読み取れませんでした。',
+        'Malay': 'Sebahagian baris fail tidak dapat dibaca dengan bersih.',
+    },
+    'structure_review_reason_intake_structure_uncertain': {
+        'English': 'The table layout could not be detected with enough confidence.',
+        'Mandarin': '无法以足够的把握检测出表格版式。',
+        'Japanese': '表のレイアウトを十分な確度で検出できませんでした。',
+        'Malay': 'Susun atur jadual tidak dapat dikesan dengan keyakinan yang mencukupi.',
+    },
+    'structure_review_reason_intake_diagnostics_missing': {
+        'English': 'The import check could not describe how this report-style file was read.',
+        'Mandarin': '导入检查无法说明这份报表式文件是如何被读取的。',
+        'Japanese': 'インポートチェックで、このレポート形式のファイルの読み取り方を説明できませんでした。',
+        'Malay': 'Semakan import tidak dapat menerangkan cara fail gaya laporan ini dibaca.',
+    },
+    'structure_review_reason_sql_precheck_pending': {
+        'English': 'The final readiness checks have not finished yet.',
+        'Mandarin': '最后的就绪检查尚未完成。',
+        'Japanese': '最終的な準備チェックがまだ完了していません。',
+        'Malay': 'Semakan kesediaan terakhir belum selesai.',
+    },
+    'pipeline_outcome_blocked_message': {
+        'English': 'Automatic analysis is paused because a data check did not pass. {reason}',
+        'Mandarin': '一项数据检查未通过，自动分析已暂停。{reason}',
+        'Japanese': 'データチェックに合格しなかったため、自動分析は一時停止しています。{reason}',
+        'Malay': 'Analisis automatik dijeda kerana satu semakan data tidak lulus. {reason}',
+    },
+    'internal_code_generic': {
+        'English': 'an internal check',
+        'Mandarin': '一项内部检查',
+        'Japanese': '内部チェック',
+        'Malay': 'satu semakan dalaman',
     },
     'structure_review_reason_unknown': {
         'English': 'The data structure did not pass an automatic check.',
@@ -5445,6 +5531,8 @@ export const getTranslation = (
 export const STRUCTURE_REVIEW_REASON_CODES = [
     'boundary_incomplete',
     'header_shape_drift',
+    'stacked_sections_set_aside',
+    'not_delimited_text',
     'runtime_boundary_ambiguous',
     'runtime_boundary_rejected',
     'repeated_header_leakage',
@@ -5471,6 +5559,15 @@ export const STRUCTURE_REVIEW_REASON_CODES = [
     'fact_key_uniqueness_rate',
     'needs_structure_review',
     'structure_outcome_unavailable',
+    // Pipeline outcome reason codes outside the structure resolver.
+    'canonicalization_missing',
+    'shape_verification_failed',
+    'cleaning_failed',
+    'blocked_by_intake',
+    'parse_errors',
+    'intake_structure_uncertain',
+    'intake_diagnostics_missing',
+    'sql_precheck_pending',
 ] as const;
 
 export const getStructureReviewReasonText = (code: string, language: string = 'English'): string => {
@@ -5479,3 +5576,66 @@ export const getStructureReviewReasonText = (code: string, language: string = 'E
         ? getTranslation(key, language)
         : getTranslation('structure_review_reason_unknown', language);
 };
+
+// Cleaning and verification codes that are not structure-review reasons but can still end up in error text.
+const OTHER_INTERNAL_CODES = [
+    'semantic_intent_failed',
+    'deterministic_recovery_failed',
+    'deterministic_shaping_failed',
+    'numeric_reconciliation_failed',
+    'llm_budget_exhausted',
+    'sandbox_verification_failed',
+] as const;
+const INTERNAL_CODE_SET = new Set<string>([...STRUCTURE_REVIEW_REASON_CODES, ...OTHER_INTERNAL_CODES]);
+
+/**
+ * Safety net for error text that is assembled from technical parts before it
+ * reaches a progress message or chat bubble: verification detail fragments are
+ * dropped, known check codes become their plain explanation and a leading
+ * `code:` prefix is removed. Unknown snake_case words (column names) are kept.
+ */
+export const replaceInternalCodesWithPlainText = (text: string, language: string = 'English'): string => {
+    const plainOf = (code: string) => INTERNAL_CODE_SET.has(code)
+        ? (translations[`structure_review_reason_${code}`] ? getStructureReviewReasonText(code, language) : getTranslation('internal_code_generic', language))
+        : null;
+    return text
+        .replace(/;?\s*expected_label_layers=\d+;\s*actual_label_layers=\d+/g, '')
+        .replace(/\bsignal=([a-z0-9_]+);?/g, (match, code: string) => plainOf(code) ?? match)
+        .replace(/^\s*[a-z]+(?:_[a-z]+)+:\s*/, prefix => INTERNAL_CODE_SET.has(prefix.replace(/:\s*$/, '').trim()) ? '' : prefix)
+        .replace(/\b[a-z]+(?:_[a-z]+)+\b/g, code => plainOf(code) ?? code)
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+};
+
+type Translate = (key: string, params?: Record<string, string | number>) => string;
+
+/**
+ * Plain-language text for a blocked pipeline outcome. `PipelineOutcome.message`
+ * is an English technical string, so user-facing surfaces use this instead and
+ * keep `reasonCode` for a technical-details disclosure. Returns null when the
+ * outcome does not block analysis.
+ */
+export const describePipelineOutcomeBlock = (
+    outcome: { status: string; reasonCode: string } | null | undefined,
+    translate: Translate,
+): string | null => {
+    if (!outcome) return null;
+    const reasonKey = `structure_review_reason_${(outcome.reasonCode ?? '').trim()}`;
+    const reason = translations[reasonKey] ? translate(reasonKey) : translate('structure_review_reason_unknown');
+    switch (outcome.status) {
+        case 'needs_structure_review':
+            return `${translate('structure_review_required_message')} ${reason}`;
+        case 'blocked_by_intake':
+        case 'blocked_by_shape_verification':
+        case 'blocked_by_sql_precheck':
+        case 'cleaning_failed':
+            return translate('pipeline_outcome_blocked_message', { reason });
+        default:
+            return null;
+    }
+};
+
+export const getPipelineOutcomeUserText = (
+    outcome: { status: string; reasonCode: string } | null | undefined,
+    language: string = 'English',
+): string | null => describePipelineOutcomeBlock(outcome, (key, params) => getTranslation(key, language, params));

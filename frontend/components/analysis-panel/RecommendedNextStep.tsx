@@ -14,10 +14,12 @@ export const RecommendedNextStep: React.FC<{
     /** Why the report cannot be generated yet, shown as the button tooltip. */
     blockedTitle?: string;
     onPrimaryAction: () => void;
+    /** The specific check behind a block, in plain language. */
+    detail?: string;
     /** Only offered when the provider failed or cloud AI was declined, and the settings surface is available. */
     onChangeProvider?: () => void;
 }> = ({
-    kind, language, degraded, hasReport, isGeneratingReport, disabled, blockedTitle, onPrimaryAction, onChangeProvider,
+    kind, language, degraded, hasReport, isGeneratingReport, disabled, blockedTitle, onPrimaryAction, detail, onChangeProvider,
 }) => {
     const copy = resolveNextStepCopyKeys({ kind, degraded, hasReport, isGeneratingReport });
     return (
@@ -26,6 +28,7 @@ export const RecommendedNextStep: React.FC<{
                 {getTranslation('analysis_results_next_step_title', language)}
             </p>
             <p className="mt-2 text-sm font-semibold text-slate-900">{getTranslation(copy.reason, language)}</p>
+            {detail && <p className="mt-1 text-sm text-slate-700">{detail}</p>}
             <p className="mt-1 text-sm text-slate-600">{getTranslation(copy.outcome, language)}</p>
             <button
                 type="button"

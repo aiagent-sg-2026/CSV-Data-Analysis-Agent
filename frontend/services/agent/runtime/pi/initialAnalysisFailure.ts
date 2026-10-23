@@ -1,3 +1,5 @@
+import { describePipelineOutcomeBlock } from '../../../../utils/localization';
+
 const PROVIDER_ERROR_PATTERN = /\b(?:api key|authentication|unauthorized|forbidden|quota|rate limit|overloaded|provider|model not found|network error|networkerror|failed to fetch|fetch failed|timed out|timeout|connection reset|econnreset)\b/i;
 
 export const isInitialAnalysisProviderFailure = (error: unknown): boolean => {
@@ -18,6 +20,8 @@ export const isInitialAnalysisProviderFailure = (error: unknown): boolean => {
         || PROVIDER_ERROR_PATTERN.test(detail);
 };
 
+const OUTCOME_REF_PREFIX = 'pipeline-outcome:';
+
 const codeKey = (code: string): string => {
     // Codes with a dynamic suffix (`evidence_run_<status>`, `query_engine_<status>`) share one message.
     if (code.startsWith('evidence_run_') && code !== 'evidence_run_incomplete') return 'analysis_failure_code_evidence_run_incomplete';
@@ -29,6 +33,7 @@ interface FailureStageResult {
     decision: 'pass' | 'warn' | 'fail';
     toolName: string;
     summary: string;
+    artifactRefs?: readonly string[];
 }
 
 export interface InitialAnalysisFailureInput {
@@ -57,7 +62,15 @@ export const describeInitialAnalysisFailure = (input: InitialAnalysisFailureInpu
         stage: index >= 0 && index < stageNames.length ? translate(`analysis_initial_stage_${index + 1}_short`) : '?',
     });
     // The stage's own warning code maps to a localised reason; unknown codes keep the runtime's English summary.
-    const detailOf = (result: { summary: string; warningCodes?: readonly string[] }): string => {
+    const detailOf = (result: { summary: string; warningCodes?: readonly string[]; artifactRefs?: readonly string[] }): string => {
+        // A blocked pipeline outcome carries its status in the artifact refs and its check code in the warning
+        // codes; both are internal, so say it in plain words.
+        const outcomeStatus = result.artifactRefs?.find(ref => ref.startsWith(OUTCOME_REF_PREFIX))?.slice(OUTCOME_REF_PREFIX.length);
+        const outcomeCode = result.warningCodes?.[0];
+        if (outcomeStatus && outcomeCode) {
+            const blockText = describePipelineOutcomeBlock({ status: outcomeStatus, reasonCode: outcomeCode }, translate);
+            if (blockText) return blockText;
+        }
         for (const code of result.warningCodes ?? []) {
             const key = codeKey(code);
             const text = translate(key);

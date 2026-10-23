@@ -615,6 +615,10 @@ const run = async (
         ...(qualified && cleaningRun ? { cleaningRun: updateCleaningRun(cleaningRun, {
             status: pendingApproval || status === 'cancelled' ? 'paused' : prepared ? 'completed' : status === 'failed' ? 'failed' : 'paused',
             shouldAutoResume: false,
+            // An analysis failure says nothing about the data, so the structure gate must not read it as a cleaning
+            // failure. A failure the cleaning loop wrote earlier stays what it was.
+            ...(status === 'failed' && !pendingApproval && (cleaningRun.status !== 'failed' || cleaningRun.failureOrigin === 'initial_analysis')
+                ? { failureOrigin: 'initial_analysis' as const } : {}),
         }) } : {}),
         initialAnalysisRecovery: null,
         initialAnalysisStatus: status === 'cancelled'||status==='blocked' ? 'paused'

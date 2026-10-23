@@ -3,6 +3,7 @@ import type {
     CanonicalVerificationResult,
     CanonicalizationStatus,
     CsvData,
+    CanonicalBuildMeta,
     CsvRow,
     ReportRowRole,
     ReportRowRoleAssignment,
@@ -19,9 +20,12 @@ import {
     inferFactColumns,
     normalizeReportCellText,
 } from './reportStructureNormalization';
-import { isSummaryLike, SUMMARY_TOKEN_PATTERN } from './reportShapeUtils';
+import { isMissingValueMarker, isSummaryLike, SUMMARY_TOKEN_PATTERN } from './reportShapeUtils';
+import { resolveIndentHierarchy } from './reportShapeHierarchy';
+import { PERIOD_WIDE_OUTPUT_COLUMNS } from './reportShapePeriodWide';
 import { computeRowRoleSignals, type RowRoleSignalBundle } from './runtime/rowRoleSignals';
 import { recoverMisalignedSectionDimensions } from './sectionDimensionRecovery';
+import { withoutBodyNoise, type BodyRowFinding } from '../data/reportBodyRows';
 
 const UNNAMED_COLUMN_PATTERN = /^_?unnamed_column_/i;
 const DATE_LIKE_PATTERN = /^(?:\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})$/;
@@ -209,6 +213,10 @@ const overlayPreparedSharedValues = (
             if (typeof nextRow[column] === 'number' && typeof value === 'string') {
                 return;
             }
+            // A missing marker or empty cell normalised to null must not come back as text.
+            if (nextRow[column] === null && typeof value === 'string' && (value.trim() === '' || isMissingValueMarker(value))) {
+                return;
+            }
             // Preserve carry-forward filled values — do not overwrite a non-empty
             // canonical value with an empty prepared value. The carry-forward pass
             // fills merged-cell gaps intentionally; the prepared data still has blanks.
@@ -249,9 +257,24 @@ const classifyDeterministicRowRole = (params: {
     sectionLabelColumns: string[];
     primaryIdentityColumns: string[];
     signalBundle?: RowRoleSignalBundle | null;
+    /** Structural finding for this body row (page break, repeated header, reconciled subtotal). */
+    bodyFinding?: BodyRowFinding | null;
 }): ReportRowRole => {
     if (isBlankRawRow(params.rawRow)) {
         return 'blank';
+    }
+    if (params.bodyFinding && (params.structure.summaryStartIndex === null || params.rawRowIndex < params.structure.summaryStartIndex)) {
+        switch (params.bodyFinding.kind) {
+            case 'blank':
+                return 'blank';
+            case 'repeated_header':
+            case 'page_break':
+                return 'header';
+            case 'subtotal':
+                return 'subtotal';
+            case 'total':
+                return 'summary';
+        }
     }
     if (params.structure.repeatedHeaderRowIndexes.includes(params.rawRowIndex) || isHeaderEchoRow(params.rawRow, params.headers)) {
         return 'header';
@@ -440,6 +463,7 @@ const classifyRowRole = (params: {
     primaryIdentityColumns: string[];
     rawRoleOverrides: Map<number, ReportRowRoleAssignment>;
     signalBundle?: RowRoleSignalBundle | null;
+    bodyFinding?: BodyRowFinding | null;
 }): ReportRowRole => {
     const deterministicRole = classifyDeterministicRowRole(params);
     const override = params.rawRoleOverrides.get(params.rawRowIndex);
@@ -585,6 +609,98 @@ const buildPreparedRowTableFallback = (
     };
 };
 
+const ROW_HIERARCHY_COLUMNS = {
+    parent: PERIOD_WIDE_OUTPUT_COLUMNS.parent,
+    depth: PERIOD_WIDE_OUTPUT_COLUMNS.depth,
+    rowClass: PERIOD_WIDE_OUTPUT_COLUMNS.rowClass,
+} as const;
+
+/**
+ * Turns label indentation in a row table into the same hierarchy columns the
+ * melted period-header path emits (ParentSeries, HierarchyDepth, RowClass), so
+ * the detail-row filters and the series guard treat both alike. Parent rows
+ * stay in the table as RowClass subtotal|total and a plain SUM over every row
+ * is no longer a multiple count once the analysis filters RowClass = 'fact'.
+ * Accepted only when the published parents equal the sum of their children
+ * (see resolveIndentHierarchy); otherwise the table is returned untouched.
+ */
+const applyRowIndentHierarchy = (params: {
+    rows: CsvRow[];
+    rawRows: string[][];
+    headers: string[];
+    factColumns: string[];
+    excludedLabelColumns: string[];
+    roles: ReportRowRoleAssignment[];
+}): { rows: CsvRow[]; meta: NonNullable<CanonicalBuildMeta['rowHierarchy']> } | null => {
+    const { rows, rawRows, headers, factColumns, roles } = params;
+    const reserved = new Set(Object.values(ROW_HIERARCHY_COLUMNS).map(column => column.toLowerCase()));
+    if (rows.length < 3 || headers.some(header => reserved.has(header.trim().toLowerCase()))) return null;
+    const treeRowIndexes = roles
+        .filter(role => role.role === 'detail' || role.role === 'group_header')
+        .map(role => role.rowIndex);
+    const factSet = new Set([...factColumns, ...params.excludedLabelColumns]);
+    const rawLabel = (rowIndex: number, columnIndex: number) => String(rawRows[rowIndex]?.[columnIndex] ?? '');
+    let labelColumnIndex = -1;
+    let bestIndented = 1;
+    headers.forEach((header, columnIndex) => {
+        if (factSet.has(header) || UNNAMED_COLUMN_PATTERN.test(header)) return;
+        const indented = treeRowIndexes.filter(rowIndex => /^[\s\u00a0]+\S/.test(rawLabel(rowIndex, columnIndex))).length;
+        if (indented > bestIndented) {
+            bestIndented = indented;
+            labelColumnIndex = columnIndex;
+        }
+    });
+    if (labelColumnIndex < 0) return null;
+    const labelColumn = headers[labelColumnIndex];
+
+    const labelledIndexes = treeRowIndexes.filter(rowIndex => rawLabel(rowIndex, labelColumnIndex).trim() !== '');
+    const rowBySource = new Map(rows.map(row => [Number(row.SourceRowIndex), row]));
+    // Every record needs a label to take part in a tree.
+    if (rows.some(row => !labelledIndexes.includes(Number(row.SourceRowIndex)))) return null;
+    const resolved = resolveIndentHierarchy({
+        labels: labelledIndexes.map(rowIndex => rawLabel(rowIndex, labelColumnIndex)),
+        rows: labelledIndexes.map(rowIndex => rowBySource.get(rowIndex) ?? null),
+        measureColumns: factColumns,
+    });
+    if (!resolved) return null;
+    const entryBySource = new Map(labelledIndexes.map((rowIndex, position) => [rowIndex, resolved.entries[position]]));
+
+    let parentRows = 0;
+    const nextRows = rows.map(row => {
+        const entry = entryBySource.get(Number(row.SourceRowIndex));
+        if (!entry) return row;
+        if (entry.rowClass !== 'fact') parentRows += 1;
+        const nextRow: CsvRow = {};
+        Object.entries(row).forEach(([column, value]) => {
+            if (column === 'SourceRowIndex') {
+                nextRow[ROW_HIERARCHY_COLUMNS.parent] = entry.parentKey;
+                nextRow[ROW_HIERARCHY_COLUMNS.depth] = entry.level;
+                nextRow[ROW_HIERARCHY_COLUMNS.rowClass] = entry.rowClass;
+            }
+            // The canonical role columns mirror RowClass, as in the melted path.
+            nextRow[column] = column === labelColumn ? entry.key
+                : column === 'RowRole' || column === 'ResolvedRowRole' ? entry.rowClass
+                    : value;
+        });
+        return nextRow;
+    });
+    return {
+        rows: nextRows,
+        meta: {
+            labelColumn,
+            parentColumn: ROW_HIERARCHY_COLUMNS.parent,
+            depthColumn: ROW_HIERARCHY_COLUMNS.depth,
+            rowClassColumn: ROW_HIERARCHY_COLUMNS.rowClass,
+            detailRowValue: 'fact',
+            levels: resolved.evidence.levels,
+            parentRows,
+            detailRows: nextRows.length - parentRows,
+            parentsChecked: resolved.evidence.parentsChecked,
+            parentsVerified: resolved.evidence.parentsVerified,
+        },
+    };
+};
+
 const buildRowTableFromRawBoundary = (params: {
     csvData: CsvData;
     rawIntakeIr: ReportIntakeIr;
@@ -608,19 +724,23 @@ const buildRowTableFromRawBoundary = (params: {
 
     const carryForwardColumns = structure.normalizationPlan.carryForwardColumns.map(policy => policy.columnName);
     const sectionLabelColumns = structure.normalizationPlan.sectionLabelColumns;
+    // Page-break blocks, repeated headers, spacer rows and reconciled subtotals
+    // are not records; column statistics are computed without them.
+    const bodyWithoutNoise = withoutBodyNoise(rawIntakeIr.normalizedRows, structure);
+    const bodyFindings = bodyWithoutNoise.findings;
     // Data-driven fact column detection: uses actual body data numeric density
     // via consolidated inferFactColumns — no domain-specific regex patterns.
     const factColumns = inferFactColumns(
         headers, [...carryForwardColumns, ...sectionLabelColumns],
-        rawIntakeIr.normalizedRows,
-        structure.bodyStartIndex,
-        structure.summaryStartIndex ?? undefined,
+        bodyWithoutNoise.rows,
+        bodyWithoutNoise.bodyStartIndex,
+        bodyWithoutNoise.summaryStartIndex,
     );
     const primaryIdentityColumns = inferDenseSequentialIdentityColumns({
         headers,
-        rows: rawIntakeIr.normalizedRows,
-        bodyStartIndex: structure.bodyStartIndex,
-        summaryStartIndex: structure.summaryStartIndex ?? rawIntakeIr.normalizedRows.length,
+        rows: bodyWithoutNoise.rows,
+        bodyStartIndex: bodyWithoutNoise.bodyStartIndex,
+        summaryStartIndex: bodyWithoutNoise.summaryStartIndex,
     });
     const rowIdentityColumns = headers.filter(column => !factColumns.includes(column));
     const rawRoleOverrides = new Map(
@@ -668,6 +788,7 @@ const buildRowTableFromRawBoundary = (params: {
             primaryIdentityColumns,
             rawRoleOverrides,
             signalBundle: signalMap?.get(rawRowIndex) ?? null,
+            bodyFinding: bodyFindings.get(rawRowIndex) ?? null,
         });
 
         const hasRawFactValue = factColumns.some(column => {
@@ -756,11 +877,13 @@ const buildRowTableFromRawBoundary = (params: {
             if (factColumns.includes(header)) {
                 const raw = String(rawValue ?? '');
                 // Guard: never coerce values containing letters — they are identifiers, not numbers
-                if (/[A-Za-z]/.test(raw)) {
+                if (/[A-Za-z]/.test(raw) && !isMissingValueMarker(raw)) {
                     canonicalRow[header] = rawValue;
                 } else {
                     const numeric = parseNumericCandidate(rawValue);
-                    canonicalRow[header] = numeric ?? rawValue;
+                    // An explicit missing marker ("n.a.", "na", "-") is no value, not text:
+                    // keeping it as a string would turn the whole measure column into text.
+                    canonicalRow[header] = numeric ?? (rawValue === '' || isMissingValueMarker(raw) ? null : rawValue);
                 }
                 return;
             }
@@ -808,6 +931,7 @@ const buildRowTableFromRawBoundary = (params: {
                 primaryIdentityColumns,
                 rawRoleOverrides,
                 signalBundle: signalMap?.get(rawRowIndex) ?? null,
+                bodyFinding: bodyFindings.get(rawRowIndex) ?? null,
             });
 
             // Relaxation: promote zero-value 'note'/'group_header' rows that have
@@ -877,8 +1001,8 @@ const buildRowTableFromRawBoundary = (params: {
                 }
                 if (factColumns.includes(header)) {
                     const raw = String(rawValue ?? '');
-                    if (/[A-Za-z]/.test(raw)) { canonicalRow[header] = rawValue; }
-                    else { const numeric = parseNumericCandidate(rawValue); canonicalRow[header] = numeric ?? rawValue; }
+                    if (/[A-Za-z]/.test(raw) && !isMissingValueMarker(raw)) { canonicalRow[header] = rawValue; }
+                    else { const numeric = parseNumericCandidate(rawValue); canonicalRow[header] = numeric ?? (rawValue === '' || isMissingValueMarker(raw) ? null : rawValue); }
                     return;
                 }
                 canonicalRow[header] = rawValue;
@@ -920,9 +1044,18 @@ const buildRowTableFromRawBoundary = (params: {
         footerVerification.warnings.push('carry_forward_missing_dimensions');
     }
 
+    const hierarchy = applyRowIndentHierarchy({
+        rows: compactRows,
+        rawRows: rawIntakeIr.normalizedRows,
+        headers,
+        factColumns,
+        excludedLabelColumns: carryForwardColumns,
+        roles: resolvedRawRowRoles,
+    });
+    const finalRows = hierarchy?.rows ?? compactRows;
     const canonicalCsvData: CsvData = {
         ...cloneCsvData(csvData),
-        data: compactRows,
+        data: finalRows,
         metadataRows: [],
         summaryRows: [],
         headerLayers: [],
@@ -933,17 +1066,20 @@ const buildRowTableFromRawBoundary = (params: {
     return {
         artifact: {
             canonicalCsvData,
-            canonicalSchema: Object.keys(compactRows[0] ?? {}),
+            canonicalSchema: Object.keys(finalRows[0] ?? {}),
             canonicalBuildMeta: {
                 shape: 'row_table',
                 source: structure.source,
-                rowCount: compactRows.length,
-                columnCount: Object.keys(compactRows[0] ?? {}).length,
+                rowCount: finalRows.length,
+                columnCount: Object.keys(finalRows[0] ?? {}).length,
                 lineageColumns: ['SourceRowIndex', 'ResolvedRowRole', 'SectionLabel', 'HeaderPath', 'CarryForwardAppliedColumns'],
-                summary: `Retained ${compactRows.length} canonical detail row(s) from raw report rows.`,
+                summary: hierarchy
+                    ? `Retained ${hierarchy.meta.detailRows} detail row(s) and ${hierarchy.meta.parentRows} parent row(s) from raw report rows; indentation hierarchy verified against parent sums.`
+                    : `Retained ${compactRows.length} canonical detail row(s) from raw report rows.`,
                 excludedRowCounts,
                 carryForwardAppliedCounts,
                 footerTotalsMatched: footerVerification.footerTotalsMatched,
+                ...(hierarchy ? { rowHierarchy: hierarchy.meta } : {}),
             },
         },
         verificationSummary: footerVerification,
@@ -999,6 +1135,63 @@ const buildPeriodWideCanonicalTable = (
     };
 };
 
+/**
+ * Fills carry-forward dimensions (a category printed once per group) down the
+ * body rows of a still-wide table before it is melted, so every melted row
+ * carries its group. Blank rows are skipped, not treated as group ends.
+ */
+const fillCarryForwardColumns = (
+    rows: CsvRow[],
+    columns: string[],
+): { rows: CsvRow[]; appliedByRow: Map<number, string[]>; appliedCounts: Record<string, number> } => {
+    const appliedByRow = new Map<number, string[]>();
+    const appliedCounts: Record<string, number> = {};
+    const present = columns.filter(column => rows.some(row => Object.prototype.hasOwnProperty.call(row, column)));
+    if (present.length === 0) return { rows, appliedByRow, appliedCounts };
+    const last = new Map<string, string>();
+    const filled = rows.map((row, rowIndex) => {
+        if (Object.values(row).every(value => normalizeReportCellText(value) === '')) return row;
+        let next: CsvRow | null = null;
+        present.forEach(column => {
+            const text = normalizeReportCellText(row[column]);
+            if (text) {
+                last.set(column, text);
+                return;
+            }
+            const carried = last.get(column);
+            if (!carried) return;
+            next = next ?? { ...row };
+            next[column] = carried;
+            appliedByRow.set(rowIndex, [...(appliedByRow.get(rowIndex) ?? []), column]);
+            appliedCounts[column] = (appliedCounts[column] ?? 0) + 1;
+        });
+        return next ?? row;
+    });
+    return { rows: filled, appliedByRow, appliedCounts };
+};
+
+// A melted value column is turned into numbers only when nearly every filled
+// cell reads as a number or an explicit missing marker, so a text measure is
+// never coerced.
+const MIN_NUMERIC_VALUE_SHARE = 0.9;
+
+const coerceMeltedValueColumn = (rows: CsvRow[], valueColumn: string): CsvRow[] => {
+    const cells = rows
+        .map(row => row[valueColumn])
+        .filter(value => typeof value === 'string' && normalizeReportCellText(value) !== '') as string[];
+    if (cells.length === 0) return rows;
+    const readable = cells.filter(value => isMissingValueMarker(value) || (!/[A-Za-z]/.test(value) && parseNumericCandidate(value) !== null)).length;
+    if (readable / cells.length < MIN_NUMERIC_VALUE_SHARE) return rows;
+    return rows.map(row => {
+        const value = row[valueColumn];
+        if (typeof value !== 'string') return row;
+        if (isMissingValueMarker(value)) return { ...row, [valueColumn]: null };
+        if (/[A-Za-z]/.test(value)) return row;
+        const numeric = parseNumericCandidate(value);
+        return numeric === null ? row : { ...row, [valueColumn]: numeric };
+    });
+};
+
 const buildReshapedTable = (
     sourceData: CsvData,
     structure: ReportStructureResolution,
@@ -1050,7 +1243,14 @@ const buildReshapedTable = (
             return null;
         }
         const labelColumns = hypothesis.seriesLabelColumns.map(labelColumn => {
-            const headerLayer = sourceData.headerLayers?.[labelColumn.layerIndex - 1] ?? [];
+            // A spanning band label is written once at the left edge of its span, so
+            // carry it across the blank cells of the span (as the merged header
+            // names do); otherwise only the first column of each band gets it.
+            let spanLabel = '';
+            const headerLayer = (sourceData.headerLayers?.[labelColumn.layerIndex - 1] ?? []).map(cell => {
+                spanLabel = String(cell ?? '').trim() || spanLabel;
+                return spanLabel;
+            });
             return {
                 outputColumn: labelColumn.outputColumn,
                 mappings: sourceColumns.map(sourceColumn => {
@@ -1095,7 +1295,18 @@ const buildReshapedTable = (
         }];
     }
 
-    const result = applyDataOperations(sourceData.data, operations, { allowEmptyResult: false });
+    // Group labels printed once per group are filled down before the melt.
+    const carryForward = fillCarryForwardColumns(
+        sourceData.data,
+        structure.normalizationPlan.carryForwardColumns.map(policy => policy.columnName),
+    );
+    const result = applyDataOperations(carryForward.rows, operations, { allowEmptyResult: false });
+    const meltValueColumn = [...operations].reverse().find(operation => operation.type === 'unpivot_columns');
+    if (meltValueColumn && meltValueColumn.type === 'unpivot_columns') {
+        result.data = coerceMeltedValueColumn(result.data, meltValueColumn.valueColumn);
+    }
+    const appliedCarryForward = (row: CsvRow) =>
+        (carryForward.appliedByRow.get(Number(row.SourceRowIndex)) ?? []).join(', ');
     const excludedRowCounts: CanonicalDatasetArtifact['canonicalBuildMeta']['excludedRowCounts'] = {};
     let canonicalRows = result.data.flatMap(row => {
         const rowRole = row.RowClass ?? row.RowRole ?? 'detail';
@@ -1114,7 +1325,7 @@ const buildReshapedTable = (
             RowRole: recoverBusinessIdentity ? 'fact' : rowRole,
             ResolvedRowRole: recoverBusinessIdentity ? 'fact' : rowRole,
             HeaderPath: buildHeaderPath(typeof row.SourceColumnName === 'string' ? row.SourceColumnName : null),
-            CarryForwardAppliedColumns: '',
+            CarryForwardAppliedColumns: appliedCarryForward(row),
         }];
     });
 
@@ -1146,7 +1357,7 @@ const buildReshapedTable = (
                 RowRole: 'detail',
                 ResolvedRowRole: 'detail',
                 HeaderPath: buildHeaderPath(typeof row.SourceColumnName === 'string' ? row.SourceColumnName : null),
-                CarryForwardAppliedColumns: '',
+                CarryForwardAppliedColumns: appliedCarryForward(row),
             }];
         });
         console.log(`[Canonicalize] Reshape relaxation result: ${canonicalRows.length}/${totalReshaped} rows retained.`);
@@ -1172,7 +1383,7 @@ const buildReshapedTable = (
             lineageColumns: ['SourceRowIndex', 'SourceColumnName', 'ResolvedRowRole', 'HeaderPath', 'CarryForwardAppliedColumns'],
             summary: `Canonicalized ${canonicalRows.length} row(s) into ${structure.decision.targetShape}.`,
             excludedRowCounts,
-            carryForwardAppliedCounts: {},
+            carryForwardAppliedCounts: carryForward.appliedCounts,
             footerTotalsMatched: null,
         },
     };

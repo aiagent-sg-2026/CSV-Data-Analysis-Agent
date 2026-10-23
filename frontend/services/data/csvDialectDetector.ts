@@ -1,4 +1,5 @@
 import * as Papa from 'papaparse';
+import { detectFixedWidthLayout, sliceFixedWidthRows } from './fixedWidthText';
 import type {
     CsvIntakeConfidence,
     CsvIntakeDetectionResult,
@@ -35,6 +36,13 @@ type CsvDetectionParseResult = {
 
 const SAMPLE_BYTE_LIMIT = 128 * 1024;
 const SAMPLE_NON_EMPTY_LINE_LIMIT = 200;
+// A legitimate quoted cell rarely spans more than a few lines. Beyond this a
+// quote is treated as runaway (a stray quote swallowing the following rows).
+const MAX_QUOTED_FIELD_LINE_BREAKS = 40;
+// Fixed-width probing only runs when no delimiter gives uniform records.
+const FIXED_WIDTH_MAX_DELIMITED_CONSISTENCY = 0.9;
+const NOT_DELIMITED_SPLIT_MESSAGE = 'This file looks like a text report with space-aligned columns, not a delimited CSV. Columns were inferred from character positions and should be reviewed.';
+const NOT_DELIMITED_UNSPLIT_MESSAGE = 'This file looks like a text report with space-aligned columns, not a delimited CSV. The columns could not be separated reliably, so the imported structure is probably wrong.';
 const DELIMITER_CANDIDATES = [',', ';', '\t', '|', ':'] as const;
 const QUOTE_CHAR_CANDIDATES = ['"', '\'', ''] as const;
 const MIN_SCORED_CANDIDATE_SCORE = 0.42;
@@ -68,23 +76,44 @@ const isRowNonEmpty = (row: RawCsvRow) => row.some(cell => String(cell ?? '').tr
 const countNonEmptyLines = (text: string) =>
     text.split(/\r\n|\n|\r/).filter(line => line.trim().length > 0).length;
 
-const buildDetectionSample = (text: string) => {
-    const truncated = text.slice(0, SAMPLE_BYTE_LIMIT);
-    const lines = truncated.split(/\r\n|\n|\r/);
+type DetectionSample = {
+    text: string;
+    /** True when the sample ends before the end of the file. */
+    truncated: boolean;
+};
+
+const stripBom = (text: string) => (text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text);
+
+const buildDetectionSample = (rawText: string): DetectionSample => {
+    // A BOM sits in front of the first field, so a quoted first header cell
+    // would no longer start with its quote character.
+    const text = stripBom(rawText);
+    const byteLimited = text.length > SAMPLE_BYTE_LIMIT;
+    const lines = (byteLimited ? text.slice(0, SAMPLE_BYTE_LIMIT) : text).split(/\r\n|\n|\r/);
     const collected: string[] = [];
     let nonEmptyLines = 0;
+    let truncated = false;
 
-    for (const line of lines) {
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        const isLastLine = index === lines.length - 1;
+        if (byteLimited && isLastLine && collected.length > 0) {
+            // The byte cut lands mid-line; a partial record would only add noise.
+            truncated = true;
+            break;
+        }
         collected.push(line);
         if (line.trim().length > 0) {
             nonEmptyLines += 1;
         }
         if (nonEmptyLines >= SAMPLE_NON_EMPTY_LINE_LIMIT) {
+            truncated = !isLastLine || byteLimited;
             break;
         }
     }
+    if (byteLimited) truncated = true;
 
-    return collected.join('\n');
+    return { text: collected.join('\n'), truncated };
 };
 
 const pushWarning = (
@@ -121,53 +150,97 @@ const isStructuralQuoteChar = (text: string, index: number, quoteChar: string) =
     return true;
 };
 
-const countDelimiterHits = (text: string, delimiter: string, quoteChar: string) => {
-    if (!delimiter) return 0;
-
-    let count = 0;
-    let inQuote = false;
-    for (let index = 0; index < text.length; index += 1) {
-        const char = text[index];
-        if (quoteChar && char === quoteChar) {
-            if (!isStructuralQuoteChar(text, index, quoteChar)) {
-                continue;
-            }
-            if (inQuote && text[index + 1] === quoteChar) {
-                index += 1;
-                continue;
-            }
-            inQuote = !inQuote;
-            continue;
-        }
-        if (!inQuote && char === delimiter) {
-            count += 1;
-        }
-    }
-    return count;
+type QuoteScan = {
+    /** Stray closing quote, runaway quoted field, or a quote still open at the end. */
+    malformed: boolean;
+    openAtEnd: boolean;
+    /** True when the open quote already spans more lines than a real cell would. */
+    runaway: boolean;
+    /** Index where the record holding the still-open quote starts. */
+    openRecordStart: number;
+    delimiterHits: number;
+    /** Line breaks inside quoted fields that closed cleanly (one record, several lines). */
+    quotedLineBreaks: number;
 };
 
-const hasUnbalancedQuote = (text: string, quoteChar: string) => {
-    if (!quoteChar) return false;
-
+/**
+ * Quote-aware scan that follows RFC 4180 / PapaParse rules: a quote opens a
+ * quoted field only at the start of a field, `""` is an escaped quote, and a
+ * closing quote must be followed by a delimiter, a line break or the end.
+ * Line breaks inside a quoted field are valid and do not make the quoting
+ * malformed; only a quote that never closes sensibly does.
+ */
+const scanQuoting = (text: string, delimiter: string, quoteChar: string): QuoteScan => {
+    let delimiterHits = 0;
     let inQuote = false;
+    let fieldStart = true;
+    let recordStart = 0;
+    let openRecordStart = 0;
+    let quotedLineBreaks = 0;
+    let closedQuotedLineBreaks = 0;
+    let malformed = false;
+    let runaway = false;
+
     for (let index = 0; index < text.length; index += 1) {
         const char = text[index];
-        if (inQuote && (char === '\n' || char === '\r')) {
-            return true;
-        }
-        if (char !== quoteChar) {
+        if (inQuote) {
+            if (char === quoteChar && isStructuralQuoteChar(text, index, quoteChar)) {
+                const next = text[index + 1];
+                if (next === quoteChar) {
+                    index += 1;
+                } else if (next === undefined || next === delimiter || next === '\n' || next === '\r') {
+                    inQuote = false;
+                    fieldStart = false;
+                    closedQuotedLineBreaks += quotedLineBreaks;
+                } else {
+                    // A quote that closes a field but is followed by more text.
+                    malformed = true;
+                }
+            } else if (char === '\n' || char === '\r') {
+                if (char === '\r' && text[index + 1] === '\n') index += 1;
+                quotedLineBreaks += 1;
+                if (quotedLineBreaks > MAX_QUOTED_FIELD_LINE_BREAKS) {
+                    runaway = true;
+                    malformed = true;
+                }
+            }
             continue;
         }
-        if (!isStructuralQuoteChar(text, index, quoteChar)) {
+        if (quoteChar && char === quoteChar && fieldStart && isStructuralQuoteChar(text, index, quoteChar)) {
+            inQuote = true;
+            fieldStart = false;
+            quotedLineBreaks = 0;
+            openRecordStart = recordStart;
             continue;
         }
-        if (inQuote && text[index + 1] === quoteChar) {
-            index += 1;
-            continue;
+        if (char === delimiter) {
+            delimiterHits += 1;
+            fieldStart = true;
+        } else if (char === '\n' || char === '\r') {
+            if (char === '\r' && text[index + 1] === '\n') index += 1;
+            fieldStart = true;
+            recordStart = index + 1;
+        } else {
+            fieldStart = false;
         }
-        inQuote = !inQuote;
     }
-    return inQuote;
+
+    if (inQuote) malformed = true;
+    return { malformed, openAtEnd: inQuote, runaway, openRecordStart, delimiterHits, quotedLineBreaks: closedQuotedLineBreaks };
+};
+
+/**
+ * When the sample was cut inside a multi-line quoted field the last record is
+ * simply incomplete, not malformed. Drop it so the candidate is judged on whole
+ * records only. Returns the (possibly shortened) text and its scan.
+ */
+const scanSampleForCandidate = (sample: DetectionSample, delimiter: string, quoteChar: string) => {
+    const scan = scanQuoting(sample.text, delimiter, quoteChar);
+    if (sample.truncated && scan.openAtEnd && !scan.runaway && scan.openRecordStart > 0) {
+        const trimmed = sample.text.slice(0, scan.openRecordStart);
+        return { text: trimmed, scan: scanQuoting(trimmed, delimiter, quoteChar) };
+    }
+    return { text: sample.text, scan };
 };
 
 const toWidthSummary = (rows: RawCsvRow[]) => {
@@ -216,7 +289,8 @@ const buildHeaderPlausibility = (rows: RawCsvRow[]) => {
     return Math.min(1, score);
 };
 
-const scoreCandidate = (sample: string, candidate: DialectCandidate): CandidateScore => {
+const scoreCandidate = (detectionSample: DetectionSample, candidate: DialectCandidate): CandidateScore => {
+    const { text: sample, scan } = scanSampleForCandidate(detectionSample, candidate.delimiter, candidate.quoteChar);
     const parsed = parseCsvText(sample, {
         delimiter: candidate.delimiter,
         quoteChar: candidate.quoteChar,
@@ -225,11 +299,14 @@ const scoreCandidate = (sample: string, candidate: DialectCandidate): CandidateS
     const nonEmptyRows = rows.filter(isRowNonEmpty);
     const { dominantWidth, dominantWidthCount } = toWidthSummary(nonEmptyRows);
     const sampleNonEmptyLineCount = Math.max(countNonEmptyLines(sample), 1);
+    // A record with an embedded line break spans several lines, so lines inside
+    // well-formed quoted fields must not count against this candidate's coverage.
+    const expectedRecordCount = Math.max(sampleNonEmptyLineCount - scan.quotedLineBreaks, 1);
     const widthConsistency = nonEmptyRows.length > 0 ? dominantWidthCount / nonEmptyRows.length : 0;
-    const usableCoverage = Math.min(1, nonEmptyRows.length / sampleNonEmptyLineCount);
+    const usableCoverage = Math.min(1, nonEmptyRows.length / expectedRecordCount);
     const headerPlausibility = buildHeaderPlausibility(nonEmptyRows);
-    const unbalancedQuote = hasUnbalancedQuote(sample, candidate.quoteChar);
-    const delimiterHits = countDelimiterHits(sample, candidate.delimiter, candidate.quoteChar);
+    const unbalancedQuote = scan.malformed;
+    const delimiterHits = scan.delimiterHits;
     // The sample covers only the first lines of the file. When it contains no
     // quotes, RFC 4180 double quoting is the safe default: an unused `"`
     // changes nothing in the sample, but a quoted field further down
@@ -291,13 +368,14 @@ const buildConfidence = (best: CandidateScore, runnerUp: CandidateScore | null):
 };
 
 const buildBaseWarnings = (
-    sample: string,
+    sample: DetectionSample,
     best: CandidateScore,
     runnerUp: CandidateScore | null,
     confidence: CsvIntakeConfidence,
 ): CsvIntakeWarning[] => {
     const warnings: CsvIntakeWarning[] = [];
-    const malformedQuotedSample = ['"', '\''].some(quoteChar => hasUnbalancedQuote(sample, quoteChar));
+    const malformedQuotedSample = ['"', '\''].some(quoteChar =>
+        scanSampleForCandidate(sample, best.delimiter, quoteChar).scan.malformed);
     if (best.errorCount > 0) {
         pushWarning(warnings, 'parse_errors', `Parser reported ${best.errorCount} issue${best.errorCount === 1 ? '' : 's'} while evaluating the selected CSV dialect.`);
     }
@@ -305,11 +383,17 @@ const buildBaseWarnings = (
         pushWarning(warnings, 'malformed_quote', 'Quoted fields appear malformed or unbalanced, so CSV parsing may require fallback behavior.');
     }
     const delimiterHits = DELIMITER_CANDIDATES
-        .map(delimiter => ({ delimiter, hits: countDelimiterHits(sample, delimiter, best.quoteChar) }))
+        .map(delimiter => ({ delimiter, hits: scanSampleForCandidate(sample, delimiter, best.quoteChar).scan.delimiterHits }))
         .sort((left, right) => right.hits - left.hits);
     const strongestAlternate = delimiterHits.find(entry => entry.delimiter !== best.delimiter && entry.hits > 0) ?? null;
     if (confidence !== 'high') {
         pushWarning(warnings, 'low_confidence', 'CSV dialect detection confidence is limited, so the imported structure should be reviewed in diagnostics.');
+    }
+    // A parse in which every record has the same width cannot be mixed: the
+    // other delimiter's hits are inside fields (decimal commas, free text).
+    const uniformBest = best.widthConsistency >= 0.98 && best.errorCount === 0 && !best.unbalancedQuote;
+    if (uniformBest) {
+        return warnings;
     }
     if (
         strongestAlternate
@@ -327,9 +411,37 @@ const buildBaseWarnings = (
     return warnings;
 };
 
-const scoreCandidates = (sample: string) =>
-    DELIMITER_CANDIDATES.flatMap(delimiter => QUOTE_CHAR_CANDIDATES.map(quoteChar => scoreCandidate(sample, { delimiter, quoteChar })))
+// Comma doubles as the decimal mark and thousands separator, so a file that
+// uses another delimiter and has decimal commas can look just as regular as
+// the real parse. These are the delimiters that never appear inside numbers.
+const COMMA_DOMINATING_DELIMITERS = new Set([';', '\t', '|']);
+const NESTED_COMMA_PENALTY = 0.25;
+
+const isCleanUniformParse = (candidate: CandidateScore) =>
+    candidate.widthConsistency === 1 && candidate.errorCount === 0 && !candidate.unbalancedQuote;
+
+/**
+ * A comma parse is "nested" when another delimiter splits every sampled record
+ * (header included) into the same, larger number of fields. The commas then
+ * sit inside those fields (decimal commas such as `1.234,56`), so they are not
+ * the separator even though each record has a constant comma count.
+ */
+const isNestedCommaCandidate = (candidate: CandidateScore, all: CandidateScore[]) =>
+    candidate.delimiter === ','
+    && all.some(other =>
+        COMMA_DOMINATING_DELIMITERS.has(other.delimiter)
+        && other.dominantWidth > Math.max(candidate.dominantWidth, 1)
+        && isCleanUniformParse(other));
+
+const scoreCandidates = (sample: DetectionSample) => {
+    const scored = DELIMITER_CANDIDATES.flatMap(delimiter =>
+        QUOTE_CHAR_CANDIDATES.map(quoteChar => scoreCandidate(sample, { delimiter, quoteChar })));
+    return scored
+        .map(candidate => isNestedCommaCandidate(candidate, scored)
+            ? { ...candidate, score: Number(Math.max(candidate.score - NESTED_COMMA_PENALTY, 0).toFixed(4)) }
+            : candidate)
         .sort((left, right) => right.score - left.score);
+};
 
 const getAlternateDelimiterCandidate = (candidates: CandidateScore[], best: CandidateScore) =>
     candidates.find(candidate => candidate.delimiter !== best.delimiter) ?? null;
@@ -355,6 +467,28 @@ const createDetection = (
     runnerUpScore: runnerUp?.score ?? null,
 });
 
+/**
+ * Reports padded with a trailing delimiter on every line (`a;b;c;`) parse into
+ * one extra field that is empty in every record. It carries no data, so drop it
+ * instead of letting it become an `_unnamed_column_N` further down the pipeline.
+ */
+export const dropTrailingEmptyColumns = (rows: RawCsvRow[]): RawCsvRow[] => {
+    let lastUsedWidth = 0;
+    let maxWidth = 0;
+    for (const row of rows) {
+        maxWidth = Math.max(maxWidth, row.length);
+        let width = row.length;
+        while (width > lastUsedWidth && String(row[width - 1] ?? '').trim().length === 0) {
+            width -= 1;
+        }
+        lastUsedWidth = Math.max(lastUsedWidth, width);
+    }
+    if (lastUsedWidth === 0 || lastUsedWidth >= maxWidth) {
+        return rows;
+    }
+    return rows.map(row => (row.length > lastUsedWidth ? row.slice(0, lastUsedWidth) : row));
+};
+
 const parseCandidateRows = (text: string, candidate: CandidateScore) => {
     const parsed = parseCsvText(text, {
         delimiter: candidate.delimiter,
@@ -362,7 +496,7 @@ const parseCandidateRows = (text: string, candidate: CandidateScore) => {
     });
 
     return {
-        rawRows: parsed.data.map(coerceRowToArray),
+        rawRows: dropTrailingEmptyColumns(parsed.data.map(coerceRowToArray)),
         errorCount: parsed.errors.length,
     };
 };
@@ -374,7 +508,7 @@ const parseAutoFallbackRows = (text: string) => {
         : null;
 
     return {
-        rawRows: parsed.data.map(coerceRowToArray),
+        rawRows: dropTrailingEmptyColumns(parsed.data.map(coerceRowToArray)),
         errorCount: parsed.errors.length,
         delimiter: autoDelimiter,
     };
@@ -412,7 +546,7 @@ const buildFallbackCandidate = (delimiter: string | null, quoteChar: string | nu
 
 export const detectCsvDialect = (sample: string): CsvIntakeDetectionResult => {
     const sampleText = buildDetectionSample(sample);
-    const sampledNonEmptyLines = countNonEmptyLines(sampleText);
+    const sampledNonEmptyLines = countNonEmptyLines(sampleText.text);
     const candidates = scoreCandidates(sampleText);
     const best = candidates[0];
     const runnerUp = getAlternateDelimiterCandidate(candidates, best);
@@ -429,13 +563,34 @@ export const detectCsvDialect = (sample: string): CsvIntakeDetectionResult => {
 
 export const parseCsvTextWithDetection = (text: string): CsvDetectionParseResult => {
     const sample = buildDetectionSample(text);
-    const sampledNonEmptyLines = countNonEmptyLines(sample);
+    const sampledNonEmptyLines = countNonEmptyLines(sample.text);
     const scoredCandidates = scoreCandidates(sample);
     const best = scoredCandidates[0];
     const runnerUp = getAlternateDelimiterCandidate(scoredCandidates, best);
     const confidence = buildConfidence(best, runnerUp);
     const scoredWarnings = buildBaseWarnings(sample, best, runnerUp, confidence);
-    const effectiveBaseConfidence: CsvIntakeConfidence = scoredWarnings.some(warning => warning.code === 'malformed_quote')
+
+    // A text report has no delimiter, so the best delimited parse is either
+    // ragged (stray commas in numbers) or a single column.
+    const fixedWidth = (best.widthConsistency < FIXED_WIDTH_MAX_DELIMITED_CONSISTENCY || best.dominantWidth <= 1)
+        ? detectFixedWidthLayout(sample.text.split('\n'))
+        : null;
+    if (fixedWidth?.kind === 'split') {
+        const rawRows = sliceFixedWidthRows(stripBom(text), fixedWidth);
+        const warnings = mergeWarnings(
+            [{ code: 'not_delimited_text', message: NOT_DELIMITED_SPLIT_MESSAGE }],
+            [{ code: 'low_confidence', message: 'CSV dialect detection confidence is limited, so the imported structure should be reviewed in diagnostics.' }],
+        );
+        return {
+            rawRows,
+            detection: createDetection('fixed_width_layout', null, null, 'low', warnings, sampledNonEmptyLines, 0),
+        };
+    }
+    if (fixedWidth?.kind === 'unsplittable') {
+        pushWarning(scoredWarnings, 'not_delimited_text', NOT_DELIMITED_UNSPLIT_MESSAGE);
+    }
+    const notDelimited = fixedWidth?.kind === 'unsplittable';
+    const effectiveBaseConfidence: CsvIntakeConfidence = notDelimited || scoredWarnings.some(warning => warning.code === 'malformed_quote')
         ? 'low'
         : confidence;
 
