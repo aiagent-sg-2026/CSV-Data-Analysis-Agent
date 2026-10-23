@@ -12,7 +12,7 @@ import { LargeDatasetNotice } from './analysis-panel/LargeDatasetNotice';
 import { RecommendedNextStep } from './analysis-panel/RecommendedNextStep';
 import { ResultsViewToggle, type ResultsViewMode } from './analysis-panel/ResultsViewToggle';
 import { summarizeCardCredibility } from './analysis-panel/credibilitySummary';
-import { resolveNextStepKind } from './analysis-panel/nextStep';
+import { isStructureReviewPending, resolveNextStepKind } from './analysis-panel/nextStep';
 import { selectSimpleViewCardIds } from './analysis-panel/simpleViewSelection';
 import { useCardWindow } from './analysis-panel/useCardWindow';
 import { useResponsiveColumnCount } from './analysis-panel/useResponsiveColumnCount';
@@ -197,6 +197,7 @@ const AnalysisPanelComponent: React.FC = () => {
         const finalSummaryTitle = getTranslation('overall_insights', language);
         const showWarnings = shouldShowDataWarnings();
         const analysisAlreadyStarted = initialAnalysisStatus === 'ready' || initialAnalysisStatus === 'degraded' || cards.length > 0;
+        const structureReviewPending = isStructureReviewPending(pipelineOutcome, reportStructureResolution);
         const showCleaningBanner = cleaningRun
             && (cleaningRun.status !== 'completed' || dataPreparationPlan?.sqlPrecheck?.status === 'blocked' || dataPreparationPlan?.sqlPrecheck?.status === 'warning')
             && !isSpreadsheetVisible
@@ -204,6 +205,8 @@ const AnalysisPanelComponent: React.FC = () => {
             // Cleaning cannot continue without the provider or the cloud AI consent; the next step covers both.
             && initialAnalysisFailureKind !== 'provider'
             && initialAnalysisFailureKind !== 'cloud_consent_declined'
+            // Continue/Restart cannot succeed before the structure is confirmed; the next step asks for that.
+            && !structureReviewPending
             // The step tracker already shows preparation progress while the analysis runs.
             && initialAnalysisStatus !== 'running';
         const showReportHeader = Boolean(reportContext && csvData);
@@ -215,9 +218,7 @@ const AnalysisPanelComponent: React.FC = () => {
         // Nothing to show yet: hide the results controls and reserve the space with placeholders.
         const analysisRunning = !analysisTerminal && cards.length === 0 && !aiTaskDone;
         const needsCloudAiConsent = initialAnalysisFailureKind === 'cloud_consent_declined';
-        const needsStructureRepair = completionGate.status === 'blocked'
-            && pipelineOutcome?.status === 'needs_structure_review'
-            && reportStructureResolution?.requiresHumanReview === true;
+        const needsStructureRepair = completionGate.status === 'blocked' && structureReviewPending;
         const needsProviderRecovery = !needsStructureRepair
             && initialAnalysisFailureKind === 'provider'
             && (initialAnalysisStatus === 'error' || initialAnalysisStatus === 'degraded');

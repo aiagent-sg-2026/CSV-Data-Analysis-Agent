@@ -201,6 +201,29 @@ describe('SpreadsheetPanel', () => {
         expect(restartCleaningRun).toHaveBeenCalledTimes(1);
     });
 
+    it('hides spreadsheet cleaning controls while structure review is pending', () => {
+        useAppStoreMock.mockImplementation((selector: any) =>
+            selector({
+                settings: { language: 'English' },
+                setIsSpreadsheetVisible: vi.fn(),
+                resumeCleaningRun: vi.fn(),
+                restartCleaningRun: vi.fn(),
+                userColumnAnnotations: {},
+                setColumnAnnotation: vi.fn(),
+                removeColumnAnnotation: vi.fn(),
+                columnProfiles: [],
+                pipelineOutcome: { status: 'needs_structure_review', canAutoAnalyze: false },
+                reportStructureResolution: { requiresHumanReview: true },
+            }),
+        );
+        useSpreadsheetLogicMock.mockReturnValue({ ...createLogic('schema_only'), cleaningRun: { status: 'failed' } });
+
+        render(<SpreadsheetPanel isVisible />);
+
+        expect(screen.queryByText('Continue cleaning')).not.toBeInTheDocument();
+        expect(screen.queryByText('Restart cleaning')).not.toBeInTheDocument();
+    });
+
     it('passes business-facing display labels into the table renderer', () => {
         const logic = createLogic('operations');
         logic.displayColumns = ['SeriesLabelL1', 'Value'] as string[];

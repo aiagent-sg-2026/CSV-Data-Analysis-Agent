@@ -9,6 +9,17 @@ export interface NextStepFlags {
 }
 
 /**
+ * The detected structure must be confirmed before cleaning or analysis can
+ * continue. Cleaning resume/restart actions cannot succeed in this state, so
+ * both the dashboard and spreadsheet cleaning banners stay hidden.
+ */
+export const isStructureReviewPending = (
+    pipelineOutcome: { status?: string } | null | undefined,
+    reportStructureResolution: { requiresHumanReview?: boolean } | null | undefined,
+): boolean => pipelineOutcome?.status === 'needs_structure_review'
+    && reportStructureResolution?.requiresHumanReview === true;
+
+/**
  * A declined cloud AI consent comes first because no analysis ran and every other step needs it.
  * Then structure problems, a failed provider and evidence review; otherwise the report.
  */
