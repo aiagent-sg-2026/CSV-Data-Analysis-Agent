@@ -16,6 +16,7 @@ const truth = JSON.parse(readFixture('truth.json')) as {
     f3: { sales: number; rows: number[] };
     f5: { rows: number };
     f6: { rows: number };
+    f7: { rows: number; total_value: number };
 };
 
 const schemaOnlyPlan: DataPreparationPlan = {
@@ -279,5 +280,71 @@ describe('grouped two-row header (w6)', () => {
         expect(isNumericLike('-$12.50')).toBe(true);
         expect(isNumericLike('$')).toBe(false);
         expect(isNumericLike('$abc')).toBe(false);
+    });
+});
+
+describe('space-aligned text report with an all-caps header (w7)', () => {
+    const sumValue = (rows: Array<Record<string, unknown>>) =>
+        rows.reduce((sum, row) => sum + Number(String(row.VALUE).replace(/,/g, '')), 0);
+
+    it('takes the label line above the rule as the header and the title as metadata', async () => {
+        const { csvData, intakeIr } = await processCsvWithIntakeIr(asCsvFile('w7.csv', readFixture('w7_fixed_width_text.csv')));
+        const table = intakeIr.provisionalTable!;
+
+        expect(csvData.intakeDetection?.strategy).toBe('fixed_width_layout');
+        expect(table.headerRowIndex).toBe(1);
+        expect(table.bodyStartIndex).toBe(2);
+        expect(columnsOf(csvData)).toEqual(['ITEM CODE', 'DESCRIPTION', 'LOCATION', 'ON HAND', 'UNIT COST', 'VALUE']);
+        expect(csvData.metadataRows).toHaveLength(1);
+        expect(csvData.metadataRows?.[0][0]).toContain('STOCK LISTING');
+        expect(csvData.data).toHaveLength(truth.f7.rows);
+        // Page-break repeats of the header and the TOTAL line are not records.
+        expect(csvData.data.some(row => row['ITEM CODE'] === 'ITEM CODE')).toBe(false);
+        expect(csvData.data.every(row => /^IT\d+$/.test(String(row['ITEM CODE'])))).toBe(true);
+        expect(sumValue(csvData.data)).toBeCloseTo(truth.f7.total_value, 2);
+        expect((csvData.summaryRows ?? []).map(row => Object.values(row).join('|')).some(line => line.startsWith('TOTAL VALUE'))).toBe(true);
+    });
+
+    it('keeps the not-delimited review reason and analyses the same rows once confirmed', async () => {
+        const { csvData, intakeIr } = await processCsvWithIntakeIr(asCsvFile('w7.csv', readFixture('w7_fixed_width_text.csv')));
+        const intake = { intakeIr, csvData };
+
+        const pending = resolve(intake);
+        expect(pending.reportStructureResolution?.blockingReasons[0]).toBe('not_delimited_text');
+        expect(pending.pipelineOutcome?.reasonCode).toBe('not_delimited_text');
+
+        const confirmed = resolve(intake, true);
+        expect(confirmed.pipelineOutcome?.canAutoAnalyze).toBe(true);
+        expect(confirmed.canonicalCsvData?.data).toHaveLength(truth.f7.rows);
+        expect(sumValue(confirmed.canonicalCsvData!.data)).toBeCloseTo(truth.f7.total_value, 2);
+    });
+
+    const report = [
+        'ACME HOLDINGS SDN BHD,STOCK LISTING,30-06-2026',
+        'ITEM CODE,DESCRIPTION,LOCATION,ON HAND,UNIT COST,VALUE',
+        ...Array.from({ length: 8 }, (_, index) => `IT${String(index + 1).padStart(5, '0')},BOLT ${index},WH-A1,${index + 10},2.50,${(index + 10) * 2.5}`),
+        'ITEM CODE,DESCRIPTION,LOCATION,ON HAND,UNIT COST,VALUE',
+        ...Array.from({ length: 8 }, (_, index) => `IT${String(index + 9).padStart(5, '0')},NUT ${index},WH-B2,${index + 20},3.00,${(index + 20) * 3}`),
+        'TOTAL VALUE,,,,,999',
+    ].join('\n');
+
+    it('finds an all-caps header that sits directly above the records', () => {
+        const { intakeIr, csvData } = intakeFromText('stock.csv', report);
+
+        expect(intakeIr.provisionalTable?.headerRowIndex).toBe(1);
+        expect(columnsOf(csvData)).toEqual(['ITEM CODE', 'DESCRIPTION', 'LOCATION', 'ON HAND', 'UNIT COST', 'VALUE']);
+        expect(csvData.metadataRows).toHaveLength(1);
+        expect(csvData.data.filter(row => /^IT\d+$/.test(String(row['ITEM CODE'])))).toHaveLength(16);
+    });
+
+    it('does not take a metadata pair row that is followed by a header for the header', () => {
+        const text = [
+            'CURRENCY,MYR,AS AT,DATEHERE',
+            'ITEM CODE,DESCRIPTION,LOCATION,ON HAND,VALUE',
+            ...Array.from({ length: 8 }, (_, index) => `IT${String(index + 1).padStart(5, '0')},BOLT ${index},WH-A1,${index + 10},${(index + 10) * 2.5}`),
+        ].join('\n');
+        const { intakeIr } = intakeFromText('meta.csv', text);
+
+        expect(intakeIr.provisionalTable?.headerRowIndex).toBe(1);
     });
 });

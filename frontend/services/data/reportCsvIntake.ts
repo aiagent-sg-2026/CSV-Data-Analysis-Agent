@@ -308,6 +308,25 @@ const hasRepeatedLeafLabelsAcrossGroups = (row: RawCsvRow, leaf: RawCsvRow) => {
     return [...groups[0]].some(label => groups.slice(1).some(other => other.has(label)));
 };
 
+/**
+ * A row of plain labels directly above a data row of the same width. All-caps
+ * labels ("DESCRIPTION", "LOCATION") also match the code-like value test of a
+ * key/value pair row, so the plain header test rejects the whole row. A real
+ * key/value row is followed by more parameters or by a header, never straight
+ * by a record with the same number of cells and numbers in it.
+ */
+const isHeaderDirectlyOverData = (rows: RawCsvRow[], rowIndex: number) => {
+    const values = getNonEmptyCells(rows[rowIndex]);
+    if (values.length < 4 || isFooterLikeRow(rows[rowIndex])) return false;
+    if (values.some(value => isNumericLike(value) || DATE_LIKE_PATTERN.test(value))) return false;
+    const next = rows[rowIndex + 1];
+    if (!next || isBlankRow(next)) return false;
+    const nextValues = getNonEmptyCells(next);
+    return isLikelyDataRow(next)
+        && nextValues.length >= values.length - 1
+        && countMatches(nextValues, isNumericLike) >= 2;
+};
+
 const isGroupBandHeaderRow = (rows: RawCsvRow[], rowIndex: number) => {
     const row = rows[rowIndex];
     const leaf = rows[rowIndex + 1];
@@ -806,7 +825,7 @@ const selectReportHeader = (rows: RawCsvRow[]): HeaderSelection | null => {
     const headerScanLimit = findHeaderScanLimit(rows);
     for (let rowIndex = 0; rowIndex < headerScanLimit; rowIndex += 1) {
         const row = rows[rowIndex];
-        if (!isLikelyHeaderRow(row) && !isGroupBandHeaderRow(rows, rowIndex)) continue;
+        if (!isLikelyHeaderRow(row) && !isGroupBandHeaderRow(rows, rowIndex) && !isHeaderDirectlyOverData(rows, rowIndex)) continue;
 
         const blockIndexes = [rowIndex];
         // A header split across a single blank spacer row (band row, blank
