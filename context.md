@@ -164,6 +164,8 @@
     - Gate: 466 files / 4,411 tests; `test:publish` 4/4; bundle budget; `stage:pages` 107 files.
     - Known small issue: when the plan filters facts through an aggregate-level filter, `groupCount` reads 62 (all series) instead of 52 leaf groups. The total and the verdict are correct.
     - Cards saved before this change have no `groupCoverage` and keep the old behaviour until their evidence is re-run.
+    - Deployed as PR #39 (merge 64dd847), live 1.0.0-a7aba150e557. Live no-AI audit: 6 viewports clean, 8 of 8 datasets load. One live real-AI run on visitor arrivals gave 1 card (USA monthly, 9,031,196, matches the source). A top-N card did not appear live because a request failed mid-run (`FAIL`, then an empty AI response, "Unexpected end of JSON input", after a 429 session refresh). The true-total display was verified by real-data tests and the candidate run, not seen live.
+    - Next: retry an empty or truncated AI response in `generateEvidenceQueryPlanWithRetry` instead of failing the topic; a live real-AI table for all 9 datasets once the shared quota resets.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
