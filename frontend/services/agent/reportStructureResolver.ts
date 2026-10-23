@@ -384,6 +384,11 @@ const buildBlockingReasons = (
     if (input.rawIntakeIr?.diagnostics.headerShapeDrift) {
         reasons.push('header_shape_drift');
     }
+    // Other tables stacked in the file were kept out of the analysed table;
+    // the user has to see that rows were set aside before analysis starts.
+    if (input.rawIntakeIr?.diagnostics.setAsideSections?.length) {
+        reasons.push('stacked_sections_set_aside');
+    }
     if (input.runtimeTableAssessment?.status === 'ambiguous') {
         reasons.push('runtime_boundary_ambiguous');
     }

@@ -1050,7 +1050,14 @@ const buildReshapedTable = (
             return null;
         }
         const labelColumns = hypothesis.seriesLabelColumns.map(labelColumn => {
-            const headerLayer = sourceData.headerLayers?.[labelColumn.layerIndex - 1] ?? [];
+            // A spanning band label is written once at the left edge of its span, so
+            // carry it across the blank cells of the span (as the merged header
+            // names do); otherwise only the first column of each band gets it.
+            let spanLabel = '';
+            const headerLayer = (sourceData.headerLayers?.[labelColumn.layerIndex - 1] ?? []).map(cell => {
+                spanLabel = String(cell ?? '').trim() || spanLabel;
+                return spanLabel;
+            });
             return {
                 outputColumn: labelColumn.outputColumn,
                 mappings: sourceColumns.map(sourceColumn => {

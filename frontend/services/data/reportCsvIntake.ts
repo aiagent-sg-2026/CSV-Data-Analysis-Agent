@@ -5,6 +5,7 @@ import type {
     CsvIntakeWarning,
     CsvRow,
     IntakePreScanSignals,
+    IntakeSetAsideSection,
     IntakeRowClassification,
     IntakeRowSignal,
     ReportIntakeBodyEvidenceKind,
@@ -258,6 +259,82 @@ const isHeaderContinuationRow = (row: RawCsvRow) => {
     const numericCount = countMatches(values, isNumericLike);
     const textLikeCount = values.length - numericCount;
     return textLikeCount >= Math.max(2, Math.floor(values.length * 0.45));
+};
+
+const normalizeHeaderLabel = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+const YEAR_LABEL_PATTERN = /^(?:19|20)\d{2}$/;
+
+/**
+ * Upper row of a two-row grouped header where some columns are named only by
+ * the upper row ("Category,Product,FY2025,,,,FY2026,,"): the row below
+ * ("Q1,Q2,...") is blank under those names while the records below carry
+ * values there. The upper row looks like a key/value pair row, so the plain
+ * header test rejects it and the name of every such column would be lost. A
+ * real key/value row has a text cell in every column where the row below it
+ * has a header label.
+ */
+const hasLabelOnlyColumns = (rows: RawCsvRow[], rowIndex: number) => {
+    const row = rows[rowIndex];
+    const leaf = rows[rowIndex + 1];
+    const bodySample = rows.slice(rowIndex + 2, rowIndex + 2 + DATA_PATTERN_LOOKAHEAD_ROWS);
+    let labelOnlyColumns = 0;
+    for (let column = 0; column < row.length; column += 1) {
+        if (!String(row[column] ?? '').trim() || String(leaf[column] ?? '').trim()) continue;
+        if (!bodySample.some(sample => String(sample[column] ?? '').trim())) return false;
+        labelOnlyColumns += 1;
+    }
+    return labelOnlyColumns > 0;
+};
+
+/**
+ * Upper row of a two-row grouped header whose group labels span several leaf
+ * labels and repeat the same leaf labels in every group (",,FY2025,,,,FY2026,,"
+ * over "Q1,Q2,Q3,Q4,Q1,Q2,Q3"). Fewer than three group labels fail the plain
+ * header test and the group layer would be dropped as metadata. A key/value row
+ * never qualifies because each of its labels sits over a single leaf column.
+ */
+const hasRepeatedLeafLabelsAcrossGroups = (row: RawCsvRow, leaf: RawCsvRow) => {
+    const groupStarts = row.reduce<number[]>((starts, value, column) => {
+        if (String(value ?? '').trim()) starts.push(column);
+        return starts;
+    }, []);
+    const leafEnd = leaf.reduce((end, value, column) => (String(value ?? '').trim() ? column + 1 : end), 0);
+    const groups = groupStarts
+        .map((start, index) => ({ start, end: groupStarts[index + 1] ?? leafEnd }))
+        .filter(({ start }) => String(leaf[start] ?? '').trim())
+        .map(({ start, end }) => new Set(leaf.slice(start, end).map(normalizeHeaderLabel).filter(Boolean)));
+    if (groups.length < 2 || groups.some(labels => labels.size < 2)) return false;
+    return [...groups[0]].some(label => groups.slice(1).some(other => other.has(label)));
+};
+
+const isGroupBandHeaderRow = (rows: RawCsvRow[], rowIndex: number) => {
+    const row = rows[rowIndex];
+    const leaf = rows[rowIndex + 1];
+    if (!row || !leaf) return false;
+    const values = getNonEmptyCells(row);
+    if (values.length < 2 || isFooterLikeRow(row)) return false;
+    if (values.some(value => DATE_LIKE_PATTERN.test(value) || (isNumericLike(value) && !YEAR_LABEL_PATTERN.test(value)))) return false;
+    if (!isHeaderContinuationRow(leaf) || isLikelyDataRow(leaf)) return false;
+    const leafCellCount = getNonEmptyCells(leaf).length;
+    if (leafCellCount < 3 || values.length > leafCellCount + 2) return false;
+    return hasLabelOnlyColumns(rows, rowIndex) || hasRepeatedLeafLabelsAcrossGroups(row, leaf);
+};
+
+// A leading block of report parameters ("Company,ACME", "As At,30-06-2026") can
+// be much longer than the header scan window. Rows with at most two cells,
+// blank rows and label/value pair rows cannot be a header, so the window is
+// counted from the first row after that preamble.
+const MAX_PREAMBLE_SCAN_ROWS = 200;
+
+const findHeaderScanLimit = (rows: RawCsvRow[]) => {
+    const preambleScanEnd = Math.min(rows.length, MAX_PREAMBLE_SCAN_ROWS);
+    let preambleEnd = 0;
+    while (preambleEnd < preambleScanEnd) {
+        const row = rows[preambleEnd];
+        if (getNonEmptyCells(row).length > 2 && !isLikelyMetadataPairRow(row)) break;
+        preambleEnd += 1;
+    }
+    return Math.min(rows.length, Math.max(MAX_HEADER_SCAN_ROWS, preambleEnd + MAX_HEADER_SCAN_ROWS));
 };
 
 const isCodeSeriesHeaderRow = (row: RawCsvRow, followingRow: RawCsvRow | undefined) => {
@@ -548,6 +625,80 @@ const findBodyStartAfterHeader = (
     return null;
 };
 
+// Two header rows describe the same table when most labels agree (a repeated
+// page header); otherwise they head different tables.
+const MIN_SAME_TABLE_LABEL_OVERLAP = 0.5;
+
+const isSectionTitleRow = (row: RawCsvRow) => {
+    const values = getNonEmptyCells(row);
+    if (values.length === 0 || values.length > 2 || isFooterLikeRow(row)) return false;
+    return values.every(value => !isNumericLike(value) && !DATE_LIKE_PATTERN.test(value));
+};
+
+const sharesHeaderLabels = (header: RawCsvRow, candidate: RawCsvRow) => {
+    const known = new Set(getNonEmptyCells(header).map(normalizeHeaderLabel));
+    const labels = getNonEmptyCells(candidate).map(normalizeHeaderLabel);
+    if (labels.length === 0 || known.size === 0) return true;
+    const shared = labels.filter(label => known.has(label)).length;
+    return shared / Math.min(labels.length, known.size) >= MIN_SAME_TABLE_LABEL_OVERLAP;
+};
+
+/**
+ * Finds tables stacked below the analysed one: a title line followed by a new
+ * header row whose labels differ from the current header and that has data
+ * rows under it ("SECTION B: CREDIT NOTES" / "CN No,Original Invoice,..."). A
+ * repeated page header (same labels, with or without a "Continued..." line)
+ * and a group heading that is followed directly by data are not sections.
+ * Each section runs until the next one, so everything from the first section
+ * on can be set aside without mixing it into the analysed table.
+ */
+const findStackedSections = (
+    rows: RawCsvRow[],
+    headerRowIndex: number,
+    bodyStartIndex: number,
+): IntakeSetAsideSection[] => {
+    const headerRow = rows[headerRowIndex];
+    if (!headerRow) return [];
+    const found: Array<Omit<IntakeSetAsideSection, 'rowEnd' | 'rowCount'> & { dataStartIndex: number }> = [];
+    for (let index = bodyStartIndex; index < rows.length; index += 1) {
+        if (!isSectionTitleRow(rows[index])) continue;
+        let candidateIndex = index + 1;
+        while (candidateIndex < rows.length && candidateIndex - index <= 2 && isBlankRow(rows[candidateIndex])) candidateIndex += 1;
+        const candidate = rows[candidateIndex];
+        if (!candidate || !isLikelyHeaderRow(candidate) || isLikelyDataRow(candidate)) continue;
+        if (sharesHeaderLabels(headerRow, candidate) || continuesFollowingDataPattern(rows, candidateIndex)) continue;
+        const sectionBody = findBodyStartAfterHeader(rows, [candidateIndex], candidateIndex);
+        if (!sectionBody || sectionBody.bodyStartIndex - candidateIndex > MAX_HEADER_BLOCK_ROWS) continue;
+        let rowStart = index;
+        while (rowStart > bodyStartIndex && isBlankRow(rows[rowStart - 1])) rowStart -= 1;
+        found.push({
+            rowStart,
+            titleRowIndex: index,
+            headerRowIndex: candidateIndex,
+            title: getNonEmptyCells(rows[index]).join(' '),
+            headerLabels: getNonEmptyCells(candidate),
+            dataStartIndex: sectionBody.bodyStartIndex,
+        });
+        index = sectionBody.bodyStartIndex;
+    }
+    return found.map((section, position) => {
+        const rowEnd = (found[position + 1]?.rowStart ?? rows.length) - 1;
+        const { dataStartIndex, ...rest } = section;
+        return {
+            ...rest,
+            rowEnd,
+            rowCount: rows.slice(dataStartIndex, rowEnd + 1).filter(row => !isBlankRow(row)).length,
+        };
+    });
+};
+
+const describeStackedSections = (analysedRowCount: number, sections: IntakeSetAsideSection[]) => {
+    const setAside = sections
+        .map(section => `"${section.title}" (${section.rowCount} rows, columns: ${section.headerLabels.join(', ')})`)
+        .join('; ');
+    return `This file stacks ${sections.length + 1} different tables. Only the first table (${analysedRowCount} rows) is analysed. Set aside, not merged into it: ${setAside}.`;
+};
+
 export const buildPreScanSignals = (rows: RawCsvRow[]): IntakePreScanSignals => {
     const scanLimit = Math.min(rows.length, MAX_HEADER_SCAN_ROWS + MAX_BODY_LOOKAHEAD_ROWS);
     const rowSignals: IntakeRowSignal[] = [];
@@ -651,9 +802,10 @@ export const buildPreScanSignals = (rows: RawCsvRow[]): IntakePreScanSignals => 
 };
 
 const selectReportHeader = (rows: RawCsvRow[]): HeaderSelection | null => {
-    for (let rowIndex = 0; rowIndex < Math.min(rows.length, MAX_HEADER_SCAN_ROWS); rowIndex += 1) {
+    const headerScanLimit = findHeaderScanLimit(rows);
+    for (let rowIndex = 0; rowIndex < headerScanLimit; rowIndex += 1) {
         const row = rows[rowIndex];
-        if (!isLikelyHeaderRow(row)) continue;
+        if (!isLikelyHeaderRow(row) && !isGroupBandHeaderRow(rows, rowIndex)) continue;
 
         const blockIndexes = [rowIndex];
         // A header split across a single blank spacer row (band row, blank
@@ -984,7 +1136,13 @@ export const buildReportIntakeIr = (
         };
     }
 
-    const summaryStartIndex = findSummaryStartIndex(normalizedRows, selection.bodyStartIndex);
+    // Stacked tables are set aside, so the analysed table ends where the first
+    // of them begins and its own trailing totals are found within that range.
+    const setAsideSections = findStackedSections(normalizedRows, selection.headerRowIndex, selection.bodyStartIndex);
+    const summaryStartIndex = findSummaryStartIndex(
+        setAsideSections.length > 0 ? normalizedRows.slice(0, setAsideSections[0].rowStart) : normalizedRows,
+        selection.bodyStartIndex,
+    );
     preScanSignals.deterministicSummaryStartIndex = summaryStartIndex;
     const headerLayerIndexSet = new Set(selection.headerLayerIndexes);
     const parameterRowIndexSet = new Set(selection.parameterRowIndexes);
@@ -994,12 +1152,21 @@ export const buildReportIntakeIr = (
         .map((_, index) => index)
         .filter(index => !headerLayerIndexSet.has(index) && index !== selection.headerRowIndex && !isBlankRow(normalizedRows[index]));
     const headerShapeDrift = hasHeaderShapeDrift(coercedRows, selection.headerRowIndex, selection.bodyStartIndex);
-    const detection = headerShapeDrift
+    const driftDetection = headerShapeDrift
         ? appendDetectionWarning(baseDetection, {
             code: 'header_shape_drift',
             message: 'Header width drifts from body rows near the detected table boundary, so report structure may be irregular.',
         })
         : baseDetection;
+    const detection = setAsideSections.length > 0
+        ? appendDetectionWarning(driftDetection, {
+            code: 'stacked_sections',
+            message: describeStackedSections(
+                normalizedRows.slice(selection.bodyStartIndex, summaryStartIndex).filter(row => !isBlankRow(row)).length,
+                setAsideSections,
+            ),
+        })
+        : driftDetection;
     const provisionalTable: ReportIntakeIr['provisionalTable'] = {
         headerRowIndex: selection.headerRowIndex,
         headerLayerRowIndexes: [...selection.headerLayerIndexes],
@@ -1044,6 +1211,7 @@ export const buildReportIntakeIr = (
             preScanSignals,
             structureSource: 'deterministic',
             ...(zeroPlaceholderColumnIndexes.length > 0 ? { zeroPlaceholderColumnIndexes } : {}),
+            ...(setAsideSections.length > 0 ? { setAsideSections } : {}),
         },
     };
 };
@@ -1065,8 +1233,10 @@ export const buildCsvDataFromIntakeIr = (intakeIr: ReportIntakeIr): CsvData => {
         .filter(row => getNonEmptyCells(row).length > 0)
         .map(row => [...row]);
     const bodyRows = normalizedRows.slice(provisionalTable.bodyStartIndex, provisionalTable.summaryStartIndex);
+    // Tables stacked below the analysed one are set aside, not summary rows.
+    const setAsideStart = diagnostics.setAsideSections?.[0]?.rowStart ?? normalizedRows.length;
     const summaryRows = normalizedRows
-        .slice(provisionalTable.summaryStartIndex)
+        .slice(provisionalTable.summaryStartIndex, Math.max(provisionalTable.summaryStartIndex, setAsideStart))
         .filter(row => getNonEmptyCells(row).length > 0)
         .map(buildSummaryRow);
 
@@ -1319,6 +1489,8 @@ export const rebuildIntakeIrWithBoundary = (
             structureSource,
             // Store AI boundary so buildCsvDataFromIntakeIr can access syntheticHeaders
             ...(isHeaderless ? { aiStructureBoundary: boundary as AiIntakeStructureBoundary } : {}),
+            // A boundary that reaches into a set-aside table takes it back as data.
+            setAsideSections: (baseIr.diagnostics.setAsideSections ?? []).filter(section => section.rowStart >= boundary.summaryStartIndex),
         },
     };
 };

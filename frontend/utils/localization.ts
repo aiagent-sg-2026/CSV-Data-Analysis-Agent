@@ -4422,6 +4422,12 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
         'Japanese': 'ヘッダー行とデータ行の列数が一致しません。',
         'Malay': 'Baris tajuk mempunyai bilangan lajur yang berbeza daripada baris data.',
     },
+    'structure_review_reason_stacked_sections_set_aside': {
+        'English': 'The file stacks several different tables. Only the first table is analysed, and the other tables were set aside so their rows are not mixed in.',
+        'Mandarin': '文件中堆叠了多个不同的表格。仅分析第一个表格，其余表格已被单独搁置，避免其数据混入。',
+        'Japanese': 'ファイルに異なる表が縦に並んでいます。最初の表だけを分析し、他の表は行が混ざらないよう別に扱っています。',
+        'Malay': 'Fail ini mengandungi beberapa jadual berbeza yang disusun bertindan. Hanya jadual pertama dianalisis, dan jadual lain diketepikan supaya barisnya tidak bercampur.',
+    },
     'structure_review_reason_runtime_boundary_ambiguous': {
         'English': 'The table boundaries are unclear, so the file can be read in more than one way.',
         'Mandarin': '表格边界不明确，文件可能有多种解读方式。',
@@ -5445,6 +5451,7 @@ export const getTranslation = (
 export const STRUCTURE_REVIEW_REASON_CODES = [
     'boundary_incomplete',
     'header_shape_drift',
+    'stacked_sections_set_aside',
     'runtime_boundary_ambiguous',
     'runtime_boundary_rejected',
     'repeated_header_leakage',
