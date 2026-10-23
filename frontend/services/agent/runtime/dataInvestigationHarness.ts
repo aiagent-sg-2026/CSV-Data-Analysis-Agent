@@ -743,6 +743,14 @@ export const runDataInvestigationHarness = async (
     runtimeDirectives.detailRowFilter = rowClassCol?.name && rowClassDetailValue
         ? { column: rowClassCol.name, value: rowClassDetailValue }
         : null;
+    // A verified detail-row contract already removes parent and summary rows, and
+    // the label statistics above (parent sums, near-equal totals) cannot tell a
+    // parent label from an ordinary entity. Stacking a NOT IN list of labels on
+    // top of the contract removed real detail rows from every aggregate.
+    if (runtimeDirectives.detailRowFilter) {
+        runtimeDirectives.excludeFromAggregation = [];
+        runtimeDirectives.hierarchyColumn = null;
+    }
 
     let investigationSummary = '';
     try {

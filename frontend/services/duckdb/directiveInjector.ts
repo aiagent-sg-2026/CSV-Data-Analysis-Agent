@@ -130,11 +130,22 @@ const hasSameColumnPredicate = (where: QueryWhereClause | undefined, column: str
 const injectHierarchyExclusion = (
     plan: QueryPlan,
     directives: RuntimeDirectives,
-    context: Pick<DirectiveInjectionContext, 'availableColumns' | 'columnRegistry'>,
+    context: Pick<DirectiveInjectionContext, 'availableColumns' | 'columnRegistry' | 'isSummaryRowTopic'>,
 ): { plan: QueryPlan; injected: string | null; warning: string | null } => {
     const { excludeFromAggregation, hierarchyColumn } = directives;
     if (!hierarchyColumn || !excludeFromAggregation || excludeFromAggregation.length === 0) {
         return { plan, injected: null, warning: null };
+    }
+    // The label list comes from statistics over labels and cannot tell a parent from an
+    // ordinary entity. When a detail-row contract is in force, that contract (not the list)
+    // removes parent and summary rows, so the list must never remove rows that carry it.
+    const detailColumn = (directives.detailRowFilter?.column ?? directives.detailRowColumn ?? '').trim().toLowerCase();
+    if (detailColumn) {
+        const statesDetailScope = (plan.where?.predicates ?? []).some(predicate =>
+            predicate.column.trim().toLowerCase() === detailColumn && ['eq', 'in'].includes(predicate.operator));
+        if (statesDetailScope || !context.isSummaryRowTopic) {
+            return { plan, injected: null, warning: null };
+        }
     }
     const resolvedHierarchyColumn = resolveColumn(hierarchyColumn, context);
     if (!resolvedHierarchyColumn) {

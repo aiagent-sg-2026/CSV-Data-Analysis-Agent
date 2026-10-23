@@ -176,7 +176,7 @@ describe('directiveInjector — topN enforcement', () => {
 });
 
 describe('directiveInjector — combined rules', () => {
-    it('injects all three rules simultaneously', () => {
+    it('injects the detail-row filter and topN, but no label exclusion on top of a detail-row contract', () => {
         const directives = baseDirectives();
         directives.excludeFromAggregation = ['Parent A'];
         directives.hierarchyColumn = 'STAFF NAME';
@@ -187,8 +187,28 @@ describe('directiveInjector — combined rules', () => {
             directives,
             availableColumns: ['STAFF NAME', 'RowClass', 'Value'],
         });
-        expect(result.injected).toHaveLength(3);
-        expect(result.plan.where?.predicates).toHaveLength(2); // hierarchy + detail-row
+        // The label list comes from statistics and could remove real detail rows; the contract
+        // alone removes parent and summary rows.
+        expect(result.injected).toHaveLength(2);
+        expect(result.injected.some(entry => entry.includes('hierarchy_exclusion'))).toBe(false);
+        expect(result.plan.where?.predicates).toHaveLength(1);
+        expect(result.plan.where?.predicates?.[0]?.column).toBe('RowClass');
+        expect(result.plan.limit).toBe(5);
+    });
+
+    it('injects the label exclusion, detail-row filter and topN together for a summary-row topic', () => {
+        const directives = baseDirectives();
+        directives.excludeFromAggregation = ['Parent A'];
+        directives.hierarchyColumn = 'STAFF NAME';
+        directives.detailRowFilter = { column: 'RowClass', value: 'fact' };
+        directives.recommendedTopN = 5;
+
+        const result = injectDirectivesIntoQueryPlan(basePlan, {
+            directives,
+            availableColumns: ['STAFF NAME', 'RowClass', 'Value'],
+            isSummaryRowTopic: true,
+        });
+        expect(result.injected.some(entry => entry.includes('hierarchy_exclusion'))).toBe(true);
         expect(result.plan.limit).toBe(5);
     });
 

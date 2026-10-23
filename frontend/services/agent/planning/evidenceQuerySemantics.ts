@@ -308,8 +308,17 @@ export const applyEvidenceQuerySemanticDefaults = (
     // hierarchy candidates can otherwise remove valid fact rows and make cards
     // disagree with fresh data.query results that use the same fact-row scope.
     // Use hierarchy exclusion only when no executable detail-row contract exists.
+    // A plan that states the detail-row scope itself is just as scoped as one that received
+    // the filter here, and a verified hierarchy never takes a label exclusion list.
+    const planStatesDetailScope = Boolean(detailRowFilter?.column) && [
+        ...(nextPlan.preFilter ?? []),
+        ...(nextPlan.query.where?.predicates ?? []),
+    ].some(clause => clause.column.trim().toLowerCase() === detailRowFilter!.column.trim().toLowerCase()
+        && ['eq', 'in'].includes(clause.operator));
     if (
         !detailRowFilterApplied
+        && !hierarchyFilter
+        && !planStatesDetailScope
         && options?.steering?.excludeFromAggregation?.length
         && options.steering.hierarchyColumn
     ) {

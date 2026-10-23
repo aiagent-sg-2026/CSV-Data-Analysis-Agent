@@ -176,6 +176,12 @@ export const withRowHierarchyDetailFilter = (
     const filter = rowHierarchyDetailFilter(contract);
     return {
         ...steering,
+        // The detail-row filter replaces the harness' label statistics (parent sums,
+        // near-equal totals): a NOT IN list built from them removed real detail rows.
+        excludeFromAggregation: [],
+        hierarchyColumn: null,
+        parentDescriptions: [],
+        duplicateDescriptions: [],
         detailRowColumn: filter.column,
         detailRowValue: filter.value,
         detailRowFilter: { ...filter },

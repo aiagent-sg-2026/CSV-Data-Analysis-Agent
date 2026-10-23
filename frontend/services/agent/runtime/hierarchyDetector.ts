@@ -219,6 +219,31 @@ export const validateHierarchyCandidatesWithAI = async (
 
 // --- Phase 2: Duplicate Label Detection ---
 
+const labelTokens = (label: string): string[] =>
+    label.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+/**
+ * Two labels can only be aliases of one another when they read alike. Equal
+ * totals alone prove nothing: among dozens of entities, some pairs always land
+ * within 1% of each other, and excluding the second of each pair silently
+ * removes real rows from every aggregate.
+ */
+export const areLikelyAliasLabels = (left: string, right: string): boolean => {
+    const a = labelTokens(left);
+    const b = labelTokens(right);
+    if (a.length === 0 || b.length === 0) return false;
+    const joinedA = a.join('');
+    const joinedB = b.join('');
+    if (joinedA === joinedB) return true;
+    if (joinedA === `${joinedB}s` || joinedB === `${joinedA}s`) return true;
+    const setA = new Set(a);
+    const setB = new Set(b);
+    if (setA.size === setB.size && [...setA].every(token => setB.has(token))) return true;
+    if (setA.size < 4 || setB.size < 4) return false;
+    const shared = [...setA].filter(token => setB.has(token)).length;
+    return shared / (setA.size + setB.size - shared) >= 0.75;
+};
+
 export const detectDuplicateLabels = (
     totals: DescriptionTotal[],
     hierarchyParents: Set<string>,
@@ -239,6 +264,7 @@ export const detectDuplicateLabels = (
                 if (seen.has(key)) continue;
                 // Skip if one is a parent and the other is its child
                 if (hierarchyParents.has(a.description) || hierarchyParents.has(b.description)) continue;
+                if (!areLikelyAliasLabels(a.description, b.description)) continue;
                 seen.add(key);
                 pairs.push({
                     descriptionA: a.description,
