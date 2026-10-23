@@ -6,6 +6,10 @@ import { getTranslation } from '../../../utils/localization';
 import { buildDisplayAnalysisIrList } from '../../dashboard/displayAnalysisIr';
 import { buildNarrativeAnalysisIrInputList } from '../../dashboard/displayAnalysisNarrative';
 import { buildNarrativeArtifactProvenance } from '../artifactProvenance';
+import { formatPeriodRowsForDisplay, formatTemporalDisplayValue, getTemporalSortTimestamp, resolvePeriodGrain } from '../../../utils/temporalDisplay';
+import { isPlaceholderSummaryText } from '../../../utils/summaryPlaceholders';
+import { coerceNumericValue, normalizeCategoryLabel } from '../../../utils/analysisCardPresentation';
+import { isTimeLikeDimensionColumn } from '../analysisColumnRoles';
 
 const LOG_PREFIX = '[SummaryManager]';
 
@@ -202,8 +206,9 @@ const buildCardContext = (cards: AnalysisCardData[]): CardContext[] => {
             groupByColumn: c.plan.groupByColumn,
             valueColumn: c.plan.valueColumn,
             aggregation: c.plan.aggregation,
+            ...(c.plan.periodSeries ? { periodSeries: c.plan.periodSeries } : {}),
             rowCount: c.aggregatedData.length,
-            aggregatedDataSample: c.aggregatedData.slice(0, 10),
+            aggregatedDataSample: formatPeriodRowsForDisplay(c.aggregatedData.slice(0, 10), c.plan.periodSeries),
         };
     });
 };
@@ -239,6 +244,79 @@ const buildFallbackOnlyFinalSummary = (
             getTranslation('fallback_summary_point_one', language, { count: cards.length }),
             getTranslation('fallback_summary_point_two', language, { metric: valueColumn, dimension: groupBy }),
             getTranslation('fallback_summary_point_three', language),
+        ].join('\n'),
+    };
+};
+
+const MAX_EVIDENCE_SUMMARY_FACTS = 5;
+
+/** One sentence read straight from a card's rows: the first and latest period of a trend, or the leading group. */
+const buildEvidenceCardFact = (
+    card: AnalysisCardData,
+    metric: string,
+    language: LocalizedText['language'],
+): string | null => {
+    const groupByColumn = card.plan.groupByColumn;
+    const valueColumn = card.plan.valueColumn;
+    if (!groupByColumn || !valueColumn) return null;
+    const period = card.plan.periodSeries ?? null;
+    const entries = card.aggregatedData.flatMap(row => {
+        const value = coerceNumericValue(row[valueColumn]);
+        return value === null ? [] : [{ row, value }];
+    });
+    if (entries.length === 0) return null;
+    const labelOf = (row: (typeof entries)[number]['row']) =>
+        formatTemporalDisplayValue(groupByColumn, row[groupByColumn] ?? null, period) ?? normalizeCategoryLabel(row[groupByColumn]);
+
+    const isTimeAxis = resolvePeriodGrain(groupByColumn, period) !== null || isTimeLikeDimensionColumn(groupByColumn);
+    const timed = entries.map(entry => ({ ...entry, time: getTemporalSortTimestamp(entry.row[groupByColumn], groupByColumn, period) }));
+    if (isTimeAxis && timed.length >= 2 && timed.every(entry => entry.time !== null)) {
+        const ordered = [...timed].sort((left, right) => left.time! - right.time!);
+        const first = ordered[0];
+        const latest = ordered[ordered.length - 1];
+        return getTranslation('evidence_summary_trend_fact', language, {
+            metric,
+            first: formatSummaryNumber(first.value, language),
+            firstPeriod: labelOf(first.row),
+            latest: formatSummaryNumber(latest.value, language),
+            latestPeriod: labelOf(latest.row),
+        });
+    }
+
+    const lowestFirst = card.plan.rankDirection === 'asc';
+    const leader = entries.reduce((best, entry) => (
+        lowestFirst ? (entry.value < best.value ? entry : best) : (entry.value > best.value ? entry : best)
+    ));
+    return getTranslation(lowestFirst ? 'evidence_summary_lowest_fact' : 'evidence_summary_top_fact', language, {
+        group: labelOf(leader.row),
+        metric,
+        value: formatSummaryNumber(leader.value, language),
+    });
+};
+
+/**
+ * Final summary built only from the cards' own rows, used when the AI summary
+ * is empty or failed. It states numbers the cards already verified, so it can
+ * keep the narrative's evidence status; null when no card yields a fact.
+ */
+export const buildEvidenceFinalSummary = (
+    cards: AnalysisCardData[],
+    language: LocalizedText['language'],
+): LocalizedText | null => {
+    const irList = buildDisplayAnalysisIrList(cards);
+    const facts = cards.flatMap(card => {
+        const ir = irList.find(candidate => candidate.cardId === card.id);
+        const fact = buildEvidenceCardFact(card, ir?.displayMetricLabel ?? card.plan.valueColumn ?? '', language);
+        return fact ? [`- **${ir?.displayTitle ?? card.plan.title}**: ${fact}`] : [];
+    }).slice(0, MAX_EVIDENCE_SUMMARY_FACTS);
+    if (facts.length === 0) return null;
+    return {
+        language,
+        text: [
+            getTranslation('evidence_summary_title', language),
+            ...facts,
+            '',
+            getTranslation('evidence_summary_note', language, { count: cards.length }),
         ].join('\n'),
     };
 };
@@ -281,7 +359,7 @@ export const generateAllSummaries = async (
                 const ir = displayIrList.find(d => d.cardId === card.id);
                 const title = ir?.displayTitle ?? card.plan.title ?? '';
                 const t0 = performance.now();
-                return generateSummary(title, card.aggregatedData, settings, columnProfiles, getState())
+                return generateSummary(title, formatPeriodRowsForDisplay(card.aggregatedData, card.plan.periodSeries), settings, columnProfiles, getState())
                     .then(result => { console.log(`[Perf:BatchSummary] "${title.slice(0, 40)}" OK in ${Math.round(performance.now() - t0)}ms`); return result; })
                     .catch(() => { console.log(`[Perf:BatchSummary] "${title.slice(0, 40)}" FAILED in ${Math.round(performance.now() - t0)}ms`); return card.summary; });
             }),
@@ -389,14 +467,31 @@ export const generateAllSummaries = async (
         if (isCancelled()) return;
         getState().addProgress('AI is composing the final summary...', 'system', getState().settings.complexModel);
         console.log(`${LOG_PREFIX} Generating final summary...`);
-        try {
-            const finalSummaryText = appendReliabilityNote(
-                await generateFinalSummary(summaryCards, settings, getState()),
-                fallbackCards,
-            );
-            if (getState().isChangingGoal || isCancelled()) return;
+        // An empty or failed AI answer comes back as a status text, not a
+        // finding; it must not be stored as the summary under the cards'
+        // evidence badge, so the cards' own numbers stand in for it.
+        const applyEvidenceFallback = (reason: string) => {
+            const evidenceSummary = buildEvidenceFinalSummary(summaryCards, settings.language);
             setState({
-                finalSummary: finalSummaryText,
+                finalSummary: evidenceSummary ? appendReliabilityNote(evidenceSummary, fallbackCards) : null,
+                finalSummaryProvenance: evidenceSummary ? narrativeProvenance : null,
+            });
+            getState().addProgress(
+                evidenceSummary
+                    ? `AI final summary unavailable (${reason}). Showing a summary read from the evidence cards.`
+                    : `AI final summary unavailable (${reason}).`,
+                'warning',
+            );
+        };
+        try {
+            const generated = await generateFinalSummary(summaryCards, settings, getState());
+            if (getState().isChangingGoal || isCancelled()) return;
+            if (isPlaceholderSummaryText(generated.text)) {
+                applyEvidenceFallback(generated.text.trim() || 'empty response');
+                return;
+            }
+            setState({
+                finalSummary: appendReliabilityNote(generated, fallbackCards),
                 finalSummaryProvenance: narrativeProvenance,
             });
             // PERF-304: Yield after final summary setState
@@ -406,6 +501,8 @@ export const generateAllSummaries = async (
             const message = summaryError instanceof Error ? summaryError.message : String(summaryError);
             console.error(`${LOG_PREFIX} Final summary failed:`, summaryError);
             getState().addProgress(`Final summary failed: ${message}`, 'error');
+            if (getState().isChangingGoal || isCancelled()) return;
+            applyEvidenceFallback(message);
         }
     })();
 

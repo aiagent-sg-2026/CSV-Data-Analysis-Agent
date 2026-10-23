@@ -8,6 +8,7 @@ import {
     getCurrentAnalysisDatasetVersion,
     resolveAnalysisArtifactFreshness,
 } from '../services/agent/artifactProvenance';
+import { isPlaceholderSummaryText } from '../utils/summaryPlaceholders';
 
 interface FinalSummaryProps {
     title: string;
@@ -56,6 +57,9 @@ const FinalSummaryComponent: React.FC<FinalSummaryProps> = ({ title, summary, la
         ? 'stale'
         : provenance?.evidenceStatus ?? 'unverified';
 
+    // A "no summary" status text is not evidence, whatever the source cards' status.
+    const showsEvidenceBadge = !isPlaceholderSummaryText(summary.text);
+
     const toggle = useCallback(() => setIsExpanded(prev => !prev), []);
 
     return (
@@ -81,7 +85,7 @@ const FinalSummaryComponent: React.FC<FinalSummaryProps> = ({ title, summary, la
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                         <h2 className="text-lg font-bold text-slate-900">{title}</h2>
-                        <span
+                        {showsEvidenceBadge && <span
                             className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                                 evidenceState === 'verified'
                                     ? 'bg-emerald-100 text-emerald-700'
@@ -100,7 +104,7 @@ const FinalSummaryComponent: React.FC<FinalSummaryProps> = ({ title, summary, la
                                         : evidenceState === 'hypothesis'
                                             ? 'Hypothesis'
                                             : 'Unverified evidence'}
-                        </span>
+                        </span>}
                         {generatedInLabel && (
                             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
                                 {generatedInLabel}
