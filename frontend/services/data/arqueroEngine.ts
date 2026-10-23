@@ -20,7 +20,7 @@ import type {
     QueryPlan,
     QueryWhereClause,
 } from '../../types';
-import { robustParseFloat } from './dataProfiler';
+import { buildColumnMissingCheck, robustParseFloat } from './dataProfiler';
 import { isMissingCellValue } from '../duckdb/dimensionNormalization';
 
 const DEFAULT_MAX_ROWS = 500;
@@ -68,7 +68,9 @@ const preprocessRows = (rows: CsvRow[], aggregateColumns: Set<string>): CsvRow[]
 /**
  * Blank cells and missing markers (`na`, `N.A.`, `-`, ...) become null in the
  * aggregated columns so op.valid/op.sum/op.median skip them instead of
- * counting them or turning a sum into NaN. Returns null when a numeric
+ * counting them or turning a sum into NaN. A column read only by COUNT or
+ * COUNT DISTINCT keeps its markers unless it is numeric, because in a text
+ * column they are values (`NA` for North America). Returns null when a numeric
  * aggregate column still holds non-numeric text (e.g. a footnote-marked
  * `3200*`); Arquero cannot skip such a cell, so the native engine handles it.
  */
@@ -76,13 +78,15 @@ const nullMissingAggregateCells = (
     rows: CsvRow[],
     aggregateColumns: Set<string>,
     numericAggregateColumns: Set<string>,
+    countMissingChecks: Map<string, (value: unknown) => boolean>,
 ): CsvRow[] | null => {
     if (rows.length === 0 || aggregateColumns.size === 0) return rows;
     const next: CsvRow[] = [];
     for (const row of rows) {
         const copy: CsvRow = { ...row };
         for (const col of aggregateColumns) {
-            if (isMissingCellValue(copy[col])) {
+            const isMissing = numericAggregateColumns.has(col) ? isMissingCellValue : countMissingChecks.get(col) ?? isMissingCellValue;
+            if (isMissing(copy[col])) {
                 copy[col] = null;
             } else if (numericAggregateColumns.has(col) && typeof copy[col] !== 'number') {
                 return null;
@@ -310,7 +314,14 @@ export const executeArqueroQuery = (
         : preprocessedRows;
     // Filters still see the original cell text; only aggregation skips markers.
     const filteredRows = isAggregateQuery
-        ? nullMissingAggregateCells(matchedRows, aggregateColumnNames, numericAggregateColumnNames)
+        ? nullMissingAggregateCells(
+            matchedRows,
+            aggregateColumnNames,
+            numericAggregateColumnNames,
+            new Map([...aggregateColumnNames]
+                .filter(column => !numericAggregateColumnNames.has(column))
+                .map(column => [column, buildColumnMissingCheck(inputRows.map(row => row[column] ?? null))])),
+        )
         : matchedRows;
     if (!filteredRows) {
         return unsupported('numeric aggregate column contains non-numeric text');

@@ -81,6 +81,29 @@ const buildPresentTextExpression = (column: string) => {
     return `CASE WHEN ${buildMissingCellSqlCondition(textExpression)} THEN NULL ELSE ${textExpression} END`;
 };
 
+/** A column's trimmed text, or NULL only when it is blank. */
+const buildNonBlankTextExpression = (column: string) => `NULLIF(${buildEmptyAwareExpression(column)}, '')`;
+
+/**
+ * Scalar condition over the whole table, true when every present cell of the
+ * column is a number and at least one is (mirrors `isNumericValueColumn` in
+ * the profiler). Only such a column reads missing markers as missing; in a
+ * text column `NA` (North America) or `-` is a value that COUNT must see.
+ */
+const buildNumericColumnCondition = (column: string, tableName: string) => {
+    const numericExpression = buildNumericExpression(column);
+    const missingCondition = buildMissingCellSqlCondition(buildEmptyAwareExpression(column));
+    return `(SELECT COUNT(${numericExpression}) > 0 AND COUNT(*) FILTER (WHERE NOT ${missingCondition} AND ${numericExpression} IS NULL) = 0 FROM ${quoteIdentifier(tableName)})`;
+};
+
+/** COUNT or COUNT DISTINCT of a column's present cells, with markers skipped only in a numeric column. */
+const buildPresentCountExpression = (column: string, distinct: boolean, aggregateFilterSql: string, tableName: string) => {
+    const prefix = distinct ? 'DISTINCT ' : '';
+    return `CASE WHEN ${buildNumericColumnCondition(column, tableName)}`
+        + ` THEN COUNT(${prefix}${buildPresentTextExpression(column)})${aggregateFilterSql}`
+        + ` ELSE COUNT(${prefix}${buildNonBlankTextExpression(column)})${aggregateFilterSql} END`;
+};
+
 const toNumericLiteral = (value: unknown, context: string) => {
     const numeric = typeof value === 'number' ? value : Number(value);
     if (!Number.isFinite(numeric)) {
@@ -468,7 +491,7 @@ const normalizePostAggregateClause = (
     };
 };
 
-const compileAggregateExpression = (aggregate: NormalizedQueryAggregateClause) => {
+const compileAggregateExpression = (aggregate: NormalizedQueryAggregateClause, tableName: string) => {
     const aggregateFilterSql = compileAggregateFilter(aggregate.where);
     if (aggregate.function === 'count') {
         const numericExpression = aggregate.sourceColumns && aggregate.sourceColumns.length > 0
@@ -480,7 +503,7 @@ const compileAggregateExpression = (aggregate: NormalizedQueryAggregateClause) =
         if (!aggregate.column) {
             return `COUNT(*)${aggregateFilterSql} AS ${quoteIdentifier(aggregate.as)}`;
         }
-        return `COUNT(${buildPresentTextExpression(aggregate.column)})${aggregateFilterSql} AS ${quoteIdentifier(aggregate.as)}`;
+        return `${buildPresentCountExpression(aggregate.column, false, aggregateFilterSql, tableName)} AS ${quoteIdentifier(aggregate.as)}`;
     }
     if (aggregate.function === 'count_distinct') {
         const numericExpression = aggregate.sourceColumns && aggregate.sourceColumns.length > 0
@@ -489,7 +512,7 @@ const compileAggregateExpression = (aggregate: NormalizedQueryAggregateClause) =
         if (aggregate.sourceColumns && aggregate.sourceColumns.length > 0) {
             return `COUNT(DISTINCT ${numericExpression})${aggregateFilterSql} AS ${quoteIdentifier(aggregate.as)}`;
         }
-        return `COUNT(DISTINCT ${buildPresentTextExpression(aggregate.column!)})${aggregateFilterSql} AS ${quoteIdentifier(aggregate.as)}`;
+        return `${buildPresentCountExpression(aggregate.column!, true, aggregateFilterSql, tableName)} AS ${quoteIdentifier(aggregate.as)}`;
     }
     // Missing and non-numeric cells stay NULL so the aggregate skips them.
     // Coalescing them to 0 ranked a school with only `na` values at 0 and
@@ -614,7 +637,7 @@ export const compileQueryPlanToDuckDbSql = (
                 }
                 return quoteIdentifier(column);
             }),
-            ...aggregates.map(compileAggregateExpression),
+            ...aggregates.map(aggregate => compileAggregateExpression(aggregate, options.tableName)),
         ].join(', ');
         const fromSql = `FROM ${quoteIdentifier(options.tableName)}`;
         // Pass dimNorm to WHERE so filters on normalized columns match
