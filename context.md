@@ -170,6 +170,18 @@
     - Delegated to OMP on yapvmmcp2 (job 3188f9be, workspace `csv-retry-empty-ai-20261023`, branch `omp/retry-empty-ai-20261023`): retry an empty or truncated AI response in `generateEvidenceQueryPlanWithRetry` instead of failing the topic. A 15-minute check is scheduled.
     - Owner screenshot on live a7aba15, an ERP report CSV (685 rows, private; not opened or stored): "Analysis blocked (2/9)", Pi task `blocked`. Stage 2 (`dataset.profileStructure`, `initialAnalysisStageExecutors.ts:170-182`) ends with the warning `coding_repair_required` when the structure cannot be resolved deterministically, and the qualified Pi coding task must then repair it. Pi staged `investigate.js` twice and then stopped without a validated candidate. The reason is not visible in the screenshot: the shared demo quota is a suspect, so is a Pi stage guard. Needs the "Inspect task" reason from the owner.
     - UX gap regardless of cause: a blocked run shows a passive message with no stated reason and no retry action.
+  - **Weird-format report testing (2026-10-23, owner request)**: synthetic fixtures with ground truth in `frontend/tests/fixtures/weird-reports/` (7 layouts; README, `truth.json`, seeded generator; committed at SCALE=0.12, the browser runs used SCALE=1, a few thousand rows each). Deterministic intake on the live build:
+    - w4 European semicolon: delimiter detected as `,` (low confidence), 3 columns, data torn at decimal commas. P0 for European users.
+    - w5 metadata block: header taken from the first metadata line.
+    - w3 stacked sections: merged into one table; credit and payment values land in the sales columns.
+    - w6 grouped header: status `ready`, but columns `_unnamed_column_1/2`, FY layer lost, category not filled down.
+    - w2 indented hierarchy: status `ready`, 24 parent rows mixed into 1,773 leaf rows (triple count).
+    - w1 ERP report: 590 non-data rows (page breaks, repeated headers, subtotals, blanks) among 3,119 order lines.
+    - w7 fixed-width text: 4 junk columns.
+  - Real-AI on w1 (live): stops at "Review and repair data structure" after 9 requests (not a hang). **P0 dead end**: pressing "Confirm & Start Analysis" returns the same block ("Stage 5/9 Quality failed: Structure review is required", with the raw code `label_layer_retention_complete`), although that signal is declared human-confirmable. w4, w5, w3, w7 also stop at the review dialog. The shared demo quota ran out during these runs (`DEMO_ALL_ROUTES_EXHAUSTED`, resets 00:00 SGT), so w2 and w6 (the two silent "ready" misreads) have not been through the AI path yet.
+  - Workers dispatched (resumed after a session rate limit): AB the confirm dead end and plain-language blocked states; AC dialect and numeric normalisation for w4, fixed-width for w7; AD1 header and boundary for w5, w3, w6; AD2 body noise rows, carry-forward, subtotals and hierarchy for w1, w2.
+  - OMP (oh-my-pi on yapvmmcp2, `--auto-approve`, isolated clone) wrote commit 9bd988b: an empty or truncated evidence-plan response is a bounded retry with the message "The AI returned an empty or incomplete response". The outer loop already retried parse failures, so this makes the final error readable; it adds no attempts. Verified by patch-id match, targeted tests, typecheck and lint. Not deployed yet.
+  - Owner's blocked screenshot (Pi task `blocked` at 2/9 on an ERP report): reason still unknown; needs the "Inspect task" text.
 - **Queued**:
   - Make `streamGenerateText` rethrow `APICallError` so status-based retry works (affects 23 callers).
   - A decline raised inside `agent.prompt` tool calls is still classified as `provider`.
