@@ -87,16 +87,87 @@ describe('classifyBodyRows', () => {
         expect(kinds(rows, boundary(2, null, 1))).toEqual({});
     });
 
-    it('recognises continuation markers but not a heading that starts with the word', () => {
+    it('recognises continuation markers next to a repeated header but not a heading that starts with the word', () => {
         const rows = [
             header,
             ['A', '1', '10.00'],
             ['Continued...'],
+            header,
+            ['B', '2', '20.00'],
             ['(continued from previous page)'],
             ['Continued operations'],
-            ['B', '2', '20.00'],
+            ['C', '3', '30.00'],
         ];
-        expect(kinds(rows, boundary(1))).toEqual({ 2: 'page_break', 3: 'page_break' });
+        expect(kinds(rows, boundary(1))).toEqual({ 2: 'page_break', 3: 'repeated_header', 5: 'page_break' });
+    });
+
+    describe('page markers must be the whole cell and repeat', () => {
+        it('keeps rows whose text merely contains a page phrase, next to real data', () => {
+            const rows = [
+                ['Task', 'Owner', 'Status', 'Hours'],
+                ['Write spec', 'Ann', 'open', '3'],
+                ['Fix page 3 header', 'Bob', '', ''],
+                ['Review Page 2 of contract', 'Ann', '', ''],
+                ['Printed by the vendor on request', 'Bob', '', ''],
+                ['Generated on demand by Cy', '', '', ''],
+                ['Ship it', 'Cy', 'done', '8'],
+            ];
+            expect(kinds(rows, boundary(1))).toEqual({});
+        });
+
+        it('keeps a lone page marker that neither repeats nor sits next to a repeated header', () => {
+            const rows = [header, ['A', '1', '10.00'], ['Page 2 of 80'], ['B', '2', '20.00']];
+            expect(kinds(rows, boundary(1))).toEqual({});
+        });
+
+        it.each([
+            [['Page 1 of 80'], ['Page 2 of 80']],
+            [['Page 1'], ['Page 2']],
+            [['- 1 -'], ['- 2 -']],
+            [['1 / 80', ''], ['', '2 / 80']],
+        ])('removes markers that recur: %j', (first, second) => {
+            const rows = [header, ['A', '1', '10.00'], first, ['B', '2', '20.00'], second, ['C', '3', '30.00']];
+            expect(kinds(rows, boundary(1))).toEqual({ 2: 'page_break', 4: 'page_break' });
+        });
+
+        it('removes a print footer that starts with its phrase and sits next to a repeated header', () => {
+            const rows = [header, ['A', '1', '10.00'], ['Printed by: ADMIN  Page 2 of 80'], header, ['B', '2', '20.00']];
+            expect(kinds(rows, boundary(1))).toEqual({ 2: 'page_break', 3: 'repeated_header' });
+        });
+
+        it('never drops a marker row that carries a data cell', () => {
+            const rows = [
+                header,
+                ['A', '1', '10.00'],
+                ['Page 2 of 80', 'Ann'],
+                ['Page 3 of 80', 'Ann'],
+                ['B', '2', '20.00'],
+            ];
+            expect(kinds(rows, boundary(1))).toEqual({});
+        });
+    });
+
+    describe('huge cells', () => {
+        const hugeCell = (prefix: string, fill: string) => prefix + fill.repeat(200_000);
+
+        it('classifies rows with 200k-character cells in well under 100 ms', () => {
+            const rows = [
+                header,
+                ['A', '1', '10.00'],
+                [hugeCell('continued from ', '.'), 'x'],
+                [hugeCell('continued ', ' .'), ''],
+                [hugeCell('(', ' '), '5'],
+                [hugeCell('total ', ': '), ''],
+                [hugeCell('Printed by ', 'a'), ''],
+                [hugeCell('Page ', '1'), ''],
+                [hugeCell('sub total', '-'), '1'],
+                ['B', '2', '20.00'],
+            ];
+            const startedAt = performance.now();
+            const result = kinds(rows, boundary(1));
+            expect(performance.now() - startedAt).toBeLessThan(100);
+            expect(result).toEqual({});
+        });
     });
 
     describe('subtotals', () => {

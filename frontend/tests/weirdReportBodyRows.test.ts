@@ -198,6 +198,28 @@ describe('inline variants of the body rules', () => {
         expect(csvData.data).toHaveLength(13);
     });
 
+    it('keeps task rows whose text mentions a page or a footer phrase', async () => {
+        const lines = ['Task,Owner,Status,Hours'];
+        for (let n = 1; n <= 28; n += 1) lines.push(`Task ${n},Owner ${n % 4},open,${n}`);
+        lines.splice(10, 0, 'Fix page 3 header,Bob,,');
+        lines.splice(20, 0, 'Review Page 2 of contract,Ann,,');
+        const { csvData } = await processCsvWithIntakeIr(asCsvFile('tasks.csv', csv(lines)));
+        expect(csvData.data).toHaveLength(30);
+        expect(csvData.data.filter(row => /page \d/i.test(String(row.Task)))).toHaveLength(2);
+    });
+
+    it('stays fast on a megabyte-sized cell in a sparse row', async () => {
+        const lines = [...TITLE, HEADER];
+        for (let n = 1; n <= 6; n += 1) lines.push(line(n, 'North Ltd', n * 10));
+        lines.push(`continued from ${'.'.repeat(1_000_000)}`);
+        lines.push(`Total ${'x:'.repeat(300_000)}`);
+        for (let n = 7; n <= 12; n += 1) lines.push(line(n, 'South Ltd', n * 10));
+        const startedAt = performance.now();
+        const { csvData } = await processCsvWithIntakeIr(asCsvFile('huge.csv', csv(lines)));
+        expect(performance.now() - startedAt).toBeLessThan(3000);
+        expect(csvData.data).toHaveLength(14);
+    });
+
     it('removes a reconciling mid-table sub total and keeps it as summary evidence', async () => {
         const lines = [...TITLE, HEADER];
         for (let n = 1; n <= 6; n += 1) lines.push(line(n, 'North Ltd', n * 10));

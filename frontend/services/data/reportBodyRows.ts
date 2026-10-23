@@ -1,6 +1,5 @@
 import {
-    FOOTER_PATTERN,
-    SUBTOTAL_ROW_PATTERN,
+        SUBTOTAL_ROW_PATTERN,
     SUMMARY_LABEL_PATTERN,
     TOTAL_ROW_PATTERN,
 } from '../agent/reportShapeUtils';
@@ -52,12 +51,27 @@ const PAGE_BREAK_ADJACENCY_ROWS = 6;
 const MIN_SIGNATURE_LETTERS = 5;
 
 const DATE_LIKE_PATTERN = /^(?:\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})$/;
-const PAGE_MARKER_PATTERN = /\bpage\s*[:#]?\s*\d+(?:\s*(?:of|\/)\s*\d+)?\b/i;
+// A page marker is a cell that IS the marker ("Page 2 of 80", "Page 2",
+// "- 2 -", "2 / 80"). A phrase that merely contains "page 3" ("Fix page 3
+// header") is ordinary text. Cells longer than MAX_MARKER_LENGTH cannot be a
+// marker, which also bounds every regex below on huge cells.
+const PAGE_MARKER_CELL_PATTERN = /^(?:page\s*[:#]?\s*\d+(?:\s*(?:of|\/)\s*\d+)?|[-–]\s*\d+\s*[-–]|\d+\s*(?:of|\/)\s*\d+)$/i;
+// A print footer starts with its phrase ("Printed by: ADMIN  Page 2 of 80"); a
+// note that mentions "printed by" further in is not one.
+const FOOTER_CELL_PATTERN = /^(?:reporting date|reporting currency|printed by|printed on|generated on)\b/i;
 // "Continued...", "(continued)", "Cont'd", "Continued from previous page"; a heading
-// such as "Continued operations" is a group label and must not match.
-const CONTINUED_MARKER_PATTERN = /^[(\[\-–\s.…]*(?:continued|cont['’.]?d)\b(?:\s+(?:from|on|to)\b[^|]*)?[)\]\-–\s.…]*$/i;
+// such as "Continued operations" is a group label and must not match. The
+// tail after from/on/to is free text, so no other part of the pattern overlaps it.
+const CONTINUED_MARKER_PATTERN = /^[(\[\-–\s.…]*(?:continued|cont['’.]?d)\b(?:\s+(?:from|on|to)\b.*|[)\]\-–\s.…]*)$/i;
+const MAX_MARKER_LENGTH = 120;
+// Digits, separators and a sign never need more than this many characters.
+const MAX_AMOUNT_LENGTH = 40;
 
-const cellText = (value: unknown) => String(value ?? '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim();
+// Nothing this module looks for (labels, markers, amounts, header labels) is
+// longer than a few hundred characters, so a huge cell is cut before any
+// normalisation: it stays non-empty but costs no more than a short one.
+const MAX_CELL_TEXT = 2000;
+const cellText = (value: unknown) => String(value ?? '').slice(0, MAX_CELL_TEXT).replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
 
 const nonEmptyCells = (row: readonly unknown[]) => row.map(cellText).filter(Boolean);
 
@@ -70,7 +84,7 @@ const AMOUNT_PATTERN = /^(\()?\s*([-+])?\s*[$€£¥]?\s*(\d{1,3}(?:,\d{3})+(?:\
  */
 export const parseReportAmount = (value: unknown): number | null => {
     const text = cellText(value);
-    if (!text || DATE_LIKE_PATTERN.test(text)) return null;
+    if (!text || text.length > MAX_AMOUNT_LENGTH || DATE_LIKE_PATTERN.test(text)) return null;
     const match = AMOUNT_PATTERN.exec(text);
     if (!match) return null;
     const [, openParen, sign, digits, closeParen, trailingMinus] = match;
@@ -84,6 +98,21 @@ export const parseReportAmount = (value: unknown): number | null => {
 const countDecimals = (value: unknown) => /\.(\d+)\D*$/.exec(cellText(value))?.[1].length ?? 0;
 
 const maskDigits = (text: string) => text.toLowerCase().replace(/\d+/g, '#');
+
+const isMarkerCell = (text: string) =>
+    text.length <= MAX_MARKER_LENGTH
+    && (PAGE_MARKER_CELL_PATTERN.test(text) || CONTINUED_MARKER_PATTERN.test(text) || FOOTER_CELL_PATTERN.test(text));
+
+/**
+ * A page marker, continuation or print-footer line: at most three filled cells,
+ * every one of them a marker or a date. A row with real data in another column
+ * (a task name next to an owner) is never one.
+ */
+const isMarkerRow = (cells: string[]) =>
+    cells.length > 0
+    && cells.length <= 3
+    && cells.some(isMarkerCell)
+    && cells.every(cell => isMarkerCell(cell) || DATE_LIKE_PATTERN.test(cell));
 
 const isSparseTextRow = (cells: string[]) =>
     cells.length > 0 && cells.length <= 2 && cells.every(cell => parseReportAmount(cell) === null);
@@ -154,7 +183,11 @@ export const classifyBodyRows = (
 
     // Pass 1: structure rows that need no running state.
     const repeatedHeaderRows = new Set<number>();
-    const titleCandidates: Array<{ index: number; signature: string }> = [];
+    // Title lines and marker lines are page breaks only when they repeat or sit
+    // next to a repeated header: a single heading that happens to match a title
+    // above the header (a group heading such as "Region: ASEAN"), or a lone
+    // "Page 2" cell, is kept.
+    const lineCandidates: Array<{ index: number; signature: string; reason: string }> = [];
     const signatureCounts = new Map<string, number>();
     for (let index = bodyStart; index < bodyEnd; index += 1) {
         const row = rows[index] ?? [];
@@ -168,27 +201,22 @@ export const classifyBodyRows = (
             findings.set(index, { kind: 'repeated_header', reason: 'Repeats the column header cell by cell.' });
             continue;
         }
-        if (!isSparseTextRow(cells)) continue;
-        const joined = cells.join(' | ');
-        if (PAGE_MARKER_PATTERN.test(joined) || CONTINUED_MARKER_PATTERN.test(joined) || FOOTER_PATTERN.test(joined)) {
-            findings.set(index, { kind: 'page_break', reason: 'Page marker, continuation line or print footer inside the body.' });
-            continue;
-        }
         const signature = buildSignature(cells);
-        if (titleSignatures.has(signature)) {
-            titleCandidates.push({ index, signature });
+        let reason: string | null = null;
+        if (isMarkerRow(cells)) {
+            reason = 'Page marker, continuation line or print footer inside the body.';
+        } else if (isSparseTextRow(cells) && titleSignatures.has(signature)) {
+            reason = 'Repeats a title or parameter line from above the header.';
+        }
+        if (reason) {
+            lineCandidates.push({ index, signature, reason });
             signatureCounts.set(signature, (signatureCounts.get(signature) ?? 0) + 1);
         }
     }
-    // A title line is a page break only when it recurs, or sits right next to a
-    // repeated header; a single heading that happens to match a title above
-    // the header (a group heading such as "Region: ASEAN") is kept.
-    for (const { index, signature } of titleCandidates) {
+    for (const { index, signature, reason } of lineCandidates) {
         const recurs = (signatureCounts.get(signature) ?? 0) >= 2;
         const nearRepeatedHeader = [...repeatedHeaderRows].some(headerIndex => Math.abs(headerIndex - index) <= PAGE_BREAK_ADJACENCY_ROWS);
-        if (recurs || nearRepeatedHeader) {
-            findings.set(index, { kind: 'page_break', reason: 'Repeats a title or parameter line from above the header.' });
-        }
+        if (recurs || nearRepeatedHeader) findings.set(index, { kind: 'page_break', reason });
     }
 
     // Pass 2: summary rows that reconcile with the data rows above them.
