@@ -1,4 +1,5 @@
 import type { CsvData, DataPreparationPlan } from '../../../types';
+import { buildColumnNumberParser } from '../../data/dataProfiler';
 
 /**
  * Reapplies safe cleaning outputs to a canonical dataset rebuilt from the raw
@@ -22,6 +23,9 @@ export const applyPreparationPlanToCanonicalDataset = (
     }
     const numericColumns = new Set(plan.numericStringNormalizedColumns ?? []);
     if (replacements.size === 0 && numericColumns.size === 0) return dataset;
+    // Read each column with its own decimal style. Stripping every comma turned the
+    // European 161,30 into 16130 and 1.234,56 into 1.23456.
+    const parseNumber = buildColumnNumberParser(dataset.data, Object.keys(dataset.data[0] ?? {}));
 
     return {
         ...dataset,
@@ -41,8 +45,8 @@ export const applyPreparationPlanToCanonicalDataset = (
             for (const column of numericColumns) {
                 const value = nextRow[column];
                 if (typeof value !== 'string' || !value.trim()) continue;
-                const parsed = Number(value.replace(/[,$€£¥%\s]/g, ''));
-                if (Number.isFinite(parsed)) {
+                const parsed = parseNumber(column, value);
+                if (parsed !== null) {
                     nextRow[column] = parsed;
                     changed = true;
                 }

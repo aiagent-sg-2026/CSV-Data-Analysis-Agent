@@ -14,6 +14,7 @@ import {
     FilterRowsOperation,
 } from '../../../types';
 import { robustParseFloat } from '../../data/dataProfiler';
+import { resolveDecimalCommaColumns, type NumberStyle } from '../../data/numberLocale';
 import { SUMMARY_LABEL_PATTERN } from '../reportShapeUtils';
 import { detectReportShape } from '../reportShapeDetector';
 import {
@@ -158,7 +159,11 @@ const formatBoolean = (value: CsvCellValue): CsvCellValue => {
     return null;
 };
 
-const castValue = (value: CsvCellValue, operation: CastColumnOperation): CsvCellValue => {
+const castValue = (
+    value: CsvCellValue,
+    operation: CastColumnOperation,
+    numberStyle: NumberStyle | null = null,
+): CsvCellValue => {
     if (operation.targetType === 'string') {
         return isMissingValue(value) ? null : String(value).trim();
     }
@@ -168,8 +173,9 @@ const castValue = (value: CsvCellValue, operation: CastColumnOperation): CsvCell
     if (operation.targetType === 'boolean') {
         return formatBoolean(value);
     }
-    const numeric = robustParseFloat(value);
-    return numeric;
+    // numberStyle is the whole column's decimal style; a bare cell cannot tell
+    // 4.567 (thousands in a European column) from a decimal.
+    return robustParseFloat(value, numberStyle);
 };
 
 const resolveOperand = (row: CsvRow, operand: DeriveOperand): CsvCellValue =>
@@ -745,10 +751,17 @@ const applyOperation = (rows: CsvRow[], operation: DataOperation): CsvRow[] => {
             });
         case 'cast_column':
             assertColumnsExist(draft, [operation.column], operation);
-            return draft.map(row => ({
-                ...row,
-                [operation.column]: castValue(row[operation.column] ?? null, operation),
-            }));
+            {
+                // All columns are inspected so a column with only ambiguous cells can
+                // inherit the dataset's decimal comma, exactly as the profiler decides.
+                const numberStyle = resolveDecimalCommaColumns(draft, Object.keys(draft[0] ?? {})).has(operation.column)
+                    ? 'decimal_comma' as const
+                    : null;
+                return draft.map(row => ({
+                    ...row,
+                    [operation.column]: castValue(row[operation.column] ?? null, operation, numberStyle),
+                }));
+            }
         case 'fill_missing':
             assertColumnsExist(draft, [operation.column], operation);
             return applyFillMissing(draft, operation);

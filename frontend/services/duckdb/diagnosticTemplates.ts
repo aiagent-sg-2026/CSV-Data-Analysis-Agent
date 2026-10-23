@@ -13,7 +13,7 @@
 import type { ColumnProfile, QueryPlan } from '../../types';
 import type { DiagnosticQueryKind } from './queryIntent';
 import type { CompiledDuckDbQuery } from './queryCompiler';
-import { buildMissingCellSqlCondition } from './dimensionNormalization';
+import { buildNumericExpression } from './numericSql';
 
 // --- Template context ---
 
@@ -40,13 +40,8 @@ export interface DiagnosticTemplate {
 const quoteId = (value: string) => `"${value.replace(/"/g, '""')}"`;
 const quoteLit = (value: string) => `'${value.replace(/'/g, "''")}'`;
 
-const buildNumericExpr = (column: string) => {
-    const text = `TRIM(COALESCE(CAST(${quoteId(column)} AS VARCHAR), ''))`;
-    const neg = `CASE WHEN ${text} LIKE '(%' AND ${text} LIKE '%)' THEN CONCAT('-', SUBSTRING(${text}, 2, LENGTH(${text}) - 2)) ELSE ${text} END`;
-    const stripped = `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(${neg}, ',', ''), '$', ''), '€', ''), '£', ''), '¥', ''), '%', '')`;
-    // Missing markers stay NULL; `nan` would otherwise cast to a NaN double.
-    return `CASE WHEN ${buildMissingCellSqlCondition(text)} THEN NULL ELSE TRY_CAST(NULLIF(${stripped}, '') AS DOUBLE) END`;
-};
+// Same expression as the query compiler: European, Swiss and US numbers read alike.
+const buildNumericExpr = buildNumericExpression;
 
 const numericTypes = new Set(['numerical', 'currency', 'percentage']);
 const isNumericCol = (col: ColumnProfile) => numericTypes.has(col.type);

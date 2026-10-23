@@ -1,5 +1,6 @@
 import type { ColumnProfile, DataPreparationPlan, CsvRow, DataOperation } from '../../types';
 import { applyDataOperations } from '../agent/execution/dataOperationRunner';
+import { resolveDecimalCommaColumns } from '../data/numberLocale';
 import { reconcileAiCleaningStep } from '../agent/execution/numericReconciliation';
 import {
     normalizeColumnName,
@@ -99,8 +100,12 @@ export const buildDeterministicNormalizationPlan = (
         })
         .map(column => column.name);
 
+    // Decimal-comma measure columns (161,30, 1.234,56) are cast here too, with the
+    // column-aware cast_column, so every later consumer (DuckDB, the sandbox,
+    // exports, the model) reads real numbers instead of text it might strip commas from.
+    const decimalCommaColumns = resolveDecimalCommaColumns(sourceRows, columns.map(column => column.name));
     const numericStringColumns = columns
-        .filter(column => Boolean(column.hasFormattedNumbers))
+        .filter(column => Boolean(column.hasFormattedNumbers) || decimalCommaColumns.has(column.name))
         .filter(column => isNumericType(column.type))
         .filter(column => !hasColumnOperation(candidatePlan.operations, column.name, ['cast_column']))
         .map(column => column.name);

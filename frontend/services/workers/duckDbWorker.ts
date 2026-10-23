@@ -4,6 +4,7 @@ import * as duckdb from '@duckdb/duckdb-wasm';
 import type { CsvRow, DataQueryResult, QueryOrderByClause } from '../../types';
 import { tableToRows } from './duckDbRows';
 import { inferCompleteResultRowCount } from '../duckdb/queryResultCount';
+import { buildNumericExpression } from '../duckdb/numericSql';
 import { admitSql, assertSqlBinding, assertSqlResult, configureSqlDefaults, lockSqlEngine, readOnlySql,
     validateSqlLimit, DUCKDB_WASM_SHA256, DUCKDB_WORKER_SHA256, type SqlBinding, type SqlSecurityProof } from '../duckdb/sqlSecurity';
 import { sha256Bytes } from '../data/sourceDigest';
@@ -346,7 +347,9 @@ const handleExecuteCompiledQuery = async (payload: {
 
 const autoFixVarcharAggregates = (sql: string): string =>
     sql.replace(/\b(SUM|AVG|MIN|MAX)\s*\(\s*("(?:[^"\\]|"")*"|\w+)\s*\)/gi,
-        (_, fn, col) => `${fn.toUpperCase()}(TRY_CAST(${col} AS DOUBLE))`);
+        // The shared numeric expression reads 1.234,56 and 1'234.50 as numbers; a bare
+        // TRY_CAST would turn every European cell into NULL.
+        (_, fn, col: string) => `${fn.toUpperCase()}(${buildNumericExpression(col.startsWith('"') ? col.slice(1, -1).replace(/""/g, '"') : col)})`);
 
 const handleExecuteRawQuery = async (payload: {sql: string; selectedColumns: string[]; limit: number; expectedBinding?: SqlBinding}, onStarted: () => void) =>
     executeOwnedSql(payload.expectedBinding, async boundary => {

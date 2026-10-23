@@ -66,6 +66,19 @@ export const robustParseFloat = (value: any, style?: NumberStyle | null): number
     return isNegative ? -num : num;
 };
 
+/**
+ * A per-column cell reader for code that holds the whole dataset: columns that
+ * prove (or inherit) the decimal comma read ambiguous cells such as 4.567 as
+ * thousands, every other column keeps the per-cell rules.
+ */
+export const buildColumnNumberParser = (
+    rows: readonly Record<string, unknown>[],
+    columns: readonly string[],
+): ((column: string, value: unknown) => number | null) => {
+    const decimalCommaColumns = resolveDecimalCommaColumns(rows, columns);
+    return (column, value) => robustParseFloat(value, decimalCommaColumns.has(column) ? 'decimal_comma' : null);
+};
+
 const isBlankCellValue = (value: unknown): boolean =>
     value === null || value === undefined || (typeof value === 'string' && value.trim() === '');
 
