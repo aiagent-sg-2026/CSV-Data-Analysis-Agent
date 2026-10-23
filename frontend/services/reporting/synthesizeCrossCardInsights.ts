@@ -1,4 +1,5 @@
 import type { ReportCardEvidence } from '../../types';
+import { parseNullableNumericValue } from '../../utils/dataHelpers';
 
 export type CrossCardInsightType = 'convergence' | 'divergence';
 
@@ -21,7 +22,11 @@ const MAX_CARDS_PER_GROUP = 5;
 const extractLeadingLabel = (
     card: ReportCardEvidence,
 ): string | null => {
-    const topRow = card.aggregatedDataSample[0];
+    // A group without a value (NULL aggregate) cannot lead a metric.
+    const valueColumn = card.valueColumn;
+    // Rows that do not carry the bound column (an aliased measure) are kept as before.
+    const topRow = card.aggregatedDataSample.find(row =>
+        !valueColumn || !(valueColumn in row) || parseNullableNumericValue(row[valueColumn]) !== null);
     if (!topRow || !card.groupByColumn) {
         return null;
     }

@@ -3799,6 +3799,7 @@ const translations: Record<string, Partial<Record<Language, string>> & { English
     'technical_data_safety': { 'English': 'Data safety:', 'Mandarin': '数据安全：', 'Japanese': 'データ安全性：', 'Malay': 'Keselamatan data:' },
     'technical_next_state': { 'English': 'Next state:', 'Mandarin': '下一状态：', 'Japanese': '次の状態：', 'Malay': 'Keadaan seterusnya:' },
     'task_error_details': { 'English': 'Technical error details', 'Mandarin': '技术错误详情', 'Japanese': '技術的なエラー詳細', 'Malay': 'Butiran ralat teknikal' },
+    'card_value_no_data': { 'English': 'No data', 'Mandarin': '无数据', 'Japanese': 'データなし', 'Malay': 'Tiada data' },
     'table_no_data': { 'English': 'No data to display.', 'Mandarin': '没有可显示的数据。', 'Japanese': '表示するデータがありません。', 'Malay': 'Tiada data untuk dipaparkan.' },
     'spreadsheet_search_placeholder': { 'English': "Search table or ask AI (e.g., 'show rows where column_3 > 100')", 'Mandarin': "搜索表格或询问 AI（例如：'显示 column_3 > 100 的行'）", 'Japanese': "テーブル検索またはAIに質問（例：'column_3 > 100の行を表示'）", 'Malay': 'Cari dalam jadual atau tanya AI (cth., \'tunjukkan baris dengan column_3 > 100\')' },
     'spreadsheet_ask_ai': { 'English': 'Ask AI', 'Mandarin': '询问 AI', 'Japanese': 'AIに質問', 'Malay': 'Tanya AI' },

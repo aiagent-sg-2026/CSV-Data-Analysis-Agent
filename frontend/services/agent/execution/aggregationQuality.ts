@@ -1,5 +1,5 @@
 import type { AnalysisPlan, CsvRow } from '../../../types';
-import { parseNumericValue } from '../../../utils/dataHelpers';
+import { parseNullableNumericValue, parseNumericValue } from '../../../utils/dataHelpers';
 
 export type AggregationQualityDropReason = 'flat_metric' | 'no_total' | 'low_value';
 export type AggregationQualityVerdict = 'useful' | 'flat_metric' | 'no_data' | 'noisy';
@@ -159,9 +159,12 @@ export const evaluateAggregationQuality = (plan: AnalysisPlan, rows: CsvRow[]): 
         : topRows.reduce((acc, row) => acc + toNumber(row[valueKey]), 0);
 
     const share = total !== 0 ? topValue / total : null;
-    const uniqueValueCount = useMultiColumnTotal
-        ? new Set(rows.flatMap(row => numericCols.map(col => toNumber(row[col])))).size
-        : new Set(rows.map(row => toNumber(row[valueKey]))).size;
+    // A group without a value (NULL aggregate) is not a distinct value of 0;
+    // counting it would hide a metric that is flat across the reported groups.
+    const reportedValues = useMultiColumnTotal
+        ? rows.flatMap(row => numericCols.map(col => parseNullableNumericValue(row[col])))
+        : rows.map(row => parseNullableNumericValue(row[valueKey]));
+    const uniqueValueCount = new Set(reportedValues.filter(value => value !== null)).size;
 
     // Effective group count: for single-row multi-column data, count numeric
     // columns as "groups" to prevent false flat_metric drops.

@@ -50,7 +50,8 @@ const getSortedMetricRows = (card: AnalysisCardData): Array<{ row: CsvRow; value
             const numeric = toNumericValue(getRowValue(row, valueKey));
             return { row, value: numeric ?? 0, missing: numeric === null };
         })
-        .filter(entry => Number.isFinite(entry.value))
+        // A group without a value is no data: never a KPI number, leader or share term.
+        .filter(entry => !entry.missing && Number.isFinite(entry.value))
         // Keep the card's ranking direction: an ascending card leads with its
         // lowest group, and a group without a value never leads it as a zero.
         .sort((left, right) => (card.plan.rankDirection === 'asc'

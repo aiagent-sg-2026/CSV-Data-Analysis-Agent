@@ -9,7 +9,7 @@
 import { ChartConfigProps } from './types';
 import { COLORS, BORDER_COLORS, getCommonOptions, getZoomOptions } from './common';
 import { formatAnalysisValue, formatAxisValue, normalizeCategoryLabel } from '../analysisCardPresentation';
-import { parseNumericValue } from '../dataHelpers';
+import { parseNullableNumericValue, parseNumericValue } from '../dataHelpers';
 
 export const createMultiLineChartConfig = ({
     data,
@@ -35,7 +35,7 @@ export const createMultiLineChartConfig = ({
                 labels: data.map(row => normalizeCategoryLabel(row[groupKey])),
                 datasets: [{
                     label: valueKey,
-                    data: data.map(row => parseNumericValue(row[valueKey])),
+                    data: data.map(row => parseNullableNumericValue(row[valueKey])),
                     fill: false,
                     borderColor: COLORS[0],
                     pointBackgroundColor: COLORS[0],
@@ -66,7 +66,7 @@ export const createMultiLineChartConfig = ({
                 return {
                     label: seriesLabel,
                     data: activeColumns.map(col => {
-                        return parseNumericValue(row[col]);
+                        return parseNullableNumericValue(row[col]);
                     }),
                     fill: false,
                     borderColor: hasSelection ? `${color}33` : color,
@@ -87,7 +87,7 @@ export const createMultiLineChartConfig = ({
             return {
                 label: column,
                 data: data.map(row => {
-                    return parseNumericValue(row[column]);
+                    return parseNullableNumericValue(row[column]);
                 }),
                 fill: false,
                 borderColor: hasSelection ? `${color}33` : color,

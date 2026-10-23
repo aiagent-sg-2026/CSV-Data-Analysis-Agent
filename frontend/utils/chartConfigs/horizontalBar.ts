@@ -1,13 +1,13 @@
 import { ChartConfigProps } from './types';
 import { BG_COLORS, BORDER_COLORS, getColors, getBorderColors, getCommonOptions, getPivotTooltipCallbacks } from './common';
 import { formatAnalysisValue, formatAxisValue, normalizeCategoryLabel } from '../analysisCardPresentation';
-import { parseNumericValue } from '../dataHelpers';
+import { parseNullableNumericValue } from '../dataHelpers';
 
 export const createHorizontalBarChartConfig = ({ data, plan, selectedIndices, onElementClick, disableAnimation, showDataLabels }: ChartConfigProps): any => {
     const { groupByColumn, valueColumn } = plan;
     const valueKey = valueColumn || 'count';
     const labels = groupByColumn ? data.map(d => normalizeCategoryLabel(d[groupByColumn])) : [];
-    const values = valueKey ? data.map(d => parseNumericValue(d[valueKey])) : [];
+    const values = valueKey ? data.map(d => parseNullableNumericValue(d[valueKey])) : [];
     const commonOptions = getCommonOptions(onElementClick, disableAnimation, showDataLabels);
     const pivotTooltipCallbacks = getPivotTooltipCallbacks(plan, data);
 

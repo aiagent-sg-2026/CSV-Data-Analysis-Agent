@@ -1,13 +1,13 @@
 import { ChartConfigProps } from './types';
 import { BG_COLORS, BORDER_COLORS, getColors, getBorderColors, getCommonOptions, getPivotTooltipCallbacks } from './common';
 import { formatAnalysisValue, formatAxisValue, getBarChartReadabilityHints, normalizeCategoryLabel } from '../analysisCardPresentation';
-import { parseNumericValue } from '../dataHelpers';
+import { parseNullableNumericValue } from '../dataHelpers';
 
 export const createBarChartConfig = ({ data, plan, selectedIndices, onElementClick, disableAnimation, showDataLabels }: ChartConfigProps): any => {
     const { groupByColumn, valueColumn } = plan;
     const valueKey = valueColumn || 'count';
     const labels = groupByColumn ? data.map(d => normalizeCategoryLabel(d[groupByColumn])) : [];
-    const values = valueKey ? data.map(d => parseNumericValue(d[valueKey])) : [];
+    const values = valueKey ? data.map(d => parseNullableNumericValue(d[valueKey])) : [];
     const readabilityHints = getBarChartReadabilityHints(data, groupByColumn);
     const commonOptions = getCommonOptions(onElementClick, disableAnimation, showDataLabels);
     const pivotTooltipCallbacks = getPivotTooltipCallbacks(plan, data);
@@ -32,7 +32,7 @@ export const createBarChartConfig = ({ data, plan, selectedIndices, onElementCli
         // in the chart tooltip and the accessible legend controls.
         const visibleLabelLimit = chartWidth < 400 ? 2 : 3;
         const rankedIndices = values
-            .map((value, index) => ({ index, magnitude: Math.abs(value) }))
+            .map((value, index) => ({ index, magnitude: value === null ? -1 : Math.abs(value) }))
             .sort((left, right) => right.magnitude - left.magnitude || left.index - right.index)
             .slice(0, visibleLabelLimit)
             .map(entry => entry.index);

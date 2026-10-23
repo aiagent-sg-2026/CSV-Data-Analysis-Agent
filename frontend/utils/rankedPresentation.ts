@@ -1,5 +1,5 @@
 import type { AnalysisPlan, CsvRow, QueryPlan } from '../types';
-import { parseNumericValue } from './dataHelpers';
+import { parseNullableNumericValue } from './dataHelpers';
 import { isTemporalDisplayColumn } from './temporalDisplay';
 
 /**
@@ -35,12 +35,7 @@ export const resolveRankDirectionFromQuery = (
 };
 
 /** A measure cell as a number, or null when it is empty or not numeric (e.g. a NULL median). */
-const toRankValue = (value: unknown): number | null => {
-    if (value === null || value === undefined) return null;
-    if (typeof value === 'string' && !/\d/.test(value)) return null;
-    const parsed = parseNumericValue(value);
-    return Number.isFinite(parsed) ? parsed : null;
-};
+const toRankValue = (value: unknown): number | null => parseNullableNumericValue(value);
 
 /**
  * Stable sort by the measure; the default is the existing largest-first

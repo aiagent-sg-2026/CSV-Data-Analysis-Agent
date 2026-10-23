@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useAppStore } from '../store/useAppStore';
-import { applyTopNWithOthers, parseNumericValue } from '../utils/dataHelpers';
+import { applyTopNWithOthers, parseNullableNumericValue, parseNumericValue } from '../utils/dataHelpers';
 import { CsvRow, AnalysisCardData, AnalysisPlan } from '../types';
 import { isAdditiveAggregation, normalizeCategoryLabel } from '../utils/analysisCardPresentation';
 import { buildPivotStackedChartState, DEFAULT_STACKED_PIVOT_COLUMN_TOP_N } from '../utils/pivotMatrixCharting';
@@ -99,9 +99,15 @@ export const useAnalysisCardData = (cardId: string) => {
     const sortedTableData = useMemo(() => {
         if (!tableSort) return tableDataForDisplay;
         const { column, direction } = tableSort;
+        const isMissing = (value: unknown) => value === null || value === undefined || (typeof value === 'string' && value.trim() === '');
         return [...tableDataForDisplay].sort((a, b) => {
             const aVal = a[column];
             const bVal = b[column];
+            // A cell without a value (e.g. a NULL median) goes last in both directions
+            // instead of sorting as 0 or as an empty string.
+            if (isMissing(aVal) || isMissing(bVal)) {
+                return (isMissing(aVal) ? 1 : 0) - (isMissing(bVal) ? 1 : 0);
+            }
             // Treat numeric-like strings as numbers for correct sort order
             const aNum = typeof aVal === 'number' ? aVal : Number(String(aVal).replace(/[,$%()]/g, (m) => m === '(' ? '-' : m === ')' ? '' : ''));
             const bNum = typeof bVal === 'number' ? bVal : Number(String(bVal).replace(/[,$%()]/g, (m) => m === '(' ? '-' : m === ')' ? '' : ''));
@@ -120,20 +126,20 @@ export const useAnalysisCardData = (cardId: string) => {
         if (plan?.artifactType !== 'pivot_matrix' || !hideZeroValueRows) {
             return 0;
         }
-        return tableDataForDisplay.filter(row => parseNumericValue(row[valueKey]) === 0).length;
+        return tableDataForDisplay.filter(row => parseNullableNumericValue(row[valueKey]) === 0).length;
     }, [hideZeroValueRows, plan?.artifactType, tableDataForDisplay, valueKey]);
     const chartRowDataForDisplay = useMemo(() => {
         const base = sortedTableData;
         if (plan?.artifactType !== 'pivot_matrix' || !hideZeroValueRows) {
             return base;
         }
-        return base.filter(row => parseNumericValue(row[valueKey]) !== 0);
+        return base.filter(row => parseNullableNumericValue(row[valueKey]) !== 0);
     }, [hideZeroValueRows, plan?.artifactType, sortedTableData, valueKey]);
     const tableZeroValueRowCount = useMemo(() => {
         if (plan?.artifactType !== 'pivot_matrix') {
             return 0;
         }
-        return tableDataForDisplay.filter(row => parseNumericValue(row[valueKey]) === 0).length;
+        return tableDataForDisplay.filter(row => parseNullableNumericValue(row[valueKey]) === 0).length;
     }, [plan?.artifactType, tableDataForDisplay, valueKey]);
 
     const totalValue = useMemo(() => {
