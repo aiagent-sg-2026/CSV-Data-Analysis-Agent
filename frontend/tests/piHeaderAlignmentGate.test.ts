@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StoreApi } from '../services/agent/types';
 import { parseCsvTextWithDetection } from '../services/data/csvDialectDetector';
 import { buildReportIntakeIr } from '../services/data/reportCsvIntake';
@@ -9,6 +9,14 @@ import { beginSessionTransition } from '../services/session/sessionOwnership';
 import { captureCsvSource } from '../services/data/immutableCsvSource';
 import { assertLegacyBoundaryAllowed, confirmStructureRepairMeaning, resumeStructureRepairDraft } from '../services/agent/structureRepairConfirmation';
 
+import { repairReservationStorage } from './helpers/repairReservationStorage';
+const io = vi.hoisted(() => ({ db: null as unknown }));
+vi.mock('../services/storageService', async original => ({ ...await original<typeof import('../services/storageService')>(), getStorageDatabase: async () => io.db }));
+beforeEach(() => {
+    const values = new Map<string, string>(); io.db = repairReservationStorage().db;
+    vi.stubGlobal('localStorage', { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => values.set(k, v) });
+});
+afterEach(() => vi.unstubAllGlobals());
 const intake = (rows: string[][]) => buildReportIntakeIr('synthetic.csv', rows,
     parseCsvTextWithDetection(rows.map(row => row.join(',')).join('\n')).detection);
 const repeated = (malicious = false) => {

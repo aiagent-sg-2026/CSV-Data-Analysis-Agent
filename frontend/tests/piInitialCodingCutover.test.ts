@@ -28,9 +28,10 @@ import * as sourceScan from '../services/data/csvSourceScan';
 import * as meaningInference from '../services/data/inferCandidateMeaning';
 import {preparePiStructureRepairSmoke,queryPiStructureRepairSmoke} from '../services/agent/runtime/pi/piStructureRepairQualification';
 import {executeDataQuery} from '../services/agent/execution/dataOperationRunner';
+import {repairReservationStorage} from './helpers/repairReservationStorage';
 const io=vi.hoisted(()=>({records:new Map<string,unknown>(),commits:0,queryCalls:0,beforeQuery:undefined as undefined|(()=>Promise<void>),beforeGuest:undefined as undefined|(()=>Promise<void>)}));
 vi.mock('../services/storageService',async original=>({...await original<typeof import('../services/storageService')>(),
-    getStorageDatabase:async()=>({get:async(_name:string,key:string)=>io.records.get(key),getAllFromIndex:async()=>[...io.records.values()].filter(r=>(r as DatasetCommitMarker).kind==='commit')}) as unknown as StorageDatabase}));
+    getStorageDatabase:async()=>({...repairReservationStorage(io.records).db,getAllFromIndex:async()=>[...io.records.values()].filter(r=>(r as DatasetCommitMarker).kind==='commit')}) as unknown as StorageDatabase}));
 vi.mock('../services/persistence/datasetCommitStorage',()=>({
     readCommitIntent:async()=>undefined,
     commitDatasetTransaction:async(_db:unknown,marker:DatasetCommitMarker,_baseline:unknown,check:()=>void,admit:()=>void)=>{
@@ -225,7 +226,7 @@ describe('initial shared coding phase',()=>{
             expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);
         }finally{release.resolve();spy.mockRestore();beginSessionTransition(f.root);}
     });
-    it('preserves charged execution and task budget after cancellation and resume',async()=>{
+    it('retains the conservative reservation rather than replaying uncertain cancelled execution',async()=>{
         const root=bareStore(),entered=deferred(),release=deferred();
         io.beforeGuest=()=>{entered.resolve();return release.promise;};
         try{
@@ -235,7 +236,7 @@ describe('initial shared coding phase',()=>{
             const result=await runPiInitialAnalysis({appSessionId:root.getState().sessionId,datasetId:root.getState().currentDatasetId!,
                 datasetVersion:root.getState().datasetBundle!.datasetVersion,researchGoal:root.getState().confirmedAnalysisGoal!,provider:{provider:'default',modelId:'mock'}},root,
                 scripted(()=>{throw new Error('Synthetic provider stopped after resume');}),f.runtimeOptions);
-            expect(result.structureRepair).toMatchObject({state:'repairing',attempts:1,validationFailures:0});
+            expect(result.structureRepair).toMatchObject({state:'unavailable',reason:'reservation_pending_uncertain_work',resumable:false});
             const used=root.getState().activeAgentTask!.budget.used;
             expect(used.transformationAttempts).toBe(1);expect(used.toolCalls).toBe(previous.toolCalls);expect(used.providerTurns).toBeGreaterThanOrEqual(previous.providerTurns);
             expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);

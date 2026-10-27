@@ -17,7 +17,7 @@ import {
     normalizeRestoredGoalState,
 } from '../../utils/messageState';
 import { createIdleDuckDbSessionStatus } from '../../services/duckdb/sessionStatus';
-import { createAndStoreTabSessionId } from '../sessionLifecycle';
+import { createAndStoreTabSessionId, startDeliberateRepairBudgetSession } from '../sessionLifecycle';
 import { openReportArtifact, printReportArtifact } from '../../services/reporting/reportArtifactViewer';
 import { hydrateLatestReportWorkspaceFiles, loadReportArtifactHtml } from '../../services/reporting/reportArtifactStorage';
 import { parseReportArtifactManifest } from '../../services/reporting/reportArtifactManifest';
@@ -346,6 +346,7 @@ export const createHistorySlice: StateCreator<AppStore, [], [], IHistorySlice> =
                 .then(({ clearSandboxTableRows }) => clearSandboxTableRows(outgoing.datasetBundle?.bundleId))
                 .catch(error => console.warn('[History] Could not clear temporary sandbox tables.', error));
             const nextSessionId = createAndStoreTabSessionId();
+            startDeliberateRepairBudgetSession(nextSessionId);
 
             // FIX: Replaced direct import of `initialAppState` to break a circular dependency.
             // This circular dependency was causing widespread type inference failures in Zustand.

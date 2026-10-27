@@ -17,6 +17,7 @@ import { captureMcpTask } from '../../connectors/mcpConnectorRegistry';
 import { projectTypedTaskPlan, type TypedTaskPlan, type TaskRepairCommit } from './piTaskPlan';
 import {canRepairComputationScope} from './piScopeRepair';
 import { admitComputationEvidence, type ComputationEvidenceReceipt } from '../../execution/computationEvidence';
+import { hash } from 'fast-sha256';
 
 export interface PiTaskContinuation { taskId: string; revision: number; scopeDigest: string }
 type Adapter = ReturnType<typeof createCodeExecutionAdapter>;
@@ -27,7 +28,7 @@ const digest = (value: unknown) => sha256Bytes(new TextEncoder().encode(JSON.str
 const codingTool = (name: string) => name.startsWith('code.') || name.startsWith('candidate.') || ['workspace.write', 'workspace.append', 'workspace.replace'].includes(name);
 
 /** Session-retained task state is host-owned. A saved continuation is only a locator, never executable authority. */
-export const preparePiTask = async (store: StoreApi, message: string, continuation?: PiTaskContinuation, guest?: Guest, recoveryBudget?: TaskBudget, spillFactory?:Parameters<typeof createCodeExecutionAdapter>[4]): Promise<PiCodingTask> => {
+export const preparePiTask = async (store: StoreApi, message: string, continuation?: PiTaskContinuation, guest?: Guest, recoveryBudget?: TaskBudget, spillFactory?:Parameters<typeof createCodeExecutionAdapter>[4], recoveryFailure?: { failureKey: string; repetitions: number }): Promise<PiCodingTask> => {
     if (store.piTask) return store.piTask;
     const lease = store.executionContext?.lease;
     if (!lease) throw new Error('scope_revoked');
@@ -65,7 +66,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
         const mcp = await awaitOwned(captureMcpTask(store, task.taskId, () => tasks.get(key) === record), store, lease);
         const workspace = createTaskWorkspace(root, task.taskId, { allowedPrefixes: ['/workspace/'], allowedPaths: ['/dataset/cleaned.csv'] });
         task = { ...task, protectedInvariants: [...task.protectedInvariants, { id: 'mcp-snapshot', digest: mcp.digest }] };
-        record = { guest, spillFactory, task, workspace, skills,mcp,skillPrograms:new Map(), coding: false, workStarted: false, scopeRepairAttempts:0, failureKey: '', repetitions: 0 };
+        record = { guest, spillFactory, task, workspace, skills,mcp,skillPrograms:new Map(), coding: false, workStarted: false, scopeRepairAttempts:0, failureKey: recoveryFailure?.failureKey ?? '', repetitions: recoveryFailure?.repetitions ?? 0 };
         tasks.set(key, record);
         const captured = record;
         registerSessionResource(lease.scope, () => { captured.retire?.(); captured.workspace.dispose(); if (tasks.get(key) === captured) tasks.delete(key); });
@@ -354,7 +355,8 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
                 } }));
                 if (record.task.status === 'executing') move('validating');
                 if (actual.status === 'succeeded') { executionAccepted = true; computationNeedsRevision=false; record.failureKey = ''; record.repetitions = 0; move('verifying'); return; }
-                const failure = JSON.stringify([actual.program?.sha256, actual.inputDigest, actual.reasonCode, actual.error]);
+                // Retain equality/no-progress evidence without persisting guest error text or cells.
+                const failure = Array.from(hash(new TextEncoder().encode(JSON.stringify([actual.program?.sha256, actual.inputDigest, actual.reasonCode, actual.error]))), b => b.toString(16).padStart(2, '0')).join('');
                 record.repetitions = record.failureKey === failure ? record.repetitions + 1 : 1; record.failureKey = failure;
                 if (record.repetitions >= 2) blockedReason = 'coding_no_progress';
                 if (record.task.status === 'validating') move('programming');

@@ -314,7 +314,9 @@ describe('history slice vector memory rebuild', () => {
         const slice = createHistorySlice(set as never, get as never, {} as never);
         state = { ...state, ...slice };
 
+        sessionStorage.setItem('csv_agent_repair_budget_session_id', 'spent-accounting-session');
         await slice.handleLoadReport('report-1');
+        expect(sessionStorage.getItem('csv_agent_repair_budget_session_id')).toBe('spent-accounting-session');
         // Rehydration runs in a fire-and-forget async task — flush microtasks
         // so the background state update completes before assertions.
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -666,7 +668,9 @@ describe('history slice vector memory rebuild', () => {
         const slice = createHistorySlice(set as never, get as never, {} as never);
         state = { ...state, ...slice };
 
+        sessionStorage.setItem('csv_agent_repair_budget_session_id', 'spent-accounting-session');
         await slice.handleNewSession();
+        expect(sessionStorage.getItem('csv_agent_repair_budget_session_id')).toBe(state.sessionId);
 
         expect(state.sessionId).toMatch(/^session-/);
         expect(state.sessionId).not.toBe('session-old');

@@ -65,7 +65,9 @@ interface MyDB extends DBSchema {
     key: string;
     value: {
       key: string;
-      settings: Settings;
+      settings?: Settings;
+      /** Restrictive coordinator accounting, never settings or executable authority. */
+      coordinatorBudget?: import('./agent/runtime/pi/piRepairReservation').RepairBudgetCheckpoint;
     };
   };
   [CLOUD_AI_CONSENTS_STORE_NAME]: {

@@ -7,8 +7,8 @@ import { serializeCodeState } from './codeStatefulStream';
 
 export const SOURCE_STREAM_LIMITS = Object.freeze({ batchRows: 50, steps: 10000, activeMs: 15 * 60 * 1000,
     batchJsonBytes: 256 * 1024, cumulativeReadBytes: 600 * 1024 * 1024, sources: 128, attempts: 3 });
-export interface SourceStreamBudget { attempts:number;steps:number;activeMs:number;readBytes:number }
-interface Ledger extends SourceStreamBudget { owner: symbol; meaningAttempts?: number }
+export interface SourceStreamBudget { attempts:number;steps:number;activeMs:number;readBytes:number;meaningAttempts?:number }
+interface Ledger extends SourceStreamBudget { owner: symbol }
 const ledgers = new WeakMap<ReturnType<typeof captureSessionScope>, Map<string, Ledger>>();
 export interface SourceStreamOptions { sourceId: string; sha256: string; width: number; initialState: unknown }
 export interface SourceStreamMetrics {
@@ -26,8 +26,15 @@ export const seedRecoveredSourceStreamBudget=(store:StoreApi,source:NonNullable<
     let map=ledgers.get(scope);if(!map){map=new Map();ledgers.set(scope,map);registerSessionResource(scope,()=>{map!.clear();ledgers.delete(scope);});}
     const prior=map.get(key);
     if(!prior&&map.size>=SOURCE_STREAM_LIMITS.sources)throw new Error('source_stream_ledger_capacity');
-    map.set(key,{owner:Symbol(),meaningAttempts:prior?.meaningAttempts??0,attempts:Math.max(prior?.attempts??0,budget.attempts),steps:Math.max(prior?.steps??0,budget.steps),
+    map.set(key,{owner:Symbol(),meaningAttempts:Math.max(prior?.meaningAttempts??0,budget.meaningAttempts??0),attempts:Math.max(prior?.attempts??0,budget.attempts),steps:Math.max(prior?.steps??0,budget.steps),
         activeMs:Math.max(prior?.activeMs??0,budget.activeMs),readBytes:Math.max(prior?.readBytes??0,budget.readBytes)});
+};
+
+export const sourceStreamBudgetFloor = (store: StoreApi): SourceStreamBudget => {
+    const source = store.getState().datasetBundle?.source.inspection;
+    const entry = source && ledgers.get(captureSessionScope(store))?.get(JSON.stringify([source.sha256, source.byteSize, source.recordCount, source.dialect]));
+    return { attempts: entry?.attempts ?? 0, steps: entry?.steps ?? 0, activeMs: entry?.activeMs ?? 0,
+        readBytes: entry?.readBytes ?? 0, meaningAttempts: entry?.meaningAttempts ?? 0 };
 };
 
 /** Public-tool compilation uses the execution ledger, not a resettable per-proposal allowance. */
@@ -153,7 +160,7 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
     } catch (error) { await dispose().catch(() => {}); throw error; }
     return {
         identity, generation: spill.generation,
-        get budget():SourceStreamBudget{return {attempts:account.attempts,steps:account.steps,activeMs:account.activeMs,readBytes:account.readBytes};},
+        get budget():SourceStreamBudget{return {attempts:account.attempts,steps:account.steps,activeMs:account.activeMs,readBytes:account.readBytes,meaningAttempts:account.meaningAttempts??0};},
         get cursor() { return Object.freeze({ nextRow, nextByte }); },
         get metrics() { return structuredClone({ ...metrics, cumulativePhysicalReadBytes: account.readBytes }); },
         async execute(run: (json: string) => Promise<GuestOutcome>, invocation: () => void): Promise<SpillManifest> {

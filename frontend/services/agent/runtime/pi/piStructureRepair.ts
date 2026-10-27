@@ -22,6 +22,7 @@ export interface StructureRepairProgress {
 interface Counters {
     attempts: number; failures: number; failureKey: string; repetitions: number; budget?: TaskBudget; blockedReason?: string;
 }
+export interface RepairCounterFloor extends Counters { targets: Array<[string, Counters]> }
 interface Retained extends Counters { targets: Map<string, Counters>; owner: symbol }
 // Admission limits, not an LRU: evicting a spent identity would reopen its budget.
 export const STRUCTURE_REPAIR_LEDGER_SOURCES = 128;
@@ -46,7 +47,7 @@ export class StructureRepairPreparationError extends Error {
 /** A repair is a restricted phase of the existing Pi task, not another executor or commit authority.
  * Only private source handles/receipts drive it; workspace diagnostics are observations, not grants.
  */
-export const prepareStructureRepair = async (store: StoreApi, goal: string, spillAvailable?: boolean) => {
+export const prepareStructureRepair = async (store: StoreApi, goal: string, spillAvailable?: boolean, recovered?: RepairCounterFloor) => {
     const lease = store.executionContext?.lease;
     const scope = captureSessionScope(store), source = store.getState().datasetBundle?.source.inspection;
     let view: StructureRepairProgress = { state: 'inspecting', sourceSha256: source?.sha256 ?? null,
@@ -132,7 +133,7 @@ export const prepareStructureRepair = async (store: StoreApi, goal: string, spil
     };
     if (!entry) {
         if (ledger.size >= STRUCTURE_REPAIR_LEDGER_SOURCES) limit('session_source_ledger_capacity');
-        entry = { ...counters(), targets: new Map(), owner: Symbol() }; ledger.set(sourceKey, entry);
+        entry = { ...(recovered ?? counters()), targets: new Map(recovered?.targets ?? []), owner: Symbol() }; ledger.set(sourceKey, entry);
     }
     const record = entry;
     view = { ...view, attempts: record.attempts, validationFailures: record.failures };
@@ -154,6 +155,10 @@ export const prepareStructureRepair = async (store: StoreApi, goal: string, spil
     update(isExhausted() ? 'exhausted' : 'repairing', isExhausted() ? 'cumulative_repair_budget_exhausted' : null);
     return {
         streamed,
+        counterFloor(): RepairCounterFloor {
+            const { owner: _owner, targets, ...floor } = record;
+            return structuredClone({ ...floor, targets: [...targets] });
+        },
         get progress() { return structuredClone(view); },
         get recoveryBudget() { return record.budget ? structuredClone(record.budget) : undefined; },
         current: ownedCurrent,

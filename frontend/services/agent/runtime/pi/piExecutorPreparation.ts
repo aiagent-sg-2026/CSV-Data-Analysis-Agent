@@ -23,11 +23,12 @@ export const preparePiExecutor = async (store: StoreApi, options: {
     continuation?: PiTaskContinuation; guest?: Parameters<typeof preparePiTask>[3];
     spillFactory?: import('../../../data/candidateSpill').CandidateSpillFactory;
     qualified?: boolean; recoveryBudget?: import('./piTaskBudget').TaskBudget;
+    recoveryFailure?: Parameters<typeof preparePiTask>[6];
 }): Promise<PiExecutorPreparation> => {
     const lease = store.executionContext?.lease;
     if (!lease || lease.kind !== options.entryPoint) throw new Error('executor_entry_point_mismatch');
     assertRunActive(store, lease);
-    const task = await preparePiTask(store, options.goal, options.continuation, options.guest, options.recoveryBudget,options.spillFactory);
+    const task = await preparePiTask(store, options.goal, options.continuation, options.guest, options.recoveryBudget,options.spillFactory,options.recoveryFailure);
     assertRunActive(store, lease);
     task.refreshInputs();
     const reference = (): ExecutorPreparationReference => {

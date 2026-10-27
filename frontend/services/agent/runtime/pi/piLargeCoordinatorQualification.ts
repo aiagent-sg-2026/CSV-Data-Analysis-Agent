@@ -11,14 +11,15 @@ import type { SpillMeaningProposal } from '../../../data/spillMeaningProposal';
 export const preparePiLargeCoordinatorSmoke = async (root: StoreApi, file: File, options: {
     columns?: string[]; numeric?: boolean; summary?: boolean; mode?: 'repair' | 'retry' | 'exhaust';
     coding?: PiInitialAnalysisOptions['codingPreparation']; proposal?: (p: SpillMeaningProposal) => unknown;
+    confirmedProposal?: (p: SpillMeaningProposal) => unknown; goal?: string; beforeProvider?: (turn: number) => Promise<void>;
 } = {}) => {
     const columns = options.columns ?? ['key', 'payload', 'value'], data = { fileName: file.name, data: [] }, datasetId = crypto.randomUUID();
-    const goal = 'Repair the complete original source using bounded record tools, independently validate a single source-record table and request separate exact human approval.';
+    const goal = options.goal ?? 'Repair the complete original source using bounded record tools, independently validate a single source-record table and request separate exact human approval.';
     root.setState({ sessionId: crypto.randomUUID(), sessionCreatedAt: new Date(), confirmedAnalysisGoal: goal, currentView: 'analysis_dashboard',
         csvData: data, rawCsvData: structuredClone(data), canonicalCsvData: null, rawIntakeIr: null,
         datasetBundle: createSingleTableDatasetBundle({ datasetId, sourceFingerprint: 'pending', file, data }), currentDatasetId: datasetId,
         pipelineOutcome: { canAutoAnalyze: false, reasonCode: 'header_shape_drift' } as never,
-        pendingClarification: null, analysisCards: [], columnProfiles: [], queryHistory: [], workspaceFiles: {}, datasetCommitBindingStatus: undefined,
+        pendingClarification: null, candidateRecovery: null, analysisCards: [], columnProfiles: [], queryHistory: [], workspaceFiles: {}, datasetCommitBindingStatus: undefined,
         settings: { ...root.getState().settings, provider: 'default', simpleModel: 'mock', complexModel: 'mock', language: 'English',
             runtimeAccessControl: { permissionMode: 'open', toolOverrides: {}, workspaceRules: { deniedPathPrefixes: [] } } } });
     const reads = { bytes: 0, calls: 0, maxBytes: 0, fullReads: 0 };
@@ -45,7 +46,9 @@ export const preparePiLargeCoordinatorSmoke = async (root: StoreApi, file: File,
     let step = 0, attempt = 0, candidateId = '';
     const trace: string[] = [];
     const call = (name: string, args: unknown): AssistantMessage['content'] => [{ type: 'toolCall', id: crypto.randomUUID(), name, arguments: args as JsonObject }];
-    const stream: StreamFn = (model, context) => {
+    let providerCalls = 0;
+    const stream: StreamFn = async (model, context) => {
+        await options.beforeProvider?.(++providerCalls);
         const last = context.messages.filter(m => m.role === 'toolResult').at(-1), text = last?.content.filter(p => p.type === 'text').map(p => p.text).join('') ?? '';
         if (last) trace.push(`${last.toolName}: ${text}`);
         let value: { payload?: { workspace?: { artifact?: { path: string; revision: number; sha256: string } }; candidate?: { candidateId: string } }; receipt?: { jobId: string; status: string } } = {};
@@ -56,7 +59,7 @@ export const preparePiLargeCoordinatorSmoke = async (root: StoreApi, file: File,
         if (step === 0) { step++; content = call('workspace_read', { path: '/intake/source-scan.json' }); }
         else if (step === 1) { step++; content = call('workspace_read', { path: '/intake/source-records.json', startRow: source.recordCount - 1, rowCount: 1 }); }
         else if (step === 2) { step++; const confirmed = root.getState().workspaceFiles['/intake/meaning-confirmation.json'];
-            content = call('candidate_infer_meaning', confirmed ? JSON.parse(confirmed).proposal : options.proposal?.(proposal) ?? proposal); }
+            content = call('candidate_infer_meaning', confirmed ? options.confirmedProposal?.(JSON.parse(confirmed).proposal) ?? JSON.parse(confirmed).proposal : options.proposal?.(proposal) ?? proposal); }
         else if (step === 3) { step++; attempt++; content = call('workspace_write', { path: `/workspace/repair-${attempt}.js`, expectedRevision: 0,
             content: options.mode && options.mode !== 'repair' && (attempt === 1 || options.mode === 'exhaust') ? 'throw new Error("synthetic fixable program failure");' : program }); }
         else if (step === 4) { step++; const a = value.payload?.workspace?.artifact;

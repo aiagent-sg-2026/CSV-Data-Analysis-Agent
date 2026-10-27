@@ -37,6 +37,7 @@ const STAGES = createInitialAnalysisStageToolManifests();
 import { INITIAL_CHECKPOINT_PREFIX as CHECKPOINT_PREFIX, initialCheckpointKey as checkpointKey, hasPiInitialCheckpoint, readPiInitialCheckpoint as readCheckpoint, writePiInitialCheckpoint as writeCheckpoint, discardPiInitialCheckpoint as discardCheckpoint, captureCheckpointSource, captureCheckpointSourceBoundary, checkpointLineageSignature, validateCheckpointState, type PiInitialCheckpoint, type InitialStageReceipt } from './piInitialCheckpoint';
 import { pendingSpillMeaningChoice, sealSpillMeaningChoice } from './piSpillMeaningChoice';
 import { getCsvDatasetVersion } from '../../../../utils/datasetId';
+import { mergeRepairTaskBudget, reserveRepairRun } from './piRepairReservation';
 export interface PiInitialAnalysisOptions {
     plannerStream?: StreamFn;
     stageServices?: Partial<InitialAnalysisStageServiceBindings>;
@@ -157,6 +158,7 @@ const run = async (
     let approvalSealed=false;
     let headerGateBlocked = false;
     let structureRepair: PiStructureRepair | undefined;
+    let repairReservation: Awaited<ReturnType<typeof reserveRepairRun>> | undefined;
     let repairPreparationFailure: StructureRepairProgress | undefined;
     let headerAlignmentDiagnostic: InitialAnalysisRunOutcome['headerAlignmentDiagnostic'];
     let recoveryEnabled = Boolean(checkpointSource) && !store.getState().csvData?.backing?.ephemeral;
@@ -231,7 +233,7 @@ const run = async (
             meaningStopReason = `initial_cleaning_meaning_no_progress: ${meaningRejections} candidate_infer_meaning proposal(s) were rejected and cleaning was not skipped within ${MEANING_SKIP_GRACE_TURNS} turns of the skip guidance, so the cleaning window stopped before the time budget ran out. Accepted data is unchanged.`;
         }
     };
-    const timer = setTimeout(() => controller.abort(new Error('The Pi initial-analysis time budget expired.')),
+    let timer = setTimeout(() => controller.abort(new Error('The Pi initial-analysis time budget expired.')),
         Math.max(1,INITIAL_ANALYSIS_BUDGET_MS-(checkpoint?.coding?.budget.used.activeMs??0)));
     const persistCheckpoint = async (pendingStageIndex: number | null) => {
         assertRunActive(store, lease);
@@ -497,6 +499,17 @@ const run = async (
         if (qualified && !checkpoint?.coding?.commit && (store.getState().rawIntakeIr || store.getState().pipelineOutcome?.canAutoAnalyze === false)) {
             // Freeze the evidence before asynchronous hashing and fence against replacement or
             // in-place mutation before accepting the result. Metadata does not prove row provenance.
+            if (store.getState().datasetBundle?.source.inspection) repairReservation = await reserveRepairRun(store, request.researchGoal);
+            clearTimeout(timer);
+            timer = setTimeout(() => controller.abort(new Error('The Pi initial-analysis time budget expired.')),
+                Math.max(1, INITIAL_ANALYSIS_BUDGET_MS - (repairReservation?.floor.task.used.activeMs ?? 0)));
+            const meaningFloor = repairReservation?.floor.meaning;
+            if (meaningFloor) {
+                meaningRejections = meaningFloor.rejections; consecutiveMeaningRejections = meaningFloor.consecutive;
+                meaningStopReason = meaningFloor.stopReason; meaningSkipGuidance = meaningFloor.skipGuidance;
+                meaningGuidanceTurn = meaningFloor.guidanceTurn; providerTurns = meaningFloor.providerTurns;
+                if (meaningStopReason) throw new Error(meaningStopReason);
+            }
             const state = store.getState();
             const intake = state.rawIntakeIr;
             const inspection = state.datasetBundle?.source.inspection;
@@ -525,12 +538,14 @@ const run = async (
                     assertRunActive(store, lease);
                     throw new Error(`initial_header_alignment_blocked: ${headerAlignmentDiagnostic.summary}`);
                 }
-                structureRepair = await prepareStructureRepair(store, request.researchGoal, options.codingPreparation?.spillFactory ? true : undefined);
+                structureRepair = await prepareStructureRepair(store, request.researchGoal, options.codingPreparation?.spillFactory ? true : undefined, repairReservation?.floor.repair);
             }
         }
         if (options.codingPreparation?.enabled === true) executorPreparation = await preparePiExecutor(store, {entryPoint:'initial_analysis',
             goal:request.researchGoal,guest:options.codingPreparation.guest,spillFactory:options.codingPreparation.spillFactory,qualified,continuation:options.codingPreparation.continuation,
-            recoveryBudget:options.codingPreparation.continuation?undefined:structureRepair?.recoveryBudget??checkpoint?.coding?.budget});
+            recoveryBudget:options.codingPreparation.continuation?undefined:mergeRepairTaskBudget(structureRepair?.recoveryBudget,
+                mergeRepairTaskBudget(repairReservation?.floor.task, checkpoint?.coding?.budget)),
+            recoveryFailure: repairReservation?.floor.taskFailure});
         structureRepair?.current();
         const preparedRepairProgress = structureRepair?.progress;
         if (preparedRepairProgress?.state === 'exhausted') throw new Error('initial_repair_exhausted');
@@ -673,9 +688,25 @@ const run = async (
             }
             pendingApproval=undefined;
         }
+        const failureFloor = repairReservation && executorPreparation && ownsRun(store, lease) && !lease.signal.aborted
+            ? executorPreparation.task.recoverySnapshot() : undefined;
         executorPreparation?.task.close(status === 'cancelled' ? 'cancelled' : status==='blocked'?'blocked'
             : results.some(result => result.decision === 'fail') ? 'blocked' : status === 'failed' ? 'failed' : 'completed');
         if (structureRepair && executorPreparation) structureRepair.saveBudget(executorPreparation.task.snapshot.budget);
+        if (repairReservation && status !== 'cancelled' && ownsRun(store, lease) && !lease.signal.aborted) {
+            try { await repairReservation.settle(executorPreparation?.task.snapshot.budget ?? repairReservation.floor.task, structureRepair?.counterFloor(), {
+                ...(failureFloor ? { taskFailure: { failureKey: failureFloor.failureKey, repetitions: failureFloor.repetitions } } : {}),
+                meaning: { rejections: meaningRejections, consecutive: consecutiveMeaningRejections, stopReason: meaningStopReason,
+                    skipGuidance: meaningSkipGuidance, guidanceTurn: meaningGuidanceTurn, providerTurns },
+            }); }
+            catch (error) {
+                // The durable envelope remains restrictive. Never advertise a resumable
+                // semantic/approval prompt after its accounting settlement failed.
+                errorMessage = sanitizeError(error); status = 'blocked';
+                discardPiCandidateApproval(store); pendingApproval = undefined; pendingMeaning = undefined;
+                store.setState({ pendingClarification: null });
+            }
+        }
         clearTimeout(timer);
         controller.signal.removeEventListener('abort', abortAgent);
         request.signal?.removeEventListener('abort', forwardAbort);
