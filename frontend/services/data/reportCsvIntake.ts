@@ -1075,7 +1075,7 @@ const buildFallbackCsvData = (
     const headers = buildHeaders(headerRow ?? []);
     return {
         fileName,
-        data: dataRows.map(row => buildRecordRow(headers, row)),
+        data: dataRows.filter(row => !isBlankRow(row)).map(row => buildRecordRow(headers, row)),
         metadataRows: [],
         headerLayers: [],
         summaryRows: [],
@@ -1307,6 +1307,9 @@ export const buildCsvDataFromIntakeIr = (intakeIr: ReportIntakeIr): CsvData => {
     const bodyRows: RawCsvRow[] = [];
     const inBodySummaryRows: CsvRow[] = [];
     for (let index = provisionalTable.bodyStartIndex; index < provisionalTable.summaryStartIndex; index += 1) {
+        // The ordinary fast path can omit blank segments. Preserve them in raw IR,
+        // but never materialize separator/EOF padding as a business record.
+        if (isBlankRow(normalizedRows[index])) continue;
         const noiseKind = bodyNoiseKinds.get(index);
         if (!noiseKind) {
             bodyRows.push(normalizedRows[index]);

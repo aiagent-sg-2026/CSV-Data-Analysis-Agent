@@ -23,19 +23,19 @@ describe('actual source scan UI actions', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Hide scan details' }));
         fireEvent.click(screen.getByRole('button', { name: 'Resume structural scan' }));
         await pending;
-        await screen.findByText('Full-source structural scan completed clean');
+        await screen.findByText('Full-source parsing complete — no structural signal detected');
         fireEvent.click(screen.getByRole('button', { name: 'Show scan details' }));
         expect(screen.getByText(/SHA-256: [a-f0-9]{64}/)).toBeInTheDocument();
         expect(useAppStore.getState().csvSourceScan?.commitAllowed).toBe(false);
         expect(useAppStore.getState().datasetBundle?.acceptedCommit).toBeUndefined();
         cleanup();
         render(<CsvSourceScanPanel />);
-        expect(screen.getByText('Full-source structural scan completed clean')).toBeInTheDocument();
+        expect(screen.getByText('Full-source parsing complete — no structural signal detected')).toBeInTheDocument();
     });
     it('distinguishes anomalies from failed encoding and never requests human review because of size', async () => {
         render(<CsvSourceScanPanel />);
         await scanCsvSourceForImport(store, new File(['a,b\n1,2\nbad\n'], 'ragged.csv'));
-        await screen.findByText('Full-source scan completed with anomalies');
+        await screen.findByText('Full-source parsing complete — structural evidence needs repair');
         expect(screen.getByText(/File size alone is not a reason for human review/)).toBeInTheDocument();
         await scanCsvSourceForImport(store, new File([new Uint8Array([0xff, 0xfe, 97, 0])], 'encoding.csv'));
         await screen.findByText('Structural scan failed — not verified');

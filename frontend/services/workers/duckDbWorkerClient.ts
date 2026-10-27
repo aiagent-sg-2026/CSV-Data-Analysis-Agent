@@ -65,6 +65,13 @@ export class DuckDbWorkerClient {
         this.resetWorker(normalizeAbortError('The DuckDB session was replaced.'), 'abort');
     }
 
+    /** Synchronous ownership check: stale import cleanup must not abort a newer job. */
+    retireDatasetIfOwned(loadVersion: string): boolean {
+        if (this.lastLoad?.payload.loadVersion !== loadVersion || this.callbacks.size > 0) return false;
+        this.retireSession();
+        return true;
+    }
+
     private assertGeneration(generation: number) {
         if (generation !== this.generation) throw normalizeAbortError('The DuckDB session was replaced.');
     }

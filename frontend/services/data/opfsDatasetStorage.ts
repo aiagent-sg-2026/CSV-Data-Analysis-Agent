@@ -23,11 +23,22 @@ const writeTextFile = async (
     directory: FileSystemDirectoryHandle,
     name: string,
     text: string,
+    assertCurrent: () => void,
 ): Promise<void> => {
+    assertCurrent();
     const handle = await directory.getFileHandle(name, { create: true });
+    assertCurrent();
     const writable = await handle.createWritable();
-    await writable.write(text);
-    await writable.close();
+    try {
+        assertCurrent();
+        await writable.write(text);
+        assertCurrent();
+        await writable.close();
+        assertCurrent();
+    } catch (error) {
+        await writable.abort().catch(() => {});
+        throw error;
+    }
 };
 
 export const isOpfsAvailable = (): boolean =>
@@ -41,22 +52,40 @@ export const isOpfsAvailable = (): boolean =>
 export const stageDatasetFileInOpfs = async (
     sessionId: string,
     file: File,
+    options?: { assertCurrent: () => void; stagingId: string },
 ): Promise<string | null> => {
+    const assertCurrent = options?.assertCurrent ?? (() => {});
+    assertCurrent();
     const root = await getOpfsRoot();
+    assertCurrent();
     if (!root) return null;
     const appDirectory = await root.getDirectoryHandle(ROOT_DIRECTORY, { create: true });
+    assertCurrent();
     const safeSessionId = sanitizeSegment(sessionId);
     const sessionDirectory = await appDirectory.getDirectoryHandle(safeSessionId, { create: true });
-    const safeFileName = sanitizeSegment(file.name);
+    assertCurrent();
+    // Distinct uploads of the same filename cannot overwrite each other's staged bytes.
+    const safeFileName = sanitizeSegment(options ? `${options.stagingId}-${file.name}` : file.name);
     const fileHandle = await sessionDirectory.getFileHandle(safeFileName, { create: true });
+    assertCurrent();
     const writable = await fileHandle.createWritable();
-    await writable.write(file);
-    await writable.close();
+    try {
+        assertCurrent();
+        await writable.write(file);
+        assertCurrent();
+        await writable.close();
+        assertCurrent();
+    } catch (error) {
+        await writable.abort().catch(() => {});
+        throw error;
+    }
     const metadata: OpfsSessionMetadata = {
         sessionId,
         createdAt: new Date().toISOString(),
     };
-    await writeTextFile(sessionDirectory, SESSION_METADATA_FILE, JSON.stringify(metadata));
+    assertCurrent();
+    await writeTextFile(sessionDirectory, SESSION_METADATA_FILE, JSON.stringify(metadata), assertCurrent);
+    assertCurrent();
     return `${ROOT_DIRECTORY}/${safeSessionId}/${safeFileName}`;
 };
 

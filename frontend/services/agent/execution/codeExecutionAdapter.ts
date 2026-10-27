@@ -3,7 +3,7 @@ import { canonicalTaskPath, type TaskWorkspace } from '../taskWorkspace';
 import { createTaskExecutionEnvelope, type AgentTaskContract, type TaskReference } from '../runtime/pi/piTaskContract';
 import { assertRunActive, registerSessionResource, type ExecutionContext } from '../../session/sessionOwnership';
 import { sha256Bytes } from '../../data/sourceDigest';
-import { readSourceBytes } from '../../data/immutableCsvSource';
+import { readSourceBytes, readSourceBytesBounded } from '../../data/immutableCsvSource';
 import { createJavaScriptGuest } from '../../sandbox/javascriptGuestClient';
 import { GUEST_LOG_BYTES, JAVASCRIPT_GUEST_PIN, resolveGuestLimits, type GuestOutcome } from '../../sandbox/javascriptGuestProtocol';
 import { buildToolAvailabilityContext } from '../tools/toolGovernance';
@@ -167,7 +167,8 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
                 const inputs: Record<string, unknown> = Object.create(null);
                 for (const input of request.inputs) inputs[input.name] = { ...ref(input), content: workspace.read(input.path, input.revision).content };
                 for (const source of request.sources ?? []) {
-                    const range = readSourceBytes(store, source.sourceId, source.offset, source.length);
+                    const range = await readSourceBytesBounded(store, source.sourceId, source.offset, source.length);
+                    check(issued.reference.id, execution, request, capturedPolicy);
                     if (range.bytes.length !== source.length) throw new Error('validation_failed');
                     inputs[source.name] = range;
                 }

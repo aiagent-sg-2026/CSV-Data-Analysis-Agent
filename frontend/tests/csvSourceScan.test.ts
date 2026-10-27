@@ -34,14 +34,14 @@ describe('host-owned source scan and limited-negative gates', () => {
         try {
             const source = await attach(store, file);
             const result = await inspectInitialHeaderAlignment(store.getState().rawIntakeIr, source.sha256, store);
-            expect(result).toMatchObject({ blocked: false, reasons: expect.arrayContaining(['full_source_scan_completed_clean']) });
+            expect(result).toMatchObject({ blocked: false, reasons: expect.arrayContaining(['full_source_parsing_complete_no_structural_signal', 'schema_coverage_bounded_heuristic']) });
             await expect(assertLegacyBoundaryAllowed(store)).resolves.toBeUndefined();
             expect(await requireCurrentCsvSourceScan(store)).toMatchObject({ status: 'completed_clean', rows: 10001, sha256: source.sha256 });
         } finally { beginSessionTransition(store); }
     });
-    it.each(['ragged', 'repeated', 'compact'])('rejects actual retained %s evidence beyond initial previews even when drift is false', async kind => {
+    it.each(['ragged', 'repeated', 'compact', 'stacked_equal_width', 'case_repeat', 'equal_width_band'])('rejects actual retained %s evidence beyond initial previews even when drift is false', async kind => {
         const store = setup();
-        const tail = kind === 'ragged' ? 'bad,row,extra\n' : kind === 'repeated' ? 'key,value\n' : 'ID,G1,G2,G1,G2\nX,Y,X,Y\n1,2,3,4,5,6,7\n2,3,4,5,6,7,8\n';
+        const tail = kind === 'ragged' ? 'bad,row,extra\n' : kind === 'repeated' ? 'key,value\n' : kind === 'case_repeat' ? 'KEY,VALUE\nx,2\n' : kind === 'stacked_equal_width' ? 'product,price\ny,2\n' : kind === 'equal_width_band' ? 'Group,Group\nA,B\ny,2\n' : 'ID,G1,G2,G1,G2\nX,Y,X,Y\n1,2,3,4,5,6,7\n2,3,4,5,6,7,8\n';
         const file = new File(['key,value\n' + 'x,1\n'.repeat(8000) + tail], 'late.csv');
         try {
             const source = await attach(store, file);
@@ -51,6 +51,15 @@ describe('host-owned source scan and limited-negative gates', () => {
             expect(store.getState().csvSourceScan?.status).toBe('completed_anomalies');
             expect(store.getState().csvSourceScan!.examples[0].row).toBe(8001);
             expect(store.getState().datasetBundle?.acceptedCommit).toBeUndefined();
+        } finally { beginSessionTransition(store); }
+    });
+    it.each([{ gap: '', tail: '\n' }, { gap: '', tail: '\n3,4\n' }, { gap: '\n', tail: '' }])('allows safe blank evidence through both full-source gates: %s', async ({ gap, tail }) => {
+        const store = setup(), file = new File(['a,b\n' + gap + '1,2\n'.repeat(2500) + tail], 'blanks.csv');
+        try {
+            const source = await attach(store, file);
+            expect((await inspectInitialHeaderAlignment(store.getState().rawIntakeIr, source.sha256, store)).blocked).toBe(false);
+            await expect(assertLegacyBoundaryAllowed(store)).resolves.toBeUndefined();
+            expect((await requireCurrentCsvSourceScan(store)).counts.blank_record).toBe(1);
         } finally { beginSessionTransition(store); }
     });
     it('cancels and resumes the same retained source/version; stale and double actions cannot advance', async () => {

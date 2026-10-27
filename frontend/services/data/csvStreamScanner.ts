@@ -10,14 +10,18 @@ export interface CsvScanExample {
     kind: string; row: number; startLine: number; endLine: number;
     byteStart: number; byteEnd: number; width: number; expectedWidth: number | null;
 }
+export interface CsvRecordSpan { row: number; start: number; end: number; startLine: number; endLine: number }
 export interface CsvScanResult {
+    parsingCoverage: 'incomplete' | 'complete'; schemaCoverage: 'bounded_heuristic'; schemaConfidence: 'no_signal' | 'uncertain';
     status: CsvScanStatus; bytesRead: number; totalBytes: number; rows: number; physicalLines: number;
     sha256: string | null; reason: string | null; expectedWidth: number | null; headerRow: number | null;
     counts: Record<string, number>; examples: CsvScanExample[]; examplesTruncated: boolean;
     headerCandidates: Array<{ row: number; startLine: number; byteStart: number; width: number }>; headerCandidatesTruncated: boolean;
     peakRecordBytes: number; peakRetainedRows: number;
 }
-export interface CsvScanOptions { delimiter: string; quoteChar?: string; chunkBytes?: number; maxBytes?: number; maxRows?: number }
+export interface CsvScanOptions { delimiter: string; quoteChar?: string; chunkBytes?: number; maxBytes?: number; maxRows?: number;
+    onRecord?: (span: CsvRecordSpan) => void;
+}
 
 /** Blob.arrayBuffer is absent in older WebKit/test DOMs. Only bounded slices reach this helper. */
 export const readCsvBlobSlice = (blob: Blob): Promise<Uint8Array> => {
@@ -41,6 +45,11 @@ export class CsvStreamScanner {
     private fieldLength = 0;
     private cells: string[] = [];
     private header: string[] | null = null;
+    private numericSeen: number[] = [];
+    private previousGroupedLabels = false;
+    private pendingBlanks = 0;
+    private nonblankRows = 0;
+    private readonly onRecord?: CsvScanOptions['onRecord'];
     private mode: 'start' | 'plain' | 'quoted' | 'after' = 'start';
     private line = 1;
     private rowLine = 1;
@@ -63,6 +72,7 @@ export class CsvStreamScanner {
             || /[\r\n\0]/.test(options.delimiter)) throw new Error('scan_unsupported_dialect');
         const quote = options.quoteChar ?? '"';
         if (quote.length > 1 || (quote && (quote.charCodeAt(0) > 127 || /[\r\n\0]/.test(quote) || quote === options.delimiter))) throw new Error('scan_unsupported_dialect');
+        this.onRecord = options.onRecord;
         this.delimiter = options.delimiter.charCodeAt(0);
         this.quote = quote ? quote.charCodeAt(0) : -1;
         this.chunkBytes = options.chunkBytes ?? CSV_SCAN_LIMITS.chunkBytes;
@@ -70,7 +80,7 @@ export class CsvStreamScanner {
         this.maxRows = Math.min(options.maxRows ?? CSV_SCAN_LIMITS.maxRows, CSV_SCAN_LIMITS.maxRows);
         if (!Number.isSafeInteger(this.chunkBytes) || this.chunkBytes < 1 || this.chunkBytes > CSV_SCAN_LIMITS.chunkBytes
             || !Number.isSafeInteger(this.maxBytes) || this.maxBytes < 0 || !Number.isSafeInteger(this.maxRows) || this.maxRows < 1) throw new Error('scan_invalid_budget');
-        this.result = { status: 'running', bytesRead: 0, totalBytes: source.size, rows: 0, physicalLines: 0,
+        this.result = { parsingCoverage: 'incomplete', schemaCoverage: 'bounded_heuristic', schemaConfidence: 'no_signal', status: 'running', bytesRead: 0, totalBytes: source.size, rows: 0, physicalLines: 0,
             sha256: null, reason: null, expectedWidth: null, headerRow: null,
             counts: {}, examples: [], examplesTruncated: false, headerCandidates: [], headerCandidatesTruncated: false, peakRecordBytes: 0, peakRetainedRows: 0 };
     }
@@ -78,6 +88,9 @@ export class CsvStreamScanner {
     cancel(): void { if (this.active) this.cancelled = true; }
     private anomaly(kind: string, end: number, endLine: number, width = this.cells.length + 1): void {
         this.result.counts[kind] = (this.result.counts[kind] ?? 0) + 1;
+        if (kind !== 'blank_record') this.result.schemaConfidence = 'uncertain';
+        // Harmless blank evidence must not crowd out later repair diagnostics.
+        if (kind === 'blank_record' && this.result.counts[kind] > 2) { this.result.examplesTruncated = true; return; }
         if (this.result.examples.length < CSV_SCAN_LIMITS.maxExamples) this.result.examples.push({
             kind, row: this.result.rows, startLine: this.rowLine, endLine,
             byteStart: this.rowStart, byteEnd: end, width, expectedWidth: this.result.expectedWidth,
@@ -100,18 +113,45 @@ export class CsvStreamScanner {
         const width = this.cells.length;
         const nonblank = this.cells.some(cell => cell.trim());
         if (width === 1 && this.alternateDelimiter) this.anomaly('ambiguous_delimiter', end, endLine, width);
-        if (!nonblank) this.anomaly('blank_record', end, endLine, width);
-        else if (!this.header) {
-            this.header = this.cells;
-            this.result.expectedWidth = width;
-            this.result.headerRow = this.result.rows;
+        const normalized = this.cells.map(cell => cell.trim().toLocaleLowerCase('en-US'));
+        const numeric = this.cells.map(cell => /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(cell.trim()));
+        const allLabels = nonblank && width >= 2 && this.cells.every((cell, i) => /[\p{L}]/u.test(cell) && !numeric[i]);
+        const repeated = !!this.header && width === this.header.length && normalized.every((cell, i) => cell === this.header![i].trim().toLocaleLowerCase('en-US'));
+        const numericColumns = this.numericSeen.filter(seen => seen >= 2).length;
+        const typeBreak = allLabels && numericColumns > 0 && this.numericSeen.some((seen, i) => seen >= 2 && !numeric[i]);
+        const band = allLabels && this.previousGroupedLabels;
+        const changedWidth = this.header !== null && width !== this.result.expectedWidth;
+        if (!nonblank) {
+            this.anomaly('blank_record', end, endLine, width);
+            this.pendingBlanks += 1;
         } else {
-            if (width !== this.result.expectedWidth) this.anomaly('width_mismatch', end, endLine, width);
-            if (width === this.header.length && this.cells.every((cell, i) => cell.trim() === this.header![i].trim())) this.anomaly('repeated_header', end, endLine, width);
+            // Blank lines are skipped by ordinary intake. Only a compatible typed continuation
+            // establishes a safe interior separator; text-only boundaries retain uncertainty.
+            if (this.pendingBlanks) {
+                const compatible = (this.numericSeen.some((seen, i) => seen > 0 && numeric[i])
+                    || this.nonblankRows === 1 && numeric.some(Boolean))
+                    && !this.numericSeen.some((seen, i) => seen >= 2 && !numeric[i]);
+                if (this.header && (!compatible || repeated || typeBreak || band || changedWidth)) this.anomaly('ambiguous_blank_section', end, endLine, width);
+                else this.result.counts.safe_separator_blank = (this.result.counts.safe_separator_blank ?? 0) + this.pendingBlanks;
+                this.pendingBlanks = 0;
+            }
+            if (!this.header) {
+                this.header = this.cells;
+                this.result.expectedWidth = width;
+                this.result.headerRow = this.result.rows;
+            } else {
+                if (changedWidth) this.anomaly('width_mismatch', end, endLine, width);
+                if (repeated) this.anomaly('repeated_header', end, endLine, width);
+                if (typeBreak && !repeated) this.anomaly('possible_stacked_header', end, endLine, width);
+                if (band) this.anomaly('possible_header_band', end, endLine, width);
+                if (!repeated && !typeBreak && !band && !changedWidth) numeric.forEach((value, i) => { if (value) this.numericSeen[i] = Math.min(255, (this.numericSeen[i] ?? 0) + 1); });
+            }
+            this.previousGroupedLabels = allLabels && new Set(normalized).size < width;
+            this.nonblankRows += 1;
         }
-        // Look for stronger label bands throughout the source, not just its initial sample.
-        // Generic lexical evidence locates hypotheses; it does not assign business meaning.
-        if (nonblank && width >= 2 && (this.result.headerCandidates.length === 0 || width !== this.result.expectedWidth)
+        // Cross-row type/label and normalized repeat evidence is evaluated at equal width too.
+        // No-signal is a heuristic negative, never proof of semantic/schema equivalence.
+        if (nonblank && width >= 2 && (this.result.headerCandidates.length === 0 || changedWidth || repeated || typeBreak || band)
             && this.cells.filter(cell => /[\p{L}]/u.test(cell)).length >= width * 0.75) {
             if (this.result.headerCandidates.length < CSV_SCAN_LIMITS.maxHeaderCandidates) this.result.headerCandidates.push({
                 row: this.result.rows, startLine: this.rowLine, byteStart: this.rowStart, width,
@@ -124,6 +164,7 @@ export class CsvStreamScanner {
             }
         }
         // A changed width remains an anomaly even if a later band suggests another header.
+        this.onRecord?.({ row: this.result.rows, start: this.rowStart, end, startLine: this.rowLine, endLine });
         this.result.peakRetainedRows = Math.max(this.result.peakRetainedRows, this.header ? 2 : 1);
         this.result.rows += 1;
         this.result.physicalLines = endLine;
@@ -207,7 +248,9 @@ export class CsvStreamScanner {
                 }
                 if (!this.header) throw new Error('scan_empty_source');
                 this.result.sha256 = Array.from(this.hash.digest(), byte => byte.toString(16).padStart(2, '0')).join('');
-                this.result.status = Object.keys(this.result.counts).length ? 'completed_anomalies' : 'completed_clean';
+                if (this.pendingBlanks) this.result.counts.safe_trailing_blank = this.pendingBlanks;
+                this.result.parsingCoverage = 'complete';
+                this.result.status = this.result.schemaConfidence === 'uncertain' ? 'completed_anomalies' : 'completed_clean';
             }
         } catch (error) {
             this.result.status = 'failed';

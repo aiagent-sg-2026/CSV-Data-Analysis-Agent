@@ -95,11 +95,14 @@ try {
     await page.getByRole('button', { name: 'New', exact: true }).click();
     await page.getByRole('dialog', { name: 'Start a new analysis?' }).getByRole('button', { name: 'Start new analysis', exact: true }).click();
     await page.getByText('Select a file', { exact: true }).waitFor();
-    const streamText = 'Key,Description,Quantity,Amount\r\n' + Array.from({ length: 16000 }, (_, i) => `item-${i},${'x'.repeat(1024)},1,2\r\n`).join('');
+    const streamText = 'Key,Description,Quantity,Amount\r\n' + Array.from({ length: 27000 }, (_, i) => `item-${i},${'x'.repeat(1024)},1,2\r\n`).join('');
     const streamSha = createHash('sha256').update(streamText).digest('hex');
     const cdp = await context.newCDPSession(page);
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
-    await page.locator('input[type=file]').first().setInputFiles({ name: 'synthetic-stream.csv', mimeType: 'text/csv', buffer: Buffer.from(streamText) });
+    // Use a real filesystem upload for >25 MiB instead of a large CDP/base64 buffer.
+    const streamPath = `${artifacts}/synthetic-stream.csv`;
+    await writeFile(streamPath, streamText);
+    await page.locator('input[type=file]').first().setInputFiles(streamPath, { timeout: 120000 });
     const scan = page.getByRole('region', { name: 'Full-source CSV scan' });
     await scan.getByRole('button', { name: 'Cancel structural scan' }).waitFor();
     await page.waitForFunction(() => {
@@ -116,7 +119,7 @@ try {
     await scan.getByRole('button', { name: 'Show scan details' }).click();
     assert.equal(await scan.getByText('SHA-256: unverified', { exact: true }).count(), 1);
     await scan.getByRole('button', { name: 'Resume structural scan' }).click();
-    await scan.getByText('Full-source structural scan completed clean', { exact: true }).waitFor({ timeout: 120000 });
+    await scan.getByText('Full-source parsing complete — no structural signal detected', { exact: true }).waitFor({ timeout: 120000 });
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
     await Promise.race([
         page.getByRole('button', { name: 'Use local processing only' }).waitFor({ timeout: 120000 }),
@@ -127,7 +130,7 @@ try {
     // The panel remounts on the dashboard; its host result and original version survive reopening.
     await scan.getByRole('button', { name: 'Show scan details' }).click();
     assert.match(await scan.innerText(), new RegExp(streamSha));
-    assert.match(await scan.innerText(), /16,001 logical records scanned/);
+    assert.match(await scan.innerText(), /27,001 logical records scanned/);
     await page.screenshot({ path: `${artifacts}/stream-resumed-clean.png` });
     evidence.scenarios.push({ scenario: 'Actual streamed upload: nonzero byte progress -> cancel/incomplete -> details close/reopen -> resume -> complete exact SHA -> ordinary local import', sourceBytes: Buffer.byteLength(streamText), sourceSha: streamSha, cancelledEvidence });
     assert.deepEqual(evidence.pageErrors, []);

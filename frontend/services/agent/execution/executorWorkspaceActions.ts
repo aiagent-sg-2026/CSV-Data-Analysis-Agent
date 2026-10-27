@@ -1,6 +1,6 @@
 import { captureSessionScope } from '../../session/sessionOwnership';
 import { assertWorkspaceOwner, canonicalTaskPath, currentTaskWorkspace } from '../taskWorkspace';
-import { readSourceBytes, readSourceRecords, SOURCE_BYTES_PATH, SOURCE_RECORDS_PATH } from '../../data/immutableCsvSource';
+import { captureSourceRangeFence, readSourceBytesBounded, readSourceRecordsBounded, SOURCE_BYTES_PATH, SOURCE_RECORDS_PATH } from '../../data/immutableCsvSource';
 import { createChatMessage } from '../../../utils/messageState';
 import { createId } from '../../../utils/createId';
 import type { AiAction, ToolName, WorkspaceActionHistoryEntry, WorkspaceFileAction } from '../../../types';
@@ -94,9 +94,10 @@ const withActionHistory = async (
     path: string,
     run: () => Promise<{ successMessage: string; output?: string; diffSummary?: string; payload?: Record<string, unknown> }>,
     abortSignal?: AbortSignal,
+    assertInputCurrent?: () => void,
 ) => {
     const scope = captureSessionScope(store);
-    const assertActive = () => { throwIfAborted(abortSignal); assertWorkspaceOwner(store, scope); };
+    const assertActive = () => { throwIfAborted(abortSignal); assertWorkspaceOwner(store, scope); assertInputCurrent?.(); };
     const start = Date.now();
     const toolName = action.type === 'tool_call' ? action.toolName : 'workspace.read';
     const governance = getToolGovernanceMeta(store, toolName as ToolName);
@@ -155,6 +156,9 @@ export const executeWorkspaceFileAction = async (
     const isRootSearch = normalizedPath === '/' && ['search', 'grep'].includes(operation);
     if (!isWorkspaceReadablePath(normalizedPath) && !['list', 'tree'].includes(operation) && !isRootSearch) throw workspacePathDeniedError(normalizedPath, 'Workspace path not allowed');
 
+    const sourceId = inputBundle?.source.inspection?.sourceId;
+    const assertSourceCurrent = operation === 'read' && [SOURCE_RECORDS_PATH, SOURCE_BYTES_PATH].includes(normalizedPath) && sourceId
+        ? captureSourceRangeFence(store, sourceId) : undefined;
     return withActionHistory(store, action, normalizedPath, async () => {
         throwIfAborted(options?.abortSignal);
         const bundle = buildWorkspaceBundle(getState());
@@ -214,8 +218,8 @@ export const executeWorkspaceFileAction = async (
             const sourceId = getState().datasetBundle?.source.inspection?.sourceId;
             if (!sourceId) throw new Error('source_unavailable: reattach the original CSV.');
             const result = normalizedPath === SOURCE_RECORDS_PATH
-                ? readSourceRecords(store, sourceId, workspaceAction.startRow ?? 0, workspaceAction.rowCount ?? 20)
-                : readSourceBytes(store, sourceId, workspaceAction.byteOffset ?? 0, workspaceAction.byteLength ?? 1024);
+                ? await readSourceRecordsBounded(store, sourceId, workspaceAction.startRow ?? 0, workspaceAction.rowCount ?? 20)
+                : await readSourceBytesBounded(store, sourceId, workspaceAction.byteOffset ?? 0, workspaceAction.byteLength ?? 1024);
             return { successMessage: `Read bounded immutable source range`, output: normalizeWorkspaceOutput(result), payload: { sourceInspection: result, workspace: { operation, path: normalizedPath, changed: false, affectsCleanedDataset: false } } };
         }
         if (operation === 'read') {
@@ -319,5 +323,5 @@ export const executeWorkspaceFileAction = async (
         } }));
 
         return { successMessage: `Staged ${normalizedPath} revision ${artifact.revision}; accepted dataset unchanged`, output: normalizeWorkspaceOutput({ path: normalizedPath, artifact: reference, candidate }), diffSummary, payload: { workspace: { operation, path: normalizedPath, changed: nextContent !== existingContent, affectsCleanedDataset: false, stagedCandidate: candidate, artifact: reference, lineCountBefore, lineCountAfter } } };
-    }, options?.abortSignal);
+    }, options?.abortSignal, assertSourceCurrent);
 };

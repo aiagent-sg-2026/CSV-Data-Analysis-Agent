@@ -1,9 +1,9 @@
 import type { StoreApi } from '../agent/types';
 import type { CsvSourceMetadata } from '../../types/intake';
 import { assertSessionResourceActive, captureSessionScope, registerSessionResource, type SessionScope } from '../session/sessionOwnership';
-import { CsvStreamScanner, readCsvBlobSlice, type CsvScanResult } from './csvStreamScanner';
+import { CsvStreamScanner, readCsvBlobSlice, type CsvRecordSpan, type CsvScanResult } from './csvStreamScanner';
 import { parseCsvTextWithDetection } from './csvDialectDetector';
-import { getRetainedCsvSourceBlob } from './immutableCsvSource';
+import { getRetainedCsvSourceBlob, registerScannedCsvBlob } from './immutableCsvSource';
 
 /** Display-only projection. Neither this object nor a saved checkpoint can grant scan authority. */
 export interface CsvSourceScanView extends CsvScanResult {
@@ -14,6 +14,7 @@ interface Entry {
     scope: SessionScope; source: File; scanId: string; sourceVersion: string; scanner: CsvStreamScanner | null;
     result: CsvScanResult | null; delimiter: string; quoteChar: string; boundSourceId: string | null;
     running: boolean; cancelled: boolean; retired: boolean; unregister: () => void;
+    checkpoints: CsvRecordSpan[]; releaseSource: () => void; metadata: CsvSourceMetadata | null;
     completion: Promise<CsvScanResult>; resolve: (result: CsvScanResult) => void; reject: (error: Error) => void;
 }
 const scans = new WeakMap<SessionScope, Entry>();
@@ -31,6 +32,7 @@ const publish = (store: StoreApi, entry: Entry, result: CsvScanResult) => {
 const retire = (entry: Entry) => {
     entry.retired = true;
     entry.unregister();
+    entry.releaseSource();
     entry.scanner?.cancel();
     entry.reject(new Error('scan_source_replaced'));
 };
@@ -49,7 +51,10 @@ const execute = async (store: StoreApi, entry: Entry): Promise<void> => {
             if (detection.strategy === 'fixed_width_layout') throw new Error('scan_fixed_width_requires_layout_scanner');
             entry.delimiter = detection.delimiter ?? ',';
             entry.quoteChar = detection.quoteChar ?? '"';
-            entry.scanner = new CsvStreamScanner(entry.source, { delimiter: entry.delimiter, quoteChar: entry.quoteChar });
+            entry.scanner = new CsvStreamScanner(entry.source, { delimiter: entry.delimiter, quoteChar: entry.quoteChar, onRecord: span => {
+                const last = entry.checkpoints.at(-1);
+                if (!last || span.row - last.row >= 1024 || span.start - last.start >= 512 * 1024) entry.checkpoints.push(span);
+            } });
             if (entry.cancelled) {
                 const result = { ...entry.scanner.snapshot(), status: 'cancelled' as const };
                 publish(store, entry, result);
@@ -67,7 +72,7 @@ const execute = async (store: StoreApi, entry: Entry): Promise<void> => {
         if (result.status !== 'cancelled') entry.resolve(structuredClone(result));
     } catch (error) {
         if (!entry.retired) {
-            const result: CsvScanResult = { status: 'failed', bytesRead: 0, totalBytes: entry.source.size, rows: 0, physicalLines: 0,
+            const result: CsvScanResult = { parsingCoverage: 'incomplete', schemaCoverage: 'bounded_heuristic', schemaConfidence: 'uncertain', status: 'failed', bytesRead: 0, totalBytes: entry.source.size, rows: 0, physicalLines: 0,
                 sha256: null, reason: error instanceof Error ? error.message : 'scan_source_read_failed', expectedWidth: null,
                 headerRow: null, counts: {}, examples: [], examplesTruncated: false, headerCandidates: [], headerCandidatesTruncated: false, peakRecordBytes: 0, peakRetainedRows: 0 };
             try { publish(store, entry, result); entry.resolve(structuredClone(result)); } catch { entry.reject(new Error('scan_source_replaced')); }
@@ -86,12 +91,13 @@ export const scanCsvSourceForImport = (store: StoreApi, source: File): Promise<C
     const completion = new Promise<CsvScanResult>((yes, no) => { resolve = yes; reject = no; });
     const entry: Entry = { scope, source, scanId: crypto.randomUUID(), sourceVersion: crypto.randomUUID(), scanner: null,
         result: null, delimiter: ',', quoteChar: '"', boundSourceId: null, running: false, cancelled: false, retired: false, unregister: () => {},
+        checkpoints: [], releaseSource: () => {}, metadata: null,
         completion, resolve, reject };
     scans.set(scope, entry);
     // Avoid an unhandled rejection if retirement precedes the caller attaching its await.
     void completion.catch(() => {});
     entry.unregister = registerSessionResource(scope, () => { retire(entry); if (scans.get(scope) === entry) scans.delete(scope); });
-    publish(store, entry, { status: 'running', bytesRead: 0, totalBytes: source.size, rows: 0, physicalLines: 0,
+    publish(store, entry, { parsingCoverage: 'incomplete', schemaCoverage: 'bounded_heuristic', schemaConfidence: 'no_signal', status: 'running', bytesRead: 0, totalBytes: source.size, rows: 0, physicalLines: 0,
         sha256: null, reason: null, expectedWidth: null, headerRow: null, counts: {}, examples: [], examplesTruncated: false,
         headerCandidates: [], headerCandidatesTruncated: false, peakRecordBytes: 0, peakRetainedRows: 0 });
     void execute(store, entry);
@@ -147,10 +153,14 @@ export const scannedCsvSourceMetadata = (store: StoreApi, source: File): CsvSour
     const entry = scans.get(captureSessionScope(store));
     if (!entry || entry.source !== source || !entry.result?.sha256 || !entry.result.status.startsWith('completed_')) throw new Error('scan_source_unverified');
     current(store, entry);
-    entry.boundSourceId = entry.scanId;
-    return Object.freeze({ sourceId: entry.scanId, sha256: entry.result.sha256, byteSize: source.size, fileName: source.name,
+    if (entry.metadata) return entry.metadata;
+    const metadata = Object.freeze({ sourceId: entry.scanId, sha256: entry.result.sha256, byteSize: source.size, fileName: source.name,
         recordCount: entry.result.rows, dialect: Object.freeze({ delimiter: entry.delimiter, quoteChar: entry.quoteChar }),
-        diagnostics: Object.freeze(['streaming_source_use_scan_evidence_not_legacy_record_index']) });
+        diagnostics: Object.freeze(['blob_backed_bounded_async_ranges', 'semantic_recovery_max_8_mib']) });
+    entry.releaseSource = registerScannedCsvBlob(store, source, metadata, entry.checkpoints);
+    entry.metadata = metadata;
+    entry.boundSourceId = entry.scanId;
+    return metadata;
 };
 
 /** Existing small-source imports can lazily acquire the same full scan. No rawRows clone/sample
@@ -181,7 +191,7 @@ export const assertCsvScanPublicationAllowed = (store: StoreApi): void => {
     const entry = scans.get(captureSessionScope(store));
     if (!entry) return;
     current(store, entry);
-    if (entry.result?.status !== 'completed_clean') throw new Error('source_scan_requires_automatic_repair_or_resume');
+    if (entry.result?.status !== 'completed_clean' || entry.result.parsingCoverage !== 'complete' || entry.result.schemaConfidence !== 'no_signal') throw new Error('source_scan_requires_automatic_repair_or_resume');
     const inspection = store.getState().datasetBundle?.source.inspection;
     if (inspection && (entry.boundSourceId !== inspection.sourceId || entry.result.sha256 !== inspection.sha256
         || entry.source.size !== inspection.byteSize || inspection.dialect.delimiter !== entry.delimiter

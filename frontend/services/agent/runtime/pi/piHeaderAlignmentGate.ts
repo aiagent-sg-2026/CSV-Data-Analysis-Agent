@@ -46,8 +46,8 @@ export const inspectInitialHeaderAlignment = async (intake: ReportIntakeIr | nul
             try {
                 if (!store) throw new Error('scan_original_source_unavailable_reselect_original');
                 const scan = await requireCurrentCsvSourceScan(store);
-                if (scan.status !== 'completed_clean' || scan.sha256 !== sha) throw new Error(scan.reason ?? 'source_scan_requires_automatic_repair_or_resume');
-                reasons.push('full_source_scan_completed_clean');
+                if (scan.status !== 'completed_clean' || scan.parsingCoverage !== 'complete' || scan.schemaConfidence !== 'no_signal' || scan.sha256 !== sha) throw new Error(scan.reason ?? 'source_scan_requires_automatic_repair_or_resume');
+                reasons.push('full_source_parsing_complete_no_structural_signal', 'schema_coverage_bounded_heuristic');
             } catch (error) { blocked = true; reasons.push(error instanceof Error ? error.message : 'full_source_scan_unverified'); }
         }
         if (store) {
@@ -56,7 +56,7 @@ export const inspectInitialHeaderAlignment = async (intake: ReportIntakeIr | nul
         }
         return {status:result.status, blocked, associatedSourceSha256:sha, rawRowsFingerprintSha256:null,
             reasons, possibleChoices:[],
-            summary:blocked ? `${identity} ${intake.diagnostics?.headerShapeDrift ? 'Header/body shape drift was detected, but no reliable alignment was found.' : 'Complete clean structural evidence is not available.'} Analysis is blocked awaiting semantic state and automatic source scanning/repair continuation. A partial header scan is not proof of no issues; no candidate can be committed.` : ''};
+            summary:blocked ? `${identity} ${intake.diagnostics?.headerShapeDrift ? 'Header/body shape drift was detected, but no reliable alignment was found.' : 'Complete parsing with no unresolved structural signal is not available.'} Analysis is blocked for automatic source scanning/repair continuation; the repair coordinator is pending implementation. See /intake/source-scan.json for source-bound evidence when available. A partial header scan is not proof of no issues; no candidate can be committed.` : ''};
     }
     const fingerprint = result.candidates[0]?.sourceFingerprint ?? null;
     const possibleChoices = result.candidates.map((candidate, index) => ({

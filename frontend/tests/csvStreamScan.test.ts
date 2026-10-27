@@ -17,6 +17,32 @@ describe('bounded full-source CSV scanner', () => {
         expect(result.examples[0]).toMatchObject({ kind: 'width_mismatch', row: 18001, startLine: 18002, width: 3 });
         expect(result.sha256).toBe(createHash('sha256').update(text).digest('hex'));
     });
+    it.each([160, 2500, 12000])('detects equal-width tail structures after %i body records', async rows => {
+        const prefix = 'ID,Amount\n' + 'item,1\n'.repeat(rows);
+        for (const tail of ['id,amount\nother,2\n', 'product,price\nother,2\n']) {
+            const result = await run(prefix + tail);
+            expect(result.status).toBe('completed_anomalies');
+            expect(result.headerCandidates.some(candidate => candidate.row === rows + 1)).toBe(true);
+        }
+        const band = await run('a,b,c,d\n' + 'x,1,2,3\n'.repeat(rows) + 'Group,Group,Other,Other\nA,B,A,B\nfoo,1,2,3\n');
+        expect(band.status).toBe('completed_anomalies');
+        expect(band.counts.possible_header_band).toBeGreaterThan(0);
+    });
+    it('does not confuse ordinary text-heavy records with proven headers', async () => {
+        const result = await run('name,city,note\n' + 'Alice,London,Customer support\nBob,Paris,Product team\n'.repeat(1500));
+        expect(result.status).toBe('completed_clean');
+        expect(result).toMatchObject({ parsingCoverage: 'complete', schemaConfidence: 'no_signal', schemaCoverage: 'bounded_heuristic' });
+    });
+    it.each(['a,b\n1,2\n\n', 'a,b\n1,2\n\n3,4\n', 'a,b\n1,2\n , \n3,4\n', 'a,b\n\n1,2\n'])('retains harmless blank evidence without blocking ordinary import: %s', async text => {
+        const result = await run(text, 2);
+        expect(result.status).toBe('completed_clean');
+        expect(result.counts.blank_record).toBe(1);
+    });
+    it.each(['id,amount\nx,1\n\nproduct,price\ny,2\n', 'name,city\nAlice,London\n\nProduct,Price\nWidget,Cheap\n'])('keeps ambiguous blank section boundaries blocked: %s', async text => {
+        const result = await run(text, 3);
+        expect(result.status).toBe('completed_anomalies');
+        expect(result.counts.ambiguous_blank_section).toBe(1);
+    });
     it('scans a large valid source with bounded evidence/state', async () => {
         const text = 'key,value\n' + 'record,1\n'.repeat(150000);
         const result = await run(text);

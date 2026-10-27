@@ -161,7 +161,7 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
         throw new Error(`Full-source structural scan is unverified: ${sourceScan.reason ?? sourceScan.status}. Re-select the original source after resolving this recoverable limit.`);
     }
     // Large-file mode retains the File, not a full byte copy and per-record index.
-    // Legacy source-record/QuickJS tools remain explicitly unavailable for this backing.
+    // Async source ranges stay available; synchronous semantic recovery keeps its 8 MiB cap.
     const sourceInspection = useDuckDbFileIntake
         ? scannedCsvSourceMetadata(store, file)
         : await captureCsvSource(store, file);
@@ -182,16 +182,23 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
         const sessionId = sourceSessionId;
         let opfsPath: string | null = null;
         try {
+            assertSourceCurrent();
             await cleanupStaleOpfsSessions([sessionId]);
-            opfsPath = await stageDatasetFileInOpfs(sessionId, file);
+            assertSourceCurrent();
+            opfsPath = await stageDatasetFileInOpfs(sessionId, file, { assertCurrent: assertSourceCurrent, stagingId: sourceInspection.sourceId });
+            assertSourceCurrent();
         } catch (error) {
+            assertSourceCurrent();
             console.warn(`${LOG_PREFIX} OPFS staging was unavailable; continuing with the File-backed worker.`, error);
         }
+        assertSourceCurrent();
         sourceDatasetId = identity.loadVersion;
         store.setState({ currentDatasetId: identity.loadVersion });
+        assertSourceCurrent();
         const loaded = await primeDuckDbFileDataset(file, identity.loadVersion, {
-            previewRows: 2000,
+            previewRows: 2000, assertCurrent: assertSourceCurrent,
         });
+        assertSourceCurrent();
         if (loaded.rowCount > DESKTOP_DUCKDB_FILE_CAPACITY.maxRows) {
             const userMessage = getTranslation('file_too_many_rows', language, {
                 maxRows: DESKTOP_DUCKDB_FILE_CAPACITY.maxRows.toLocaleString(),
@@ -206,6 +213,7 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
             store.getState().settings,
             store.getState(),
         );
+        assertSourceCurrent();
         parsedData = parsedPreview.csvData;
         intakeIr = parsedPreview.intakeIr;
         parsedData.backing = {
@@ -226,17 +234,20 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
             messageType: 'warning',
         };
     } else {
+        assertSourceCurrent();
         const parsed = await processCsvWithIntakeIr(
             file,
             store.getState().settings,
             store.getState(),
             {
                 onDatasetIdentified: datasetId => {
+                    assertSourceCurrent();
                     sourceDatasetId = datasetId;
                     store.setState({ currentDatasetId: datasetId });
                 },
             },
         );
+        assertSourceCurrent();
         parsedData = parsed.csvData;
         intakeIr = parsed.intakeIr;
     }
@@ -507,7 +518,7 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
         reportStructureArtifacts.pipelineOutcome = {
             status: 'needs_structure_review', severity: 'warning', canAutoAnalyze: false,
             reasonCode: 'source_scan_anomalies',
-            message: 'Full-source scan completed with structural anomalies. Automatic repair continuation is required; source size alone does not require human review. No repaired dataset has been validated or committed.',
+            message: 'Full-source parsing completed with structural evidence or uncertainty. Automatic repair coordinator is pending implementation; source size alone does not require human review. No repaired dataset has been validated or committed.',
         };
     }
     const materialDataset = reportStructureArtifacts.canonicalCsvData ?? dataForAnalysis;
@@ -533,7 +544,11 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
 
     datasetBundle.source.inspection = sourceInspection;
     workspaceFiles['/intake/source.json'] = JSON.stringify(sourceInspection, null, 2);
-    workspaceFiles['/intake/source-records.json'] = JSON.stringify({ source: sourceInspection, readWith: 'workspace.read', startRow: 0, rowCount: 50, note: 'Read positional ranges from the live source handle; metadata-only History requires source reattachment.' }, null, 2);
+    // Value-free, source-bound diagnostic input for the existing Pi workspace. This
+    // exposes repair evidence without pretending the pending coordinator has run.
+    workspaceFiles['/intake/source-scan.json'] = JSON.stringify({ schemaVersion: 1, sourceId: sourceInspection.sourceId,
+        ...sourceScan, repairCoordinator: sourceScan.status === 'completed_anomalies' ? 'pending_implementation' : 'not_required', commitAllowed: false }, null, 2);
+    workspaceFiles['/intake/source-records.json'] = JSON.stringify({ source: sourceInspection, readWith: 'workspace.read', startRow: 0, rowCount: 50, maxReadBytes: 65536, semanticRecoveryMaxBytes: 8388608, backing: useDuckDbFileIntake ? 'immutable_blob_sparse_checkpoints' : 'immutable_bytes', note: 'Read positional ranges from the live source handle; metadata-only History requires source reattachment.' }, null, 2);
     console.log(`${LOG_PREFIX} AI-first intake complete for ${file.name}.`);
 
     assertSourceCurrent();

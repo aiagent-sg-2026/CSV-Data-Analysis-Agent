@@ -330,6 +330,7 @@ const primeDuckDbFileDatasetUnlocked = async (
     loadVersion: string,
     options?: {
         previewRows?: number;
+        assertCurrent?: () => void;
         abortSignal?: AbortSignal;
         reportDiagnostics?: WorkerDiagnosticsReporter;
     },
@@ -337,7 +338,19 @@ const primeDuckDbFileDatasetUnlocked = async (
     const generation = engineGeneration;
     assertGeneration(generation);
     throwIfAborted(options?.abortSignal);
+    const assertLoadedCurrent = () => {
+        assertGeneration(generation);
+        try { throwIfAborted(options?.abortSignal); options?.assertCurrent?.(); }
+        catch (error) {
+            // Inside the serial engine operation: never retire a later session/job.
+            if (duckDbWorkerClient.retireDatasetIfOwned(loadVersion)) {
+                clearCachedDuckDbBinding(); cachedSerializedPayload = null;
+            }
+            throw error;
+        }
+    };
     const loadFile = async () => {
+        options?.assertCurrent?.();
         await duckDbWorkerClient.initDuckDb(
             DUCKDB_INIT_TIMEOUT_MS,
             options?.abortSignal,
@@ -345,27 +358,28 @@ const primeDuckDbFileDatasetUnlocked = async (
         );
         assertGeneration(generation);
         throwIfAborted(options?.abortSignal);
-        return duckDbWorkerClient.loadFileDataset({
+        options?.assertCurrent?.();
+        const loaded = await duckDbWorkerClient.loadFileDataset({
             file,
             csvFileName: `${loadVersion}.csv`,
             loadVersion,
             tableName: DUCKDB_TABLE_NAME,
             previewRows: options?.previewRows ?? 1000,
         }, DUCKDB_FILE_LOAD_TIMEOUT_MS, options?.abortSignal, options?.reportDiagnostics);
+        assertLoadedCurrent();
+        return loaded;
     };
     let result = await loadFile();
-    assertGeneration(generation);
-    throwIfAborted(options?.abortSignal);
+    assertLoadedCurrent();
     if (result.rowCount > 0 && result.preview.length === 0) {
         // A hot reload or same-file re-import can preserve the worker table
         // while resetting app state. Recover once instead of handing an empty
         // preview to report intake and falsely reporting "no body rows".
+        assertLoadedCurrent();
         await duckDbWorkerClient.disposeDuckDbSession(DUCKDB_DISPOSE_TIMEOUT_MS, options?.reportDiagnostics);
-        assertGeneration(generation);
-        throwIfAborted(options?.abortSignal);
+        assertLoadedCurrent();
         result = await loadFile();
-        assertGeneration(generation);
-        throwIfAborted(options?.abortSignal);
+        assertLoadedCurrent();
     }
     if (result.rowCount > 0 && result.preview.length === 0) {
         throw new Error('The large CSV loaded, but its preview rows could not be recovered. Re-import the file and try again.');
@@ -377,6 +391,7 @@ const primeDuckDbFileDatasetUnlocked = async (
         fallbackReason: null,
         fallbackStage: null,
     };
+    assertLoadedCurrent();
     cachedDuckDbBinding = binding;
     cachedDuckDbPrime = null;
     cachedSerializedPayload = null;

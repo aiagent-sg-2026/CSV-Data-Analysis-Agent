@@ -13,12 +13,16 @@ const {
     extractAiReportContextMock,
     resolveReportStructureArtifactsWithProposalMock,
     primeDuckDbFileDatasetMock,
+    stageDatasetFileInOpfsMock,
+    cleanupStaleOpfsSessionsMock,
 } = vi.hoisted(() => ({
     processCsvWithIntakeIrMock: vi.fn(),
     profileDataWithWorkerMock: vi.fn(),
     extractAiReportContextMock: vi.fn(),
     resolveReportStructureArtifactsWithProposalMock: vi.fn(),
     primeDuckDbFileDatasetMock: vi.fn(),
+    stageDatasetFileInOpfsMock: vi.fn(),
+    cleanupStaleOpfsSessionsMock: vi.fn(),
 }));
 
 vi.mock('../services/data/csvParser', () => ({
@@ -29,12 +33,18 @@ vi.mock('../services/workers/dataWorkerClient', () => ({
     profileDataWithWorker: profileDataWithWorkerMock,
 }));
 
+vi.mock('../services/ai/intakeStructureDetector', () => ({ detectIntakeStructureWithAi: vi.fn().mockResolvedValue(null) }));
+
 vi.mock('../services/ai/reportContextExtractor', () => ({
     extractAiReportContext: extractAiReportContextMock,
 }));
 
 vi.mock('../services/agent/orchestration/reportStructureOrchestrator', () => ({
     resolveReportStructureArtifactsWithProposal: resolveReportStructureArtifactsWithProposalMock,
+}));
+
+vi.mock('../services/data/opfsDatasetStorage', () => ({
+    cleanupStaleOpfsSessions: cleanupStaleOpfsSessionsMock, stageDatasetFileInOpfs: stageDatasetFileInOpfsMock,
 }));
 
 vi.mock('../services/duckdb/queryEngine', () => ({
@@ -94,6 +104,8 @@ const consumeGeneratorWithUpdates = async <T>(generator: AsyncGenerator<any, T, 
 describe('processAndCleanFile', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        stageDatasetFileInOpfsMock.mockReset();
+        cleanupStaleOpfsSessionsMock.mockReset();
         resolveReportStructureArtifactsWithProposalMock.mockResolvedValue({
             reportStructureResolution: null,
             canonicalCsvData: null,
@@ -527,6 +539,20 @@ describe('processAndCleanFile', () => {
         expect(updates.some(update => String(update.message).includes('Loaded all 982,589'))).toBe(true);
     });
 
+    it.each([{ gap: '', tail: '\n' }, { gap: '', tail: '\nlast,2\n' }, { gap: '\n', tail: '' }])('preserves normal import semantics for harmless blanks with the real parser: %s', async ({ gap, tail }) => {
+        const parser = await vi.importActual<typeof import('../services/data/csvParser')>('../services/data/csvParser');
+        processCsvWithIntakeIrMock.mockImplementation(parser.processCsvWithIntakeIr);
+        profileDataWithWorkerMock.mockResolvedValue({ profiles: [], issues: [] });
+        extractAiReportContextMock.mockResolvedValue(null);
+        const { store } = buildStore();
+        const file = new File(['key,value\n' + gap + 'x,1\n'.repeat(40) + tail], 'ordinary-blanks.csv');
+        const result = await consumeGenerator(processAndCleanFile(file, store as any));
+        expect(result.rawData.data).toHaveLength(tail.includes('last') ? 41 : 40);
+        expect(result.pipelineOutcome).toMatchObject({ canAutoAnalyze: true });
+        expect(store.getState().csvSourceScan).toMatchObject({ status: 'completed_clean', counts: { blank_record: 1 } });
+        expect(result.rawData.data.some(row => Object.values(row).every(value => !String(value).trim()))).toBe(false);
+    });
+
     it('does not publish a clean canonical preview when the full source has a late repeated header', async () => {
         const csv = 'key,value\n' + 'x,1\n'.repeat(9000) + 'key,value\n';
         const { parseCsvTextWithDetection } = await import('../services/data/csvDialectDetector');
@@ -543,7 +569,43 @@ describe('processAndCleanFile', () => {
         expect(result.canonicalBuildMeta).toBeNull();
         expect(result.pipelineOutcome).toMatchObject({ canAutoAnalyze: false, reasonCode: 'source_scan_anomalies' });
         expect(result.datasetBundle.acceptedCommit).toBeUndefined();
+        expect(JSON.parse(result.workspaceFiles['/intake/source-scan.json'])).toMatchObject({
+            sourceId: result.datasetBundle.source.inspection?.sourceId, sha256: result.datasetBundle.source.inspection?.sha256,
+            parsingCoverage: 'complete', schemaConfidence: 'uncertain', counts: { repeated_header: 1 },
+            repairCoordinator: 'pending_implementation', commitAllowed: false,
+        });
         expect(store.getState().csvSourceScan).toMatchObject({ status: 'completed_anomalies', rows: 9002, counts: { repeated_header: 1 } });
+    });
+
+    it.each(['parser', 'cleanup', 'staging'])('fences stale dataset identity and worker initiation after deferred %s', async phase => {
+        const { scanCsvSourceForImport } = await import('../services/data/csvSourceScan');
+        let release!: () => void;
+        const deferred = new Promise<void>(resolve => { release = resolve; });
+        let reached = false;
+        processCsvWithIntakeIrMock.mockImplementation(async (_file, _settings, _state, options) => {
+            reached = true;
+            await deferred;
+            options?.onDatasetIdentified('stale-dataset');
+            throw new Error('parser_should_have_been_fenced');
+        });
+        if (phase === 'staging') stageDatasetFileInOpfsMock.mockImplementation(async () => { reached = true; await deferred; return 'stale.opfs'; });
+        if (phase === 'cleanup') cleanupStaleOpfsSessionsMock.mockImplementation(async () => { reached = true; await deferred; });
+        const text = phase !== 'parser' ? 'key,value\n' + `${'x'.repeat(1000)},1\n`.repeat(27000) : 'key,value\nx,1\n';
+        const { store } = buildStore();
+        const pending = consumeGenerator(processAndCleanFile(new File([text], 'old.csv'), store as any));
+        void pending.catch(() => {});
+        for (let i = 0; i < 1000 && !reached; i += 1) await new Promise(resolve => setTimeout(resolve, 5));
+        expect(reached).toBe(true);
+        await scanCsvSourceForImport(store as any, new File(['key,value\nnew,2\n'], 'new.csv'));
+        const accepted = { acceptedCommit: { id: 'keep' } };
+        const query = { loadVersion: 'newer-binding' };
+        store.setState({ currentDatasetId: 'newer-dataset', datasetBundle: accepted, duckDbSessionStatus: query });
+        release();
+        await expect(pending).rejects.toThrow('scan_source_replaced');
+        expect(store.getState().currentDatasetId).toBe('newer-dataset');
+        expect(store.getState().datasetBundle).toBe(accepted);
+        expect(store.getState().duckDbSessionStatus).toBe(query);
+        expect(primeDuckDbFileDatasetMock).not.toHaveBeenCalled();
     });
 
     it('rejects an old completed scan when the source is replaced during asynchronous structure resolution', async () => {

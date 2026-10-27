@@ -94,7 +94,7 @@ export const assertLegacyBoundaryAllowed = async (store: StoreApi): Promise<void
         || store.getState().csvData?.backing?.mode === 'duckdb_file')) {
         const scanned = await requireCurrentCsvSourceScan(store);
         fence();
-        if (scanned.status !== 'completed_clean') throw new Error('source_scan_requires_automatic_repair_or_resume');
+        if (scanned.status !== 'completed_clean' || scanned.parsingCoverage !== 'complete' || scanned.schemaConfidence !== 'no_signal') throw new Error('source_scan_requires_automatic_repair_or_resume');
     }
     if (result.status === 'semantic_review_required') repairRequired.add(scope);
     if (isStructureRepairRequired(store) || result.status === 'unsupported') throw new Error('repair_requires_semantic_review_and_separate_exact_commit');

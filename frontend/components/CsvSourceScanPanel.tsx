@@ -14,8 +14,8 @@ export const CsvSourceScanPanel: React.FC = () => {
         running: 'Scanning the whole original CSV locally',
         cancelled: 'Structural scan cancelled — incomplete, not verified',
         failed: 'Structural scan failed — not verified',
-        completed_clean: 'Full-source structural scan completed clean',
-        completed_anomalies: 'Full-source scan completed with anomalies',
+        completed_clean: 'Full-source parsing complete — no structural signal detected',
+        completed_anomalies: 'Full-source parsing complete — structural evidence needs repair',
     }[scan.status];
     const act = async (resume: boolean) => {
         setError('');
@@ -37,9 +37,10 @@ export const CsvSourceScanPanel: React.FC = () => {
         </>}
         {scan.status === 'failed' && <p>Recoverable limit: {scan.reason}. Re-select the original CSV after resolving its encoding or parser/resource limit. A reload does not restore scan authority.</p>}
         {scan.status === 'completed_anomalies' && <p className="mt-2">The whole source was inspected, not just a sample. Automatic repair continuation is still required; this checkpoint does not yet implement the Pi repair coordinator. File size alone is not a reason for human review. Canonical publication remains blocked.</p>}
-        {scan.status === 'completed_clean' && <p className="mt-2">Structural checks only — not business validation, a repaired candidate, or Dataset Commit approval.</p>}
+        {scan.status === 'completed_clean' && <p className="mt-2">All bytes parsed and hashed. Schema checks are bounded heuristics, not proof of unchanged structure or business meaning, a repaired candidate, or Dataset Commit approval.</p>}
         <button aria-expanded={details} onClick={() => setDetails(!details)} className="mt-2 font-medium text-blue-800 underline">{details ? 'Hide scan details' : 'Show scan details'}</button>
         {details && <div className="mt-2 break-all">
+            <p>Parsing coverage: {scan.parsingCoverage}; schema coverage: {scan.schemaCoverage}; schema confidence: {scan.schemaConfidence}.</p>
             <p>Source version: {scan.sourceVersion}</p><p>SHA-256: {scan.sha256 ?? 'unverified'}</p>
             <p>Header hypothesis: logical row {scan.headerRow === null ? 'unknown' : scan.headerRow + 1}; width {scan.expectedWidth ?? 'unknown'}. This is not confirmed business meaning.</p>
             <p>{Object.entries(scan.counts).map(([kind, count]) => `${kind}: ${count}`).join(' · ') || 'No structural anomalies recorded.'}</p>

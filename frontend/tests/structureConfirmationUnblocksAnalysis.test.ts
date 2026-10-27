@@ -144,7 +144,7 @@ beforeAll(async () => {
 });
 
 describe('human structure confirmation and full-source ERP scan safety', () => {
-    it('needs no review on the first pass once body noise and folded header layers are handled, and shows no raw code', () => {
+    it('recognizes ERP deterministic intake without treating preview readiness as full-source authorization', () => {
         // Intake still recognizes the ERP report. Full-source scan authorization is tested
         // independently below; ordinary boundary tests retain the cleaning-marker regression.
         expect(blocked.pipelineOutcome).toMatchObject({ status: 'ready', canAutoAnalyze: true });
@@ -188,6 +188,12 @@ describe('human structure confirmation and full-source ERP scan safety', () => {
             expect(store.getState().canonicalCsvData).toBe(canonicalBefore);
             expect(store.getState().csvSourceScan.status).toBe('completed_anomalies');
             expect(store.getState().csvSourceScan.bytesRead).toBe(metadata.byteSize);
+            expect(store.getState().csvSourceScan.parsingCoverage).toBe('complete');
+            expect(store.getState().csvSourceScan.schemaConfidence).toBe('uncertain');
+            expect(store.getState().csvSourceScan.counts.repeated_header).toBeGreaterThan(0);
+            // Original ERP positive repair/acceptance qualification remains pending the coordinator,
+            // not replaced by the ordinary cleaning-marker tests above.
+            expect(store.getState().datasetBundle.acceptedCommit).toBeUndefined();
         } finally { beginSessionTransition(store as never); }
     });
 
