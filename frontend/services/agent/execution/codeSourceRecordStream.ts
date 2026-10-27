@@ -53,6 +53,7 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
     };
     let nextRow = 0, nextByte = 0, state = initialState, failed = false, busy = false, batchAttempts = 0, validationAttempts = 0;
     let manifest: SpillManifest | undefined;
+    let semanticAttempts = 0;
     const metrics: SourceStreamMetrics = { batches: 0, peakSourceRecords: 0, peakSourceJsonBytes: 0, peakInputJsonBytes: 0,
         peakOutputJsonBytes: 0, peakSpillChunkBytes: 0, peakStateBytes: spillBytes(state), validatedRows: 0,
         physicalReadBytes: 0, physicalReadCalls: 0, cumulativePhysicalReadBytes: account.readBytes, peakReaderRetainedBytes: 0 };
@@ -165,6 +166,31 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
                 if (writing || reason !== 'scope_revoked') { failed = true; await dispose().catch(() => {}); }
                 throw error;
             } finally { account.activeMs += Date.now() - started; activeStarted = undefined; busy = false; }
+        },
+        /** Additional independently metered source pass for host semantic validation. */
+        async *inspectRows(invocation: () => void) {
+            if (failed || busy || !manifest) throw new Error('source_stream_unavailable');
+            if (semanticAttempts >= SOURCE_STREAM_LIMITS.attempts) throw new Error('source_stream_attempts_exhausted');
+            semanticAttempts++; assertInvocation = invocation; busy = true; const started = Date.now(); activeStarted = started;
+            try {
+                check(); await spill.verifyManifest(manifest); check();
+                const reader = createSourceRecordReader(store, source.sourceId, check, charge);
+                for await (const chunk of spill.read()) {
+                    account.steps++; check();
+                    const batch = await read(reader, chunk.startRow, chunk.rows.length);
+                    if (batch.nextRow !== chunk.nextRow || batch.records[0].byteStart !== chunk.startByte
+                        || batch.records.at(-1)!.byteEnd !== chunk.endByte) throw new Error('source_stream_lineage_invalid');
+                    validateRows(chunk.rows, batch.records);
+                    yield { chunk, records: batch.records }; check(); reader.commit();
+                }
+                check();
+            } finally { account.activeMs += Date.now() - started; activeStarted = undefined; busy = false; }
+        },
+        async readChunk(sequence: number, invocation: () => void) {
+            if (failed || busy || !manifest) throw new Error('source_stream_unavailable');
+            assertInvocation = invocation; busy = true;
+            try { account.steps++; check(); await spill.verifyManifest(manifest); check(); const chunk = await spill.readChunk(sequence); check(); return chunk; }
+            finally { busy = false; }
         },
         dispose,
     };

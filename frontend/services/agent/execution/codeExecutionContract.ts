@@ -50,6 +50,12 @@ export interface CodeExecutionReceipt {
     startedAt: number; finishedAt?: number; durationMs?: number;
 }
 export interface CodeExecutionPort {
+    /** Live host capability only; serialized manifests never recover storage or validation authority. */
+    sourceSpill?(jobId: string, context: ExecutionContext, policy?: CodePolicyContext): {
+        manifest: Readonly<import('../../data/candidateSpill').SpillManifest>;
+        inspectRows(current: () => void): ReturnType<import('./codeSourceRecordStream').SourceRecordStream['inspectRows']>;
+        readChunk(sequence: number, current: () => void): Promise<import('../../data/candidateSpill').SpillChunk>;
+    };
     captureCommitCheck?(jobId: string, context: ExecutionContext, policy?: CodePolicyContext): (target: StoreApi, context: ExecutionContext) => void;
     assertCommitEligible?(jobId: string, context: ExecutionContext, policy?: CodePolicyContext): void;
     workspace: TaskWorkspace;

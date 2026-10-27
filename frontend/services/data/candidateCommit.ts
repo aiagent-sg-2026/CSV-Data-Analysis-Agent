@@ -82,6 +82,9 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         own();
         if (!validCommitKey(input.idempotencyKey)) throw new Error('idempotency_key_invalid');
         const candidate = port.read(candidateId), validation = port.validationReceipt(candidateId);
+        // The existing durable replay/activation path requires full arrays. Never publish the
+        // metadata-only projection of a spill as an empty accepted table.
+        if (candidate.spill) throw new Error('candidate_spill_commit_not_supported');
         if (!validation || validation.decision !== 'validated') throw new Error('validation_failed');
         const sourceBundle = store.getState().datasetBundle;
         if (!sourceBundle) throw new Error('complete_input_unavailable');

@@ -11,6 +11,8 @@ import {buildBuiltinToolRegistry,resolveAllowedTools} from '../agent/tools/toolR
 import {buildToolAvailabilityContext} from '../agent/tools/toolGovernance';
 import type {ToolName} from '../../types';
 import type {HostCandidateValidationContract} from './candidateValidationBinding';
+import {assertSpillMeaning,spillSchema,spillRow,validateSpillCandidate,type SourceSpillCapability} from './spillCandidateValidation';
+import {spillBytes} from './candidateSpill';
 
 const freeze=<T>(v:T):T=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
 export interface CandidateValidationReceipt extends CandidateSemanticVerdict {
@@ -24,6 +26,8 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
     const lease=store.executionContext?.lease;if(!lease)throw new Error('scope_revoked');
     const namespaceId=crypto.randomUUID(),taskId=getTask().taskId;
     const candidates=new Map<string,StagedDatasetCandidate>();
+    const spills=new Map<string,SourceSpillCapability>();
+    const validationErrors=new Map<string,string>();
     const validations=new Map<string,Readonly<CandidateValidationReceipt>>();
     const validationChecks=new Map<string,()=>void>();
     const validationAttempts=new Map<string,symbol>();
@@ -32,12 +36,13 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
     // Capture a host-provided contract before the candidate exists. Agent tool arguments cannot install one.
     let supplied=rootStore(store).candidateValidationContract;
     const sourceAtPreparation=store.getState().datasetBundle?.source.inspection;
+    const sourceSignatureAtPreparation=JSON.stringify(sourceAtPreparation);
     const sourceBinding=sourceAtPreparation?{sourceId:sourceAtPreparation.sourceId,sha256:sourceAtPreparation.sha256}:null;
     const validContractBinding=Boolean(supplied&&supplied.sessionId===lease.scope.sessionId&&supplied.sessionEpoch===lease.scope.epoch&&supplied.goal===getTask().goal
         &&JSON.stringify(supplied.inputBindings)===JSON.stringify(getTask().inputBindings)&&JSON.stringify(supplied.protectedSource)===JSON.stringify(sourceBinding));
     let validationBinding=validContractBinding?freeze(structuredClone(supplied!)):undefined;
     let validationContract=validationBinding?.contract;
-    const differences=new Map<string,{mappedCells:number;changedCells:number;changes:unknown[];truncated:boolean}>();let disposed=false,suspended=false,bytes=0;
+    const differences=new Map<string,{mappedCells:number;changedCells:number|null;changes:unknown[];truncated:boolean}>();let disposed=false,suspended=false,bytes=0;
     const own=(context?:ExecutionContext)=>{
         assertRunActive(store,lease);
         if(disposed||suspended||workspace.taskId!==taskId||getTask().taskId!==taskId
@@ -48,7 +53,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
         const result=resolveAllowedTools(buildBuiltinToolRegistry(state.columnProfiles?.map(c=>c.name)??[]),buildToolAvailabilityContext(state,{...options,hasCodeExecution:true}));
         if(!result.decisions[name]?.allowed)throw new Error('capability_unavailable');
     };
-    const dispose=()=>{disposed=true;candidates.clear();differences.clear();validations.clear();validationChecks.clear();validationAttempts.clear();validationBindingChecks.clear();recoveryInputs.clear();bytes=0;};
+    const dispose=()=>{disposed=true;spills.clear();validationErrors.clear();candidates.clear();differences.clear();validations.clear();validationChecks.clear();validationAttempts.clear();validationBindingChecks.clear();recoveryInputs.clear();bytes=0;};
     registerSessionResource(lease.scope,dispose);
     const checkReceipt=(receipt:Readonly<CodeExecutionReceipt>,revision:number)=>{
         own();const task=getTask(),state=store.getState();
@@ -56,6 +61,11 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             ||receipt.sessionEpoch!==lease.scope.epoch||receipt.runId!==lease.runId||receipt.turnId!==lease.turnId
             ||!receipt.toolCallId||!receipt.stepId||receipt.status!=='succeeded'||!receipt.program||!receipt.output
             ||!receipt.environmentDigest||!receipt.inputDigest||!receipt.requestDigest||receipt.outputContract?.format!=='json')throw new Error('candidate_execution_unavailable');
+        if(receipt.mode==='source_records'){
+            const source=state.datasetBundle?.source.inspection;
+            if(!source||JSON.stringify(source)!==sourceSignatureAtPreparation
+                ||JSON.stringify(readSourceBytes(store,source.sourceId,0,0).source)!==sourceSignatureAtPreparation)throw new Error('input_version_changed');
+        }
         for(const ref of [receipt.program,...(receipt.inputs??[]),receipt.output]){
             const current=workspace.read(ref.path);
             if(current.revision!==ref.revision||current.sha256!==ref.sha256)throw new Error('workspace_conflict');
@@ -84,7 +94,36 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             if(now.goal!==scope.goal||now.scope.digest!==scope.scopeDigest||now.scope.intentDigest!==scope.intentDigest)throw new Error('candidate_scope_changed');
             if(JSON.stringify(source?{sourceId:source.sourceId,sha256:source.sha256}:null)!==JSON.stringify(sourceIdentity))throw new Error('input_version_changed');
         };
-        if(receipt.mode==='source_records')throw new Error('candidate_stream_semantic_contract_required');
+        if(receipt.mode==='source_records'){
+            const configured=validationBinding?.spill;
+            if(!configured||!execution.sourceSpill)throw new Error('candidate_stream_semantic_contract_required');
+            assertSpillMeaning(configured.meaning);
+            const capability=execution.sourceSpill(jobId,context,policy),manifest=capability.manifest;
+            const request=receipt.runRequest?.sourceRecords;
+            if(!request||request.sourceId!==sourceIdentity?.sourceId||request.sha256!==sourceIdentity.sha256
+                ||request.width!==configured.meaning.columns.length||receipt.sourceStream?.manifest.generation!==manifest.generation
+                ||manifest.sourceRows!==protectedSource?.recordCount||manifest.sourceBytes!==protectedSource.byteSize
+                ||workspace.read(receipt.output!.path).content!==JSON.stringify(manifest))throw new Error('candidate_spill_binding_mismatch');
+            if(await codeDigest(configured.meaning)!==configured.digest)throw new Error('candidate_spill_meaning_invalid');check();
+            const meaning=structuredClone(configured.meaning),rowCount=manifest.sourceRows-1-(meaning.summary==='last_record_sum'?1:0);
+            if(rowCount<1)throw new Error('candidate_spill_meaning_invalid');
+            const excludedRows=[{origin:{kind:'source' as const,name:'original',row:0},reason:'host-declared header'}];
+            if(meaning.summary==='last_record_sum')excludedRows.push({origin:{kind:'source',name:'original',row:manifest.sourceRows-1},reason:'host-declared reconciled summary'});
+            const lineageDigest=await codeDigest({manifest,meaningDigest:configured.digest,grain:'ordered-source-record',excludedRows});check();
+            const bound={schemaVersion:1 as const,complete:true as const,tables:[{name:meaning.table,role:'fact' as const,schema:spillSchema(meaning),rowCount,rows:[],lineage:[]}],
+                relationships:[],excludedRows,namespaceId,taskId,taskRevision:revision,sessionId:lease.scope.sessionId,sessionEpoch:lease.scope.epoch,
+                runId:lease.runId,turnId:lease.turnId,inputBindings:receipt.inputBindings,requestedChange:scope,protectedSource:sourceIdentity,
+                execution:receipt,outputArtifacts:[receipt.output!],lineageDigest,spill:{manifest,meaning,meaningDigest:configured.digest}};
+            const changeDigest=await codeDigest(bound);check();
+            const prior=[...candidates.values()].find(c=>c.changeDigest===changeDigest);if(prior)return prior;
+            if(candidates.size>=20)throw new Error('resource_limit');
+            const candidate=freeze({...bound,candidateId:`candidate-${crypto.randomUUID()}`,changeDigest,createdAt:Date.now(),
+                status:'staged' as const,validation:'pending' as const,answerEvidence:false as const,staging:{toolCallId:context.toolCallId!,stepId:context.stepId!}});
+            candidates.set(candidate.candidateId,candidate);spills.set(candidate.candidateId,capability);
+            differences.set(candidate.candidateId,freeze({mappedCells:rowCount*meaning.columns.length,changedCells:null,
+                changes:[{kind:'host_projection',columns:meaning.columns,note:'Raw spill cells are preserved; typed draft conversions are host-compiled. No per-cell change count is asserted.'}],truncated:false}));
+            return candidate;
+        }
         const output=workspace.read(receipt.output!.path);
         let materialization=output.content;
         if(receipt.mode==='stateful_stream'){
@@ -164,7 +203,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
     const read=(id:string)=>{policyCheck('candidate.read');return current(id);};
     const validationRequirements=()=>{
         policyCheck('candidate.read');
-        return {configured:Boolean(validationBinding),ambiguities:validationContract?.ambiguities??[],inference:validationBinding?.inference,
+        return {configured:Boolean(validationBinding),spill:validationBinding?.spill,ambiguities:validationContract?.ambiguities??[],inference:validationBinding?.inference,
             tables:validationContract?.tables.map(t=>({name:t.name,role:t.role,schema:t.schema,grain:t.grain,groupBy:t.groupBy,metrics:t.metrics,mutableColumns:t.mutableColumns,expectedRows:t.rows.length})),
             note:'Host contract is fixed before staging. AI interpretation must pass complete-source host compilation before execution. Inferred business semantics remain explicit assumptions.'};
     };
@@ -187,6 +226,31 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             if(validationAttempts.get(id)!==attempt)throw new Error('candidate_validation_superseded');
             const source=store.getState().datasetBundle?.source.inspection;
             if(JSON.stringify(source?{sourceId:source.sourceId,sha256:source.sha256}:null)!==JSON.stringify(c.protectedSource))throw new Error('input_version_changed');};
+        if(c.spill){
+            const capability=spills.get(id);if(!capability)throw new Error('candidate_spill_unavailable');
+            validationErrors.delete(id);
+            try{
+                let verdict:CandidateSemanticVerdict;
+                try{verdict=await validateSpillCandidate(capability,c.spill.meaning,check);}
+                catch(error){
+                    const reason=error instanceof Error?error.message:'';
+                    if(!reason.startsWith('validation_'))throw error;
+                    verdict={decision:'blocked',reasonCodes:[reason],checks:[],groups:[]};
+                }
+                check();const contractDigest=await codeDigest(validationBinding);check();
+                const bound={...verdict,validationId:`validation-${crypto.randomUUID()}`,candidateId:id,namespaceId,taskId,taskRevision:c.taskRevision,
+                    sessionId:c.sessionId,sessionEpoch:c.sessionEpoch,runId:c.runId,turnId:c.turnId,toolCallId:context.toolCallId!,stepId:context.stepId!,
+                    contractDigest,changeDigest:c.changeDigest,lineageDigest:c.lineageDigest,inputDigest:c.execution.inputDigest!,outputDigest:c.outputArtifacts[0].sha256,
+                    programDigest:c.execution.program!.sha256,environmentDigest:c.execution.environmentDigest!,scopeDigest:c.requestedChange.scopeDigest,
+                    protectedSource:c.protectedSource,validator:'host-candidate-semantics-v1' as const,answerEvidence:false as const,
+                    determinism:'not_certified' as const,reproducibility:'pinned_environment_and_independent_reference_equivalence' as const};
+                const receiptDigest=await codeDigest(bound);check();
+                const receipt=freeze({...bound,receiptDigest});validations.set(id,receipt);validationChecks.set(id,check);return receipt;
+            }catch(error){
+                if(validationAttempts.get(id)===attempt)validationErrors.set(id,error instanceof Error?error.message:'candidate_spill_unavailable');
+                throw error;
+            }
+        }
         const snapshot=await captureCodeTables(store,(c.execution.coverage??[]).map(({name,tableId})=>({name,tableId})),c.inputBindings,8*1024*1024,check);
         if(snapshot.coverage.some(v=>v.sha256!==c.execution.coverage?.find(x=>x.name===v.name)?.sha256))throw new Error('input_version_changed');
         const inputs:ValidationInputs={tables:Object.fromEntries(Object.entries(snapshot.tables).map(([name,t])=>[name,t.rows])),sources:{},sourceIdentities:{}};
@@ -226,6 +290,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
         policyCheck('candidate.read');
         if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>50)throw new Error('preview_bounds_invalid');
         const c=current(id),receipt=validationReceipt(id);
+        if(c.spill)throw new Error('candidate_async_preview_required');
         if(!receipt||receipt.decision!=='validated'||receipt.receiptDigest!==receiptDigest
             ||receipt.candidateId!==id||receipt.namespaceId!==namespaceId||receipt.changeDigest!==c.changeDigest
             ||receipt.lineageDigest!==c.lineageDigest||receipt.outputDigest!==c.outputArtifacts[0].sha256
@@ -256,9 +321,48 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
         if(size()>64*1024)throw new Error('resource_limit');
         return freeze(result);
     };
+    const previewAsync=async(id:string,tableName:string,receiptDigest:string,offset=0,limit=50)=>{
+        const c=current(id);if(!c.spill)return preview(id,tableName,receiptDigest,offset,limit);
+        policyCheck('candidate.read');
+        if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>50)throw new Error('preview_bounds_invalid');
+        const receipt=validationReceipt(id),table=c.tables.find(t=>t.name===tableName),capability=spills.get(id);
+        if(!table)throw new Error('candidate_table_unavailable');
+        if(!receipt||receipt.decision!=='validated'||receipt.receiptDigest!==receiptDigest)throw new Error('validation_failed');
+        if(offset>table.rowCount)throw new Error('preview_bounds_invalid');
+        if(!capability)throw new Error('candidate_spill_unavailable');
+        const check=()=>{policyCheck('candidate.read');if(current(id)!==c||validationReceipt(id)!==receipt)throw new Error('validation_failed');};
+        const result={label:'draft_uncommitted' as const,candidateId:id,tableName,validationReceiptDigest:receiptDigest,changeDigest:c.changeDigest,
+            sessionId:c.sessionId,sessionEpoch:c.sessionEpoch,protectedSource:c.protectedSource,sourceSha256:c.protectedSource!.sha256,
+            sourceVersion:c.protectedSource!.sha256,inputBindings:c.inputBindings,offset,totalRows:table.rowCount,rows:[] as typeof table.rows,
+            lineageSamples:[] as typeof table.lineage,truncated:false,lineageTruncated:false,answerEvidence:false as const};
+        // Binary search authenticated chunk frontiers. Pages do not replay the full generation.
+        let low=0,high=c.spill.manifest.chunks-1,sequence=0;const sourceRow=offset+1;
+        while(low<=high){const mid=Math.floor((low+high)/2),chunk=await capability.readChunk(mid,check);check();
+            if(sourceRow<chunk.startRow)high=mid-1;else if(sourceRow>=chunk.nextRow)low=mid+1;else{sequence=mid;break;}}
+        const end=Math.min(table.rowCount,offset+limit);
+        let full=false;
+        for(;sequence<c.spill.manifest.chunks&&offset+result.rows.length<end&&!full;sequence++){
+            const chunk=await capability.readChunk(sequence,check);check();
+            for(const raw of chunk.rows){
+                const row=raw.sourceRow-1;if(row<offset||row>=end)continue;
+                result.rows.push(spillRow(c.spill.meaning,raw.cells));
+                if(spillBytes(JSON.stringify(result))>60*1024){result.rows.pop();full=true;break;}
+            }
+        }
+        if(!result.rows.length&&offset<table.rowCount)throw new Error('candidate_preview_row_too_large');
+        result.truncated=offset+result.rows.length<table.rowCount;
+        for(let row=offset;row<offset+result.rows.length;row++)for(const column of c.spill.meaning.columns){
+            const lineage={row,column:column.name,origins:[{kind:'source' as const,name:'original',row:row+1,column:column.sourceColumn}]};
+            if(result.lineageSamples.length>=50){result.lineageTruncated=true;break;}
+            result.lineageSamples.push(lineage);
+            if(spillBytes(JSON.stringify(result))>63*1024){result.lineageSamples.pop();result.lineageTruncated=true;break;}
+        }
+        check();return freeze(result);
+    };
     const diff=(id:string,againstId?:string)=>{
         policyCheck('candidate.diff');
         const c=current(id),before=againstId?current(againstId):undefined;
+        if(before&&(c.spill||before.spill))throw new Error('candidate_spill_comparison_unsupported');
         let valueDiff:unknown=differences.get(id);
         if(before){
             const changes:unknown[]=[];let changedCells=0;
@@ -275,6 +379,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
     };
     const captureCommitCheck=(id:string)=>{
         const candidate=current(id),validation=validationReceipt(id),bindingCheck=validationBindingChecks.get(id);
+        if(candidate.spill)throw new Error('candidate_spill_commit_not_supported');
         if(!validation||validation.decision!=='validated'||!bindingCheck)throw new Error('validation_failed');
         return (target:StoreApi,context:ExecutionContext)=>{
             assertRunActive(target,context.lease);
@@ -296,7 +401,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
         if (!validationBinding || receipt?.decision!=='validated' || !inputs) throw new Error('recovery_metadata_unavailable');
         return { binding:structuredClone(validationBinding), inputs:structuredClone(inputs), execution:c.execution };
     };
-    return Object.freeze({namespaceId,stage,read,diff,validate,validationReceipt,validationRequirements,bindInferredMeaning,captureCommitCheck,captureRecovery,preview,
+    return Object.freeze({namespaceId,stage,read,diff,validate,validationReceipt,validationRequirements,bindInferredMeaning,captureCommitCheck,captureRecovery,preview,previewAsync,validationError:(id:string)=>{own();return validationErrors.get(id);},
         suspend:()=>{own();suspended=true;},list:()=>{
             own();const live:StagedDatasetCandidate[]=[];
             for(const id of candidates.keys()){
@@ -309,8 +414,8 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             }
             return live;
         },
-        abandon:(id:string)=>{policyCheck('candidate.abandon');const c=candidates.get(id);if(!c)throw new Error('candidate_unavailable');candidates.delete(id);differences.delete(id);validations.delete(id);validationChecks.delete(id);validationAttempts.delete(id);recoveryInputs.delete(id);
-            bytes-=new TextEncoder().encode(workspace.read(c.outputArtifacts[0].path,c.outputArtifacts[0].revision).content).byteLength;
+        abandon:(id:string)=>{policyCheck('candidate.abandon');const c=candidates.get(id);if(!c)throw new Error('candidate_unavailable');candidates.delete(id);spills.delete(id);validationErrors.delete(id);differences.delete(id);validations.delete(id);validationChecks.delete(id);validationAttempts.delete(id);recoveryInputs.delete(id);
+            if(!c.spill)bytes-=new TextEncoder().encode(workspace.read(c.outputArtifacts[0].path,c.outputArtifacts[0].revision).content).byteLength;
             return {candidateId:id,status:'abandoned' as const,namespaceId};},dispose});
 };
 export type CandidateStagingPort=ReturnType<typeof createCandidateStaging>;

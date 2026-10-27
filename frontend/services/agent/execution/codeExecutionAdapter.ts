@@ -286,6 +286,25 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
                     reason === 'scope_revoked' || reason === 'input_version_changed' ? 'new_scope' : 'repair');
             } finally { if (active === jobId) active = undefined; }
         },
+        sourceSpill(jobId: string, execution: ExecutionContext, policyContext?: CodePolicyContext) {
+            const job = jobs.get(jobId), receipt = job?.receipt;
+            const manifest = receipt?.sourceStream?.manifest;
+            const stream = manifest && [...sourceStreams.values()].find(value => value.generation === manifest.generation);
+            if (!job?.grantId || receipt?.status !== 'succeeded' || receipt.mode !== 'source_records' || !manifest || !stream) throw new Error('candidate_spill_unavailable');
+            const current = () => {
+                policy('code.inspect', policyContext); check(job.grantId!, execution, undefined, policyContext);
+                pathAllowed('/dataset/source.bytes');
+                for (const artifact of [receipt.program!, receipt.output!]) {
+                    pathAllowed(artifact.path); const actual = workspace.read(artifact.path);
+                    if (actual.revision !== artifact.revision || actual.sha256 !== artifact.sha256) throw new Error('workspace_conflict');
+                }
+            };
+            current();
+            return Object.freeze({ manifest,
+                inspectRows: (invocation: () => void) => stream.inspectRows(() => { current(); invocation(); }),
+                readChunk: (sequence: number, invocation: () => void) => stream.readChunk(sequence, () => { current(); invocation(); }),
+            });
+        },
         assertCommitEligible(jobId: string, execution: ExecutionContext, policyContext?: CodePolicyContext) {
             policy('code.run', policyContext);
             const job = jobs.get(jobId);

@@ -8,6 +8,7 @@ import { inspectPiCandidateReview } from '../../services/agent/runtime/pi/piCand
 import { cancelOwnedRun } from '../../services/session/sessionOwnership';
 import { useCandidateReview } from './useCandidateReview';
 import { TaskExport } from './TaskExport';
+import { CandidateDraft } from './CandidateDraft';
 
 const control = 'min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50';
 const pre = 'max-w-full whitespace-pre-wrap break-all rounded-md bg-slate-100 p-3 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500';
@@ -105,6 +106,7 @@ export const TaskInspectionView: React.FC<{ onReturnToChat?: () => void; onOpenR
             </section>}
             {section === 'Review' && <section className="space-y-3 text-sm text-slate-700">
                 <h3 className="font-semibold text-slate-900">Candidate review</h3>
+                {view.candidateError && <p role="alert">Candidate unavailable: {view.candidateError}</p>}
                 {candidate ? <><p className="break-all text-xs">{candidate.candidateId} · task revision {candidate.taskRevision}</p>
                     <p className="break-all text-xs">Scope: {candidate.scopeDigest}</p><p className="break-all text-xs">Change: {candidate.changeDigest}</p>
                     <h4 className="font-medium">Host grain and scope requirements</h4><pre className={pre}>{candidate.requirements}</pre>
@@ -115,6 +117,9 @@ export const TaskInspectionView: React.FC<{ onReturnToChat?: () => void; onOpenR
                     <h4 className="font-medium">Excluded rows: {candidate.excludedCount}</h4>{candidate.exclusions.map((e, i) => <p key={i} className="break-words">{e}</p>)}
                     {candidate.excludedCount > candidate.exclusions.length && <p>Exclusions preview truncated.</p>}
                     <h4 className="font-medium">Independent validation</h4>
+                    {candidate.validationError && <p role="alert">Validation unavailable: {candidate.validationError}</p>}
+                    {!candidate.validationError && candidate.validation?.decision === 'validated' && candidate.validation.receiptDigest && candidate.tables.map(table =>
+                        <CandidateDraft key={`${candidate.candidateId}:${candidate.validation!.receiptDigest}:${table.name}`} taskId={task.taskId} candidateId={candidate.candidateId} table={table.name} digest={candidate.validation!.receiptDigest!} />)}
                     {candidate.validation ? <><p>Decision: {candidate.validation.decision}</p><p className="break-words">{candidate.validation.reasons.join('; ') || 'No rejection reasons.'}</p>
                         <p className="break-words">{candidate.validation.checks.join('; ')}</p><pre className={pre}>{candidate.validation.reconciliation}</pre>
                         {candidate.validation.truncated && <p>Validation preview truncated.</p>}</> : <p>Independent validation is pending; staging cannot change accepted data.</p>}

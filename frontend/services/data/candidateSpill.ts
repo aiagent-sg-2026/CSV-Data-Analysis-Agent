@@ -55,6 +55,9 @@ export const createCandidateSpill = async (sessionId: string, identity: string, 
     try { current(); } catch (error) { await io.remove().catch(() => {}); throw error; }
     let disposing: Promise<void> | undefined;
     let chunks = 0, bytes = 0, sourceRows = 0, sourceBytes = 0, chain = identity, sealed = false, poisoned = false;
+    // Bounded host custody (at most 10,000 SHA-256 strings), never restored from a guest manifest.
+    // Random-access draft pages must authenticate a chunk without replaying the entire generation.
+    const hashes: string[] = [];
     const own = () => { current(); if (poisoned) throw new Error('spill_poisoned'); };
     return {
         generation,
@@ -70,8 +73,15 @@ export const createCandidateSpill = async (sessionId: string, identity: string, 
             try { await io.put(`chunk-${chunks}.json`, text); }
             catch (error) { poisoned = true; throw error; }
             // Advance even if cancellation occurs after durable close: replay cannot overwrite an ordinal.
-            chunks++; bytes += size; sourceRows = chunk.nextRow; sourceBytes = chunk.endByte; chain = hash;
+            hashes.push(hash); chunks++; bytes += size; sourceRows = chunk.nextRow; sourceBytes = chunk.endByte; chain = hash;
             own(); return size;
+        },
+        async readChunk(sequence: number): Promise<SpillChunk> {
+            own();
+            if (!sealed || !Number.isSafeInteger(sequence) || sequence < 0 || sequence >= chunks) throw new Error('spill_chunk_unavailable');
+            const text = await io.get(`chunk-${sequence}.json`); own();
+            if (spillBytes(text) > SPILL_LIMITS.chunkBytes || await spillDigest(text) !== hashes[sequence]) throw new Error('spill_corrupt');
+            own(); return JSON.parse(text) as SpillChunk;
         },
         async *read() {
             own(); let previous = identity, row = 0, offset = 0, size = 0;
@@ -81,7 +91,7 @@ export const createCandidateSpill = async (sessionId: string, identity: string, 
                 if (spillBytes(text) > SPILL_LIMITS.chunkBytes) throw new Error('spill_chunk_capacity');
                 const hash = await spillDigest(text); own();
                 const chunk = JSON.parse(text) as SpillChunk;
-                if (chunk.sequence !== sequence || chunk.previous !== previous || chunk.startRow !== row || chunk.startByte !== offset
+                if (hash !== hashes[sequence] || chunk.sequence !== sequence || chunk.previous !== previous || chunk.startRow !== row || chunk.startByte !== offset
                     || !Array.isArray(chunk.rows) || chunk.nextRow !== row + chunk.rows.length || chunk.nextRow <= row
                     || chunk.endByte <= offset || chunk.rows.some((r, i) => r.sourceRow !== row + i
                         || !Array.isArray(r.cells) || r.cells.some(c => typeof c !== 'string'))) throw new Error('spill_corrupt');

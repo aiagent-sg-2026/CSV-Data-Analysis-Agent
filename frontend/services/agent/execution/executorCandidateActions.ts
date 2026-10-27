@@ -43,7 +43,8 @@ export const executeCandidateAction=async(action:AiAction,store:StoreApi,policy?
             const offset=Number(args.offset??0),limit=Number(args.limit??10);
             if(t&&offset>t.rowCount)throw new Error('candidate_range_invalid');
             const receipt=port.validationReceipt(id);
-            const draft=t&&receipt?.decision==='validated'?port.preview(id,t.name,receipt.receiptDigest,offset,limit):undefined;
+            if(c.spill&&t&&receipt?.decision!=='validated')throw new Error('candidate_validation_required');
+            const draft=t&&receipt?.decision==='validated'?await port.previewAsync(id,t.name,receipt.receiptDigest,offset,limit):undefined;
             candidate=t?(draft
                 ? {...draft,table:t.name,nextRow:offset+draft.rows.length,complete:offset+draft.rows.length>=t.rowCount,validation:'validated'}
                 : {candidateId:id,table:t.name,offset,nextRow:Math.min(offset+limit,t.rowCount),complete:offset+limit>=t.rowCount,rows:t.rows.slice(offset,offset+limit),lineage:t.lineage.filter(l=>l.row>=offset&&l.row<offset+limit),validation:c.validation,answerEvidence:false})
@@ -53,7 +54,7 @@ export const executeCandidateAction=async(action:AiAction,store:StoreApi,policy?
         }
         return {status:'success',toolName,message:'Candidate inspection/staging only; a current host validation receipt and exact approval/commit are required for publication.',shouldStop:false,payload:{candidate},artifacts:{candidate}};
     }catch(error){
-        const reason=error instanceof Error&&/^(candidate_[a-z_]+|input_version_changed|workspace_conflict|source_unavailable|resource_limit|scope_revoked|capability_unavailable)$/.test(error.message)?error.message:'scope_revoked';
-        return {status:'blocked',toolName,message:reason,shouldStop:false,retryHint:'Repair the complete output and use a successful current owned job.'};
+        const reason=error instanceof Error&&/^(candidate_[a-z_]+|validation_[a-z_]+|preview_[a-z_]+|spill_[a-z_]+|source_stream_[a-z_]+|source_record_[a-z_]+|input_version_changed|workspace_conflict|source_unavailable|resource_limit|scope_revoked|capability_unavailable)$/.test(error.message)?error.message:'scope_revoked';
+        return {status:'blocked',toolName,message:reason,shouldStop:false,artifacts:{candidateFailure:{candidateId:args.candidateId,reason}},retryHint:'Repair the complete output and use a successful current owned job.'};
     }
 };
