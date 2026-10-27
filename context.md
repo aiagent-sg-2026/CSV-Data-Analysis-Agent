@@ -1,5 +1,11 @@
 ## Current Work Context
 
+### 2026-10-27 — Initial-runtime expiry boundary qualification (test-only)
+
+- Qualified only the P2 timer/uncertain-effect integration gap from `../PI_LARGE_COORDINATOR_CLOSURE_REVIEW.md` against clean `1cd7fd5a635335738d54d3a3590ec8069d660e7f`. Baseline already uses `controller = lease.controller`; the runtime timer aborts the same signal that `awaitOwned` races and settlement guards reject. No premature settlement or renewed same-source work was demonstrated; no production patch, cap/policy/approval/commit change or inability-to-resume workaround was needed.
+- Added `frontend/tests/piInitialRuntimeExpiry.test.ts`: 10 deterministic tests using actual initial runtime/Agent/lease/reservation/public tools and real QuickJS with held provider/guest returns, exact 239,999→240,000ms expiry, full durable pending-envelope checks before/after late returns and fresh-root renamed same-byte reselection, restored reservation time floors 239,998/239,999/240,000/240,001ms, recovered-checkpoint 240,000/240,001ms minimum-1ms timer, exhausted 900,000ms admission refusal, and genuine semantic suspension with 37ms consumed + 600,000ms human wait + resume/remaining-time expiry. Fresh roots retain storage adapters and deliberate accounting identity; this is not a real page reload/native-IDB or exhaustive crash test.
+- Original-production baseline passed all 10 new cases. Node22.23.4/heap4096/serial related suite: 15 files / 324 tests PASS; typecheck/lint PASS. Evidence, exact commands, final verification and local commit are recorded in `../PI_EXPIRY_QUALIFICATION_SUMMARY.md`, logs in `../expiry-qualification-logs/`. Test/docs only: no build/browser rerun/root publication, remote Git operation, live provider or private fixtures. Independent closure of this bounded gap precedes the separate dual-grain/live-provider work; no full-product safety claim.
+
 ### 2026-10-27 — Large coordinator reload-budget / semantic tamper review repair
 
 - Following `../PI_LARGE_COORDINATOR_FIX_TASK.md` against clean `4ce1412`; classifications, baseline failures, implementation and final evidence are maintained in `../PI_LARGE_COORDINATOR_FIX_SUMMARY.md`, logs in `../large-coordinator-fix-logs/`. P2 review started as a qualification gap, not a proven unapproved-commit exploit.
