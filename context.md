@@ -1,5 +1,7 @@
 ## Current Work Context
 
+- **Worker PR-1 (2026-10-27, source only; not deployed)**: The report boundary dialog limits body preview and count to the current summary boundary and first stacked section; summary preview stops at that section. Header, body and summary previews do not repeat source indexes. Editing boundary inputs immediately updates the preview. Parsing and checked-in deployment are unchanged.
+- **Verification**: Fictional footer regression failed before the fix (TOTAL appeared as both Data and Summary); targeted modal suites passed 24 tests after, frontend typecheck passed, and a local Chromium source-app smoke showed three Data rows and one Summary TOTAL.
 - **Goal**: Maintain the React browser app and its checked-in GitHub Pages build. The main assistant and initial analysis run through Pi Harness and the governed app tools.
 - **Worker change (2026-10-23, P0 missing markers counted as 0; root not republished)**:
   - Live symptom: on `sg-graduate-employment.csv` the card "Median Gross Mthly 25 Percentile by School" ranked School of Law (only `na`/`N.A.`) at 0 and Yong Siew Toh at 1,500 (real median of reported values: 2,999).

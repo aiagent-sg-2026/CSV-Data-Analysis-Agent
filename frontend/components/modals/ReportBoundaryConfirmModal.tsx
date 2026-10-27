@@ -110,34 +110,38 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
     ));
 
     const effectiveSummaryStart = summaryStart !== null && summaryStart < totalRows ? summaryStart : null;
-    // Stacked tables sit after the summary boundary but are not summary rows of this table.
+    const sections = rawIntakeIr?.diagnostics?.setAsideSections ?? [];
+    const analysedRowsEnd = sections.reduce((end, section) => Math.min(end, section.rowStart), totalRows);
+    // Keep the set-aside notice tied to the selected summary boundary.
     const setAsideSections = effectiveSummaryStart === null
         ? []
-        : (rawIntakeIr?.diagnostics?.setAsideSections ?? []).filter(section => section.rowStart >= effectiveSummaryStart);
-    const analysedRowsEnd = setAsideSections.length > 0 ? setAsideSections[0].rowStart : totalRows;
+        : sections.filter(section => section.rowStart >= effectiveSummaryStart);
 
     // Build preview: header rows + first body rows + summary rows
     type PreviewRow = { rowIndex: number; role: 'header' | 'body' | 'summary'; cells: string[] };
     const previewRows: PreviewRow[] = [];
 
     const headerIdxSet = new Set(headerLayerIdxs);
-    for (const idx of headerLayerIdxs) {
+    for (const idx of headerIdxSet) {
         if (rows[idx]) previewRows.push({ rowIndex: idx, role: 'header', cells: rows[idx] });
     }
-    const bStart = Math.max(0, Math.min(bodyStart, totalRows - 1));
-    for (let i = bStart; i < Math.min(bStart + MAX_BODY_PREVIEW_ROWS, totalRows); i++) {
+    const bStart = Math.max(0, Math.min(bodyStart, Math.max(0, totalRows - 1)));
+    const bodyEnd = Math.min(effectiveSummaryStart ?? totalRows, analysedRowsEnd, totalRows);
+    for (let i = bStart; i < Math.min(bStart + MAX_BODY_PREVIEW_ROWS, bodyEnd); i++) {
         if (rows[i] && !headerIdxSet.has(i)) previewRows.push({ rowIndex: i, role: 'body', cells: rows[i] });
     }
-    if (summaryStart !== null) {
-        for (let i = summaryStart; i < Math.min(summaryStart + 2, analysedRowsEnd); i++) {
+    if (effectiveSummaryStart !== null) {
+        for (let i = effectiveSummaryStart; i < Math.min(effectiveSummaryStart + 2, analysedRowsEnd); i++) {
             if (rows[i] && !headerIdxSet.has(i)) previewRows.push({ rowIndex: i, role: 'summary', cells: rows[i] });
         }
     }
 
-    const summaryRowCount = countSummaryContentRows(rows.slice(0, analysedRowsEnd), effectiveSummaryStart);
-    const dataRowCount = effectiveSummaryStart !== null
-        ? Math.max(0, effectiveSummaryStart - bStart)
-        : Math.max(0, totalRows - bStart);
+    const summaryRowCount = countSummaryContentRows(
+        rows.slice(0, analysedRowsEnd).map((row, index) => headerIdxSet.has(index) ? [] : row),
+        effectiveSummaryStart,
+    );
+    const dataRowCount = Math.max(0, bodyEnd - bStart)
+        - [...headerIdxSet].filter(index => index >= bStart && index < bodyEnd).length;
 
     const triggerConfirm = async () => {
         if (confirming) return;
