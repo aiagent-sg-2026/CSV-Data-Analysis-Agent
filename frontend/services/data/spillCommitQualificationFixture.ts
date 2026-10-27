@@ -6,12 +6,14 @@ import { preparePiExecutor } from '../agent/runtime/pi/piExecutorPreparation';
 import { createSingleTableDatasetBundle } from './datasetBundle';
 import { CsvStreamScanner,type CsvRecordSpan } from './csvStreamScanner';
 import { registerScannedCsvBlob } from './immutableCsvSource';
-import { bindSpillCandidateValidationContract } from './spillCandidateValidation';
+import { bindSpillCandidateValidationContract, type SpillCandidateMeaning } from './spillCandidateValidation';
 import type { CandidateSpillFactory } from './candidateSpill';
 
 /** Synthetic trusted-supported meaning only; uses the production task/guest/staging/approval services. */
-export const prepareSpillCommitFixture=async(options:{file:File;root?:StoreApi;guest?:Parameters<typeof preparePiExecutor>[1]['guest'];spillFactory?:CandidateSpillFactory;scale?:number})=>{
-    const data:CsvData={fileName:options.file.name,data:[{key:'0',payload:'preview only',value:0}]};
+export const prepareSpillCommitFixture=async(options:{file:File;root?:StoreApi;guest?:Parameters<typeof preparePiExecutor>[1]['guest'];spillFactory?:CandidateSpillFactory;scale?:number;columns?:SpillCandidateMeaning['columns']})=>{
+    const columns=options.columns??[{name:'key',sourceColumn:0,conversion:'identity' as const},{name:'payload',sourceColumn:1,conversion:'identity' as const},
+        {name:'value',sourceColumn:2,conversion:'decimal' as const,scale:options.scale??0,unit:options.scale?'SGD':'count'}];
+    const data:CsvData={fileName:options.file.name,data:[Object.fromEntries(columns.map(c=>[c.name,c.conversion==='decimal'?0:c.name==='key'?'0':'preview only']))]};
     const bundle=createSingleTableDatasetBundle({datasetId:`spill-lab-${crypto.randomUUID()}`,sourceFingerprint:'pending',file:options.file,data});
     const seed={sessionId:`spill-commit-lab-${crypto.randomUUID()}`,sessionCreatedAt:new Date(),csvData:data,canonicalCsvData:data,rawCsvData:null,
         datasetBundle:bundle,datasetCommitBindingStatus:undefined,columnProfiles:[],analysisCards:[],activeDataQuery:null,workspaceFiles:{},
@@ -38,13 +40,13 @@ export const prepareSpillCommitFixture=async(options:{file:File;root?:StoreApi;g
         root.setState({datasetBundle:{...bundle,source:{...bundle.source,inspection:source}}});registerScannedCsvBlob(store,file,source,spans);
         const goal='Validate all original records under the supported host-declared source-record grain. Request exact approval; never publish a draft as accepted.';
         root.candidateValidationContract=await bindSpillCandidateValidationContract(store,goal,{version:1,kind:'ordered-source-records',table:'records',grain:'source_record',headerRow:0,summary:'none',
-            columns:[{name:'key',sourceColumn:0,conversion:'identity'},{name:'payload',sourceColumn:1,conversion:'identity'},{name:'value',sourceColumn:2,conversion:'decimal',scale:options.scale??0,unit:options.scale?'SGD':'count'}]});
+            columns});
         // The normal preparation path owns budgets, grants and run retirement.
         prep=await preparePiExecutor(store,{entryPoint:'follow_up',goal,guest:options.guest,spillFactory:options.spillFactory});
         await prep.task.resolveScope(resolveAnswerScope(goal,undefined,undefined,store));
-        const program=await store.codeExecution!.workspace.write('/workspace/spill-repair.js','return {state:{},rows:input.records.map(r=>({sourceRow:r.sourceRow,cells:r.cells.slice(0,3)}))};',0);
+        const program=await store.codeExecution!.workspace.write('/workspace/spill-repair.js',`return {state:{},rows:input.records.map(r=>({sourceRow:r.sourceRow,cells:r.cells.slice(0,${columns.length})}))};`,0);
         const request={program:{path:program.path,revision:program.revision,sha256:program.sha256},inputs:[],mode:'source_records' as const,
-            sourceRecords:{sourceId:source.sourceId,sha256:source.sha256,width:3,initialState:{}},output:{path:'/workspace/spill-output.json',expectedRevision:0,format:'json' as const}};
+            sourceRecords:{sourceId:source.sourceId,sha256:source.sha256,width:columns.length,initialState:{}},output:{path:'/workspace/spill-output.json',expectedRevision:0,format:'json' as const}};
         const context={lease,toolCallId:'spill-qualification-code',stepId:'spill-qualification-code'};
         await prep.task.beforeTool('code.run',request,context.toolCallId);
         const execution=await store.codeExecution!.run(request,context);

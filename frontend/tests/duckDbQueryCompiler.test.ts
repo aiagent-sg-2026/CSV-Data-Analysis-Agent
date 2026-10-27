@@ -12,8 +12,9 @@ describe('compileQueryPlanToDuckDbSql', () => {
         expect(compileQueryPlanToDuckDbSql(plan,{...options,exactDecimalColumns:['value']}).sql).toContain('SUM("value") AS "total"');
         expect(compileQueryPlanToDuckDbSql(plan,options).sql).toContain('TRY_CAST');
         expect(compileQueryPlanToDuckDbSql({aggregates:[{function:'sum',column:'OCT 2010 + NOV 2010 + DEC 2010',as:'total'}]},
-            {tableName:options.tableName,allowedColumns:['OCT 2010','NOV 2010','DEC 2010'],exactDecimalColumns:['OCT 2010','NOV 2010','DEC 2010']}).sql)
-            .toContain('SUM("OCT 2010" + "NOV 2010" + "DEC 2010")');
+            {tableName:options.tableName,allowedColumns:['OCT 2010','NOV 2010','DEC 2010'],exactDecimalColumns:['OCT 2010','NOV 2010','DEC 2010'],
+                exactDecimalUnits:{'OCT 2010':'SGD','NOV 2010':'SGD','DEC 2010':'SGD'}}).sql)
+            .toContain('SUM(CASE WHEN COALESCE("OCT 2010", "NOV 2010", "DEC 2010") IS NULL THEN NULL ELSE COALESCE("OCT 2010", 0) + COALESCE("NOV 2010", 0) + COALESCE("DEC 2010", 0) END)');
     });
     it('compares accepted DECIMAL filters as exact base-10 values, including groups and aggregate filters',()=>{
         const options={allowedColumns:['value'],tableName:'session_clean_dataset',exactDecimalColumns:['value']};

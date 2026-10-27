@@ -98,8 +98,8 @@ export const qualifyPiCandidateApproval=async(signal:AbortSignal,onObservation?:
 };
 
 /** Synthetic large qualification invokes the same request/review/approve runtime and React UI as small candidates. */
-export const prepareSpillApprovalUiSmoke=async(root:StoreApi,file:File,scale=0)=>{
-    const fixture=await prepareSpillCommitFixture({root,file,scale});let turn=0;
+export const prepareSpillApprovalUiSmoke=async(root:StoreApi,file:File,scale=0,columns?:Parameters<typeof prepareSpillCommitFixture>[0]['columns'])=>{
+    const fixture=await prepareSpillCommitFixture({root,file,scale,columns});let turn=0;
     const usage={input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}};
     const stream:StreamFn=model=>{
         const content:AssistantMessage['content']=turn++===0?[{type:'toolCall',name:'candidate_request_approval',id:crypto.randomUUID(),arguments:{candidateId:fixture.candidate.candidateId,primaryTable:'records'}}]

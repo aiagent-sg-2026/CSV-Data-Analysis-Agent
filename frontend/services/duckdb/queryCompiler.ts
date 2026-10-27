@@ -16,6 +16,8 @@ export interface CompiledDuckDbQuery {
 export interface CompileDuckDbQueryOptions {
     /** Only for independently validated typed accepted backing. Ordinary CSV keeps coercion rules. */
     exactDecimalColumns?: string[];
+    /** Resolved units from the same accepted manifest; never inferred from period names. */
+    exactDecimalUnits?: Readonly<Record<string, string>>;
     allowedColumns: string[];
     tableName: string;
     maxRows?: number;
@@ -454,8 +456,8 @@ const normalizeAggregateClauses = (
  * nothing to the total, but a row where every period is missing stays NULL so
  * it is not counted or averaged as a reported 0.
  */
-const buildMultiColumnNumericExpression = (columns: string[]) => {
-    const numericExpressions = columns.map(buildNumericExpression);
+const buildMultiColumnNumericExpression = (columns: string[], numeric = buildNumericExpression) => {
+    const numericExpressions = columns.map(numeric);
     const total = numericExpressions.map(expression => `COALESCE(${expression}, 0)`).join(' + ');
     return `CASE WHEN COALESCE(${numericExpressions.join(', ')}) IS NULL THEN NULL ELSE ${total} END`;
 };
@@ -507,10 +509,33 @@ const normalizePostAggregateClause = (
     };
 };
 
-const compileAggregateExpression = (aggregate: NormalizedQueryAggregateClause, tableName: string,exactDecimalColumns:string[]=[]) => {
+const buildPeriodNumericExpression = (columns: string[], exactDecimalColumns: string[], units?: Readonly<Record<string, string>>) => {
+    if (!columns.some(column => exactDecimalColumns.includes(column))) {
+        return buildMultiColumnNumericExpression(columns);
+    }
+    // A non-decimal accepted column is not evidence of lossless numeric conversion,
+    // even when a particular cell looks like an integer. Never fall back to DOUBLE.
+    if (!columns.every(column => exactDecimalColumns.includes(column))) {
+        throw new Error('exact_decimal_period_mixed_types_unsupported: Use only validated decimal period columns; exact mixed conversion is not proven.');
+    }
+    const resolvedUnits = columns.map(column => units && Object.hasOwn(units, column) ? units[column] : undefined);
+    if (resolvedUnits.some(unit => !unit?.trim()) || new Set(resolvedUnits).size !== 1) {
+        throw new Error('exact_decimal_period_units_require_meaning: Resolve compatible units before adding period columns; no unit conversion is inferred.');
+    }
+    // DuckDB promotes DECIMAL scales exactly and throws on overflow. Preserve the
+    // ordinary partial/all-missing rule without a text/DOUBLE/TRY_CAST round trip.
+    return buildMultiColumnNumericExpression(columns, quoteIdentifier);
+};
+
+const compileAggregateExpression = (aggregate: NormalizedQueryAggregateClause, tableName: string,exactDecimalColumns:string[]=[],exactDecimalUnits?:Readonly<Record<string,string>>) => {
     const numeric=(column:string)=>exactDecimalColumns.includes(column)?quoteIdentifier(column):buildNumericExpression(column);
     const aggregateFilterSql = compileAggregateFilter(aggregate.where,exactDecimalColumns);
     if (aggregate.function === 'count') {
+        if (aggregate.sourceColumns?.some(column => exactDecimalColumns.includes(column))) {
+            // Presence needs neither arithmetic nor compatible units and cannot overflow.
+            const present = aggregate.sourceColumns.map(column => `${numeric(column)} IS NOT NULL`).join(' OR ');
+            return `COUNT(CASE WHEN ${present} THEN 1 ELSE NULL END)${aggregateFilterSql} AS ${quoteIdentifier(aggregate.as)}`;
+        }
         const numericExpression = aggregate.sourceColumns && aggregate.sourceColumns.length > 0
             ? buildMultiColumnNumericExpression(aggregate.sourceColumns)
             : null;
@@ -522,21 +547,16 @@ const compileAggregateExpression = (aggregate: NormalizedQueryAggregateClause, t
         }
         return `${buildPresentCountExpression(aggregate.column, false, aggregateFilterSql, tableName)} AS ${quoteIdentifier(aggregate.as)}`;
     }
-    if (aggregate.function === 'count_distinct') {
-        const numericExpression = aggregate.sourceColumns && aggregate.sourceColumns.length > 0
-            ? buildMultiColumnNumericExpression(aggregate.sourceColumns)
-            : null;
-        if (aggregate.sourceColumns && aggregate.sourceColumns.length > 0) {
-            return `COUNT(DISTINCT ${numericExpression})${aggregateFilterSql} AS ${quoteIdentifier(aggregate.as)}`;
-        }
+    if (aggregate.function === 'count_distinct' && !aggregate.sourceColumns?.length) {
         return `${buildPresentCountExpression(aggregate.column!, true, aggregateFilterSql, tableName)} AS ${quoteIdentifier(aggregate.as)}`;
     }
-    // Missing and non-numeric cells stay NULL so the aggregate skips them.
-    // Coalescing them to 0 ranked a school with only `na` values at 0 and
-    // pulled other medians down; the in-process executor already skips them.
+    // All value-sensitive period aggregates must share the same exactness gate.
     const numericExpression = aggregate.sourceColumns && aggregate.sourceColumns.length > 0
-        ? aggregate.sourceColumns.every(c=>exactDecimalColumns.includes(c))?aggregate.sourceColumns.map(quoteIdentifier).join(' + '):buildMultiColumnNumericExpression(aggregate.sourceColumns)
+        ? buildPeriodNumericExpression(aggregate.sourceColumns, exactDecimalColumns, exactDecimalUnits)
         : numeric(aggregate.column!);
+    if (aggregate.function === 'count_distinct') {
+        return `COUNT(DISTINCT ${numericExpression})${aggregateFilterSql} AS ${quoteIdentifier(aggregate.as)}`;
+    }
     if (aggregate.function === 'sum') {
         return `SUM(${numericExpression})${aggregateFilterSql} AS ${quoteIdentifier(aggregate.as)}`;
     }
@@ -654,7 +674,7 @@ export const compileQueryPlanToDuckDbSql = (
                 }
                 return quoteIdentifier(column);
             }),
-            ...aggregates.map(aggregate => compileAggregateExpression(aggregate, options.tableName,options.exactDecimalColumns)),
+            ...aggregates.map(aggregate => compileAggregateExpression(aggregate, options.tableName,options.exactDecimalColumns,options.exactDecimalUnits)),
         ].join(', ');
         const fromSql = `FROM ${quoteIdentifier(options.tableName)}`;
         // Pass dimNorm to WHERE so filters on normalized columns match

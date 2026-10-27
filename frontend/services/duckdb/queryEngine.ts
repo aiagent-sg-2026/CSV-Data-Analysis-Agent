@@ -472,6 +472,8 @@ const executeManagedDataQueryUnlocked = async (
     const loadVersion = getCsvDatasetLoadVersion(data);
     const compiled = compileQueryPlanToDuckDbSql(plan, {
         exactDecimalColumns:data.backing?.ephemeral===false?data.backing.exactDecimalColumns?.map(c=>c.name):undefined,
+        exactDecimalUnits:data.backing?.ephemeral===false&&data.backing.exactDecimalColumns
+            ?Object.fromEntries(data.backing.exactDecimalColumns.map(c=>[c.name,c.unit])):undefined,
         allowedColumns,
         tableName: DUCKDB_TABLE_NAME,
         maxRows: DEFAULT_MAX_ROWS,
