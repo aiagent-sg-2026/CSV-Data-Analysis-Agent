@@ -1,5 +1,7 @@
 ## Current Work Context
 
+- **Worker PR-1 (2026-10-27, source only; not deployed)**: The report boundary dialog limits body preview and count to the current summary boundary and first stacked section; summary preview stops at that section. Header, body and summary previews do not repeat source indexes. Editing boundary inputs immediately updates the preview. Parsing and checked-in deployment are unchanged.
+- **Verification**: Fictional footer regression failed before the fix (TOTAL appeared as both Data and Summary); targeted modal suites passed 24 tests after, frontend typecheck passed, and a local Chromium source-app smoke showed three Data rows and one Summary TOTAL.
 - **Goal**: Maintain the React browser app and its checked-in GitHub Pages build. The main assistant and initial analysis run through Pi Harness and the governed app tools.
 - **Header alignment PR-2 (2026-10-27)**: Adds a standalone, versioned structural candidate and host validator over original unpadded intake rows. Repeated compacted bands and exact dense cycles can yield multiple full-coverage coordinate mappings; physical consistency does not establish semantic ownership. Candidates remain review-only, with no changes to parser, normalized headers, accepted datasets, canonicalization, or the `header_shape_drift` guard. Arbitrary ragged layouts remain unresolved. PR-3 must validate the exact candidate and arrange semantic review before considering integration.
 - **Worker change (2026-10-23, P0 missing markers counted as 0; root not republished)**:

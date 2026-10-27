@@ -10,6 +10,9 @@ vi.mock('../store/useAppStore', () => ({
 const mockStore = (overrides: {
     summaryStartIndex: number | null;
     normalizedRows: string[][];
+    bodyStartIndex?: number;
+    headerLayerRowIndexes?: number[];
+    setAsideSections?: { rowStart: number; rowCount: number }[];
     saveBoundary?: ReturnType<typeof vi.fn>;
     blockingReasons?: string[];
     language?: string;
@@ -21,8 +24,8 @@ const mockStore = (overrides: {
         setIsReportBoundaryConfirmModalOpen: vi.fn(),
         reportStructureResolution: {
             headerRowIndex: 0,
-            headerLayerRowIndexes: [],
-            bodyStartIndex: 1,
+            headerLayerRowIndexes: overrides.headerLayerRowIndexes ?? [],
+            bodyStartIndex: overrides.bodyStartIndex ?? 1,
             summaryStartIndex: overrides.summaryStartIndex,
             parameterRowIndexes: [],
             repeatedHeaderRowIndexes: [],
@@ -34,7 +37,10 @@ const mockStore = (overrides: {
                 reason: decisionReason,
             },
         },
-        rawIntakeIr: { normalizedRows: overrides.normalizedRows },
+        rawIntakeIr: {
+            normalizedRows: overrides.normalizedRows,
+            diagnostics: { setAsideSections: overrides.setAsideSections ?? [] },
+        },
         saveReportStructureBoundaryOverride: overrides.saveBoundary ?? vi.fn(async () => undefined),
         isBusy: false,
         settings: { language: overrides.language ?? 'English' },
@@ -59,6 +65,75 @@ const getSummaryCard = () => screen.getByText('Summary Rows').parentElement as H
 
 describe('ReportBoundaryConfirmModal guided repair', () => {
     afterEach(() => cleanup());
+
+    it('previews a fictional footer once and updates the edited boundaries', () => {
+        mockStore({
+            headerLayerRowIndexes: [0, 1],
+            bodyStartIndex: 2,
+            summaryStartIndex: 5,
+            normalizedRows: [
+                ['Fictional report'], ['Item', 'Value'],
+                ['Amber', '1'], ['Blue', '2'], ['Cyan', '3'],
+                ['TOTAL', '6'], ['Note A'], ['Note B'], ['Note C'], ['Note D'],
+            ],
+        });
+        render(<ReportBoundaryConfirmModal />);
+        const table = screen.getByRole('table');
+        const preview = () => within(table).getAllByRole('row').map(row =>
+            within(row).getAllByRole('cell').map(cell => cell.textContent));
+        expect(preview()).toEqual([
+            ['1', 'Header', 'Fictional report'], ['2', 'Header', 'Item', 'Value'],
+            ['3', 'Data', 'Amber', '1'], ['4', 'Data', 'Blue', '2'], ['5', 'Data', 'Cyan', '3'],
+            ['6', 'Summary', 'TOTAL', '6'], ['7', 'Summary', 'Note A'],
+        ]);
+        expect(within(screen.getByText('Data Rows').parentElement as HTMLElement).getByText('3')).toBeInTheDocument();
+        expect(within(screen.getByText('Summary Rows').parentElement as HTMLElement).getByText('5')).toBeInTheDocument();
+
+        const inputs = screen.getAllByRole('spinbutton');
+        fireEvent.change(inputs[1], { target: { value: '7' } });
+        expect(preview().find(row => row.includes('TOTAL'))?.[1]).toBe('Data');
+        fireEvent.change(inputs[0], { target: { value: '4' } });
+        expect(preview().filter(row => row[1] === 'Data').map(row => row[0])).toEqual(['4', '5', '6']);
+        fireEvent.change(inputs[1], { target: { value: '6' } });
+        expect(preview().filter(row => row[1] === 'Data').map(row => row[0])).toEqual(['4', '5']);
+        expect(preview().find(row => row.includes('TOTAL'))?.[1]).toBe('Summary');
+    });
+
+    it.each([
+        { name: 'no summary', body: 1, summary: null, stack: undefined, data: ['2', '3', '4', '5'], summaries: [], count: '5' },
+        { name: 'summary adjacent to header', body: 1, summary: 1, stack: undefined, data: [], summaries: ['2', '3'], count: '0' },
+        { name: 'summary before body', body: 4, summary: 2, stack: undefined, data: [], summaries: ['3', '4'], count: '0' },
+        { name: 'summary after body', body: 1, summary: 4, stack: undefined, data: ['2', '3', '4'], summaries: ['5', '6'], count: '3' },
+        { name: 'stack without summary', body: 1, summary: null, stack: 3, data: ['2', '3'], summaries: [], count: '2' },
+        { name: 'stack after summary', body: 1, summary: 2, stack: 3, data: ['2'], summaries: ['3'], count: '1' },
+        { name: 'summary inside stack', body: 1, summary: 4, stack: 3, data: ['2', '3'], summaries: [], count: '2' },
+    ])('respects preview intervals: $name', ({ body, summary, stack, data, summaries, count }) => {
+        mockStore({
+            headerLayerRowIndexes: [0], bodyStartIndex: body, summaryStartIndex: summary,
+            normalizedRows: [['Header'], ['One'], ['Two'], ['Three'], ['Four'], ['Five']],
+            setAsideSections: stack === undefined ? [] : [{ rowStart: stack, rowCount: 6 - stack }],
+        });
+        render(<ReportBoundaryConfirmModal />);
+        const preview = within(screen.getByRole('table')).getAllByRole('row').map(row =>
+            within(row).getAllByRole('cell').map(cell => cell.textContent));
+        expect(preview.filter(row => row[1] === 'Data').map(row => row[0])).toEqual(data);
+        expect(preview.filter(row => row[1] === 'Summary').map(row => row[0])).toEqual(summaries);
+        expect(new Set(preview.map(row => row[0])).size).toBe(preview.length);
+        expect(within(screen.getByText('Data Rows').parentElement as HTMLElement).getByText(count)).toBeInTheDocument();
+    });
+
+    it('does not duplicate or count header rows inside conflicting boundaries', () => {
+        mockStore({
+            headerLayerRowIndexes: [0, 1, 1], bodyStartIndex: 1, summaryStartIndex: 1,
+            normalizedRows: [['Header A'], ['Header B'], ['Footer']],
+        });
+        render(<ReportBoundaryConfirmModal />);
+        const preview = within(screen.getByRole('table')).getAllByRole('row').map(row =>
+            within(row).getAllByRole('cell').map(cell => cell.textContent));
+        expect(preview.map(row => row.slice(0, 2))).toEqual([['1', 'Header'], ['2', 'Header'], ['3', 'Summary']]);
+        expect(within(screen.getByText('Data Rows').parentElement as HTMLElement).getByText('0')).toBeInTheDocument();
+        expect(within(getSummaryCard()).getByText('1')).toBeInTheDocument();
+    });
 
     it('explains the block, allows field-role correction, and waits for explicit confirmation', async () => {
         const saveBoundary = vi.fn(async () => undefined);
