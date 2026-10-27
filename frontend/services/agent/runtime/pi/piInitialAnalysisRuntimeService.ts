@@ -31,7 +31,7 @@ import {getStorageDatabase} from '../../../storageService';
 import {readCurrentCommit} from '../../../data/datasetRecoveryActions';
 import {verifyInitialCodingCommit,reconcileInitialCodingCheckpoint} from './piInitialCodingCheckpoint';
 import { inspectInitialHeaderAlignment } from './piHeaderAlignmentGate';
-import { prepareStructureRepair, type PiStructureRepair } from './piStructureRepair';
+import { prepareStructureRepair, StructureRepairPreparationError, type PiStructureRepair, type StructureRepairProgress } from './piStructureRepair';
 
 const STAGES = createInitialAnalysisStageToolManifests();
 import { INITIAL_CHECKPOINT_PREFIX as CHECKPOINT_PREFIX, initialCheckpointKey as checkpointKey, hasPiInitialCheckpoint, readPiInitialCheckpoint as readCheckpoint, writePiInitialCheckpoint as writeCheckpoint, discardPiInitialCheckpoint as discardCheckpoint, captureCheckpointSource, captureCheckpointSourceBoundary, checkpointLineageSignature, validateCheckpointState, type PiInitialCheckpoint, type InitialStageReceipt } from './piInitialCheckpoint';
@@ -154,6 +154,7 @@ const run = async (
     let approvalSealed=false;
     let headerGateBlocked = false;
     let structureRepair: PiStructureRepair | undefined;
+    let repairPreparationFailure: StructureRepairProgress | undefined;
     let headerAlignmentDiagnostic: InitialAnalysisRunOutcome['headerAlignmentDiagnostic'];
     let recoveryEnabled = Boolean(checkpointSource) && !store.getState().csvData?.backing?.ephemeral;
     let providerTurns = 0;
@@ -525,6 +526,8 @@ const run = async (
             goal:request.researchGoal,guest:options.codingPreparation.guest,qualified,continuation:options.codingPreparation.continuation,
             recoveryBudget:options.codingPreparation.continuation?undefined:structureRepair?.recoveryBudget??checkpoint?.coding?.budget});
         structureRepair?.current();
+        const preparedRepairProgress = structureRepair?.progress;
+        if (preparedRepairProgress?.state === 'exhausted') throw new Error('initial_repair_exhausted');
         if(qualified){
             executorPreparation!.task.requireOutputs([{id:'initial-evidence',kind:'card',required:true},{id:'initial-report',kind:'answer',required:true}]);
             // Pi 0.87 derives its prompt from system messages; the prompt view is read-only.
@@ -624,11 +627,12 @@ const run = async (
             if(nextStageIndex!==STAGES.length||!trusted.length||!report){status='blocked';errorMessage='initial_required_outputs_unfulfilled';}
         }
     } catch (error) {
+        if (error instanceof StructureRepairPreparationError) repairPreparationFailure = error.progress;
         errorMessage = sanitizeError(error);
         // A declined consent prompt mentions the provider, so classify it before the provider heuristic.
         cloudConsentDeclined = (error as { code?: unknown } | null)?.code === 'cloud_ai_consent_declined';
         providerFailure ||= !headerGateBlocked && !cloudConsentDeclined && isInitialAnalysisProviderFailure(error);
-        status = !ownsRun(store, lease) || (controller.signal.aborted && (request.signal?.aborted || activeEntry.cancelledByUser || (controller.signal.reason as Error)?.name === 'AbortError')) ? 'cancelled'
+        status = repairPreparationFailure?.state === 'cancelled' || !ownsRun(store, lease) || (controller.signal.aborted && (request.signal?.aborted || activeEntry.cancelledByUser || (controller.signal.reason as Error)?.name === 'AbortError')) ? 'cancelled'
             : qualified && !providerFailure && (executorPreparation?.task.blockedReason || /^(tool_no_progress|task_budget_exhausted|initial_[a-z_]+)/.test(errorMessage)) ? 'blocked'
                 : !executorPreparation && results.length > 0 ? 'degraded' : 'failed';
         if (status === 'degraded') warnings.push({
@@ -638,7 +642,6 @@ const run = async (
         });
     } finally {
         if (structureRepair) {
-            if (executorPreparation) structureRepair.saveBudget(executorPreparation.task.snapshot.budget);
             if (ownsRun(store,lease) && !lease.signal.aborted) {
                 try { structureRepair.stop(false, errorMessage); } catch { /* Replacement revokes all publication. */ }
             } else structureRepair.stop(true, errorMessage);
@@ -658,6 +661,7 @@ const run = async (
         }
         executorPreparation?.task.close(status === 'cancelled' ? 'cancelled' : status==='blocked'?'blocked'
             : results.some(result => result.decision === 'fail') ? 'blocked' : status === 'failed' ? 'failed' : 'completed');
+        if (structureRepair && executorPreparation) structureRepair.saveBudget(executorPreparation.task.snapshot.budget);
         clearTimeout(timer);
         controller.signal.removeEventListener('abort', abortAgent);
         request.signal?.removeEventListener('abort', forwardAbort);
@@ -667,7 +671,8 @@ const run = async (
         }
     }
     if (!ownsRun(store, lease)) return { status: 'cancelled', currentDatasetVersion: request.datasetVersion,
-        finalDatasetVersion: request.datasetVersion, trustedCardIds: [], warnings, runtimeRunId, traceId };
+        finalDatasetVersion: request.datasetVersion, trustedCardIds: [], warnings, runtimeRunId, traceId,
+        ...(structureRepair || repairPreparationFailure ? { structureRepair: structureRepair?.progress ?? repairPreparationFailure } : {}) };
     // Cancellation may finalize its own session, but ordinary cancelled writes remain fenced.
     store = originalStore;
     const finalDatasetVersion = getCurrentAnalysisDatasetVersion(store.getState()) ?? request.datasetVersion;
@@ -738,11 +743,11 @@ const run = async (
         runtimeRunId,
         traceId,
         ...(headerAlignmentDiagnostic ? { headerAlignmentDiagnostic } : {}),
-        ...(structureRepair ? { structureRepair: structureRepair.progress } : {}),
+        ...(structureRepair || repairPreparationFailure ? { structureRepair: structureRepair?.progress ?? repairPreparationFailure } : {}),
         ...(status === 'failed'||status==='blocked'&&!pendingApproval ? { error: {
             code: 'pi_initial_analysis_failed',
             message: errorMessage || 'Pi did not complete the governed analysis.',
-            retryable: structureRepair ? structureRepair.progress.resumable : !headerGateBlocked,
+            retryable: structureRepair?.progress.resumable ?? repairPreparationFailure?.resumable ?? !headerGateBlocked,
         } } : {}),
     };
 };

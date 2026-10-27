@@ -1,10 +1,10 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import type { StoreApi } from '../services/agent/types';
-import { captureCsvSource } from '../services/data/immutableCsvSource';
+import { captureCsvSource, bindRecoverySource } from '../services/data/immutableCsvSource';
 import { createSingleTableDatasetBundle } from '../services/data/datasetBundle';
 import { beginRun, beginSessionTransition, scopeRunStore, finishRun } from '../services/session/sessionOwnership';
-import { prepareStructureRepair, STRUCTURE_REPAIR_SOURCE_BYTES } from '../services/agent/runtime/pi/piStructureRepair';
+import { prepareStructureRepair, STRUCTURE_REPAIR_SOURCE_BYTES, STRUCTURE_REPAIR_LEDGER_SOURCES, STRUCTURE_REPAIR_LEDGER_TARGETS } from '../services/agent/runtime/pi/piStructureRepair';
 import type { CandidateValidationReceipt } from '../services/data/candidateStaging';
 import { DEFAULT_TASK_LIMITS, createTaskBudget } from '../services/agent/runtime/pi/piTaskBudget';
 
@@ -58,6 +58,93 @@ describe('owned bounded original-source repair phase', () => {
             expect(resumed.recoveryBudget).toEqual(budget); expect(resumed.progress.attempts).toBe(1);
             resumed.beforeTool('code_run', f.code); resumed.afterTool('candidate_validate', failed);
             expect(resumed.progress).toMatchObject({ state: 'exhausted', validationFailures: 2, attempts: 2, resumable: false });
+        } finally { beginSessionTransition(f.root); }
+    });
+    it('retains source and target budgets across A → B → A, cancellation and forged public state', async () => {
+        const f = await fixture(); try {
+            const a = await prepareStructureRepair(f.store, 'A');
+            a.beforeTool('code_run', f.code); a.afterTool('candidate_validate', failed);
+            const budget = { ...createTaskBudget(), used: { toolCalls: 9, skillReads: 1, providerTurns: 10, transformationAttempts: 1, activeMs: 101 } };
+            a.saveBudget(budget); a.stop(true, 'user_stop');
+            f.root.setState({ workspaceFiles: { '/intake/repair-task.json': '{"attempts":0}' } });
+            const b = await prepareStructureRepair(f.store, 'B');
+            expect(b.recoveryBudget).toEqual(budget);
+            expect(b.progress).toMatchObject({ attempts: 1, validationFailures: 1 });
+            expect(() => a.beforeTool('code_run', f.code)).toThrow();
+            const again = await prepareStructureRepair(f.store, 'A');
+            again.beforeTool('code_run', { ...f.code, program: { sha256: 'caller-changed' } });
+            again.afterTool('candidate_validate', failed);
+            expect(again.progress).toMatchObject({ state: 'exhausted', attempts: 2, validationFailures: 2 });
+            for (const goal of ['B', 'A']) {
+                const next = await prepareStructureRepair(f.store, goal);
+                expect(next.progress).toMatchObject({ state: 'exhausted', attempts: 2, validationFailures: 2 });
+                expect(next.recoveryBudget).toEqual(budget);
+                expect(() => next.beforeTool('code_run', f.code)).toThrow('exhausted');
+            }
+        } finally { beginSessionTransition(f.root); }
+    });
+    it('reattaches identical bytes/renamed locators without resetting, but admits new content and sessions', async () => {
+        const f = await fixture(); try {
+            const original = f.root.getState().datasetBundle!;
+            const first = await prepareStructureRepair(f.store, 'A'); first.beforeTool('code_run', f.code);
+            const renamed = await captureCsvSource(f.root, new File(['Key,Amount\na,1\n'], 'renamed.csv'));
+            f.root.setState({ datasetBundle: { ...original, source: { ...original.source, inspection: renamed } } });
+            expect(renamed.sourceId).not.toBe(f.source.sourceId);
+            expect((await prepareStructureRepair(f.store, 'A')).progress.attempts).toBe(1);
+            await bindRecoverySource(f.root, new File(['Key,Amount\na,1\n'], 'reattached.csv'), f.source);
+            f.root.setState({ datasetBundle: original });
+            expect((await prepareStructureRepair(f.store, 'A')).progress.attempts).toBe(1);
+            const changed = await captureCsvSource(f.root, new File(['Key,Amount\na,2\n'], 'changed.csv'));
+            f.root.setState({ datasetBundle: { ...original, source: { ...original.source, inspection: changed } } });
+            expect((await prepareStructureRepair(f.store, 'A')).progress.attempts).toBe(0);
+            f.root.setState({ datasetBundle: original });
+            expect((await prepareStructureRepair(f.store, 'A')).progress.attempts).toBe(1);
+            beginSessionTransition(f.root);
+            const source = await captureCsvSource(f.root, new File(['Key,Amount\na,1\n'], 'synthetic.csv'));
+            f.root.setState({ datasetBundle: { ...original, source: { ...original.source, inspection: source } } });
+            const lease = beginRun(f.root, 'initial_analysis', crypto.randomUUID());
+            expect((await prepareStructureRepair(scopeRunStore(f.root, lease), 'A')).progress.attempts).toBe(0);
+        } finally { beginSessionTransition(f.root); }
+    });
+    it('bounds target admission without eviction or blocking another valid source', async () => {
+        const f = await fixture(); try {
+            const original = f.root.getState().datasetBundle!;
+            const a = await prepareStructureRepair(f.store, 'A'); a.beforeTool('code_run', f.code);
+            for (let i = 1; i < STRUCTURE_REPAIR_LEDGER_TARGETS; i++) await prepareStructureRepair(f.store, `target-${i}`);
+            await expect(prepareStructureRepair(f.store, 'new-target')).rejects.toMatchObject({ progress: { state: 'exhausted', reason: 'source_target_ledger_capacity', attempts: 1 } });
+            expect((await prepareStructureRepair(f.store, 'A')).progress.attempts).toBe(1);
+            const other = await captureCsvSource(f.root, new File(['Key,Amount\nb,2\n'], 'other.csv'));
+            f.root.setState({ datasetBundle: { ...original, source: { ...original.source, inspection: other } } });
+            expect((await prepareStructureRepair(f.store, 'new-target')).progress.attempts).toBe(0);
+        } finally { beginSessionTransition(f.root); }
+    });
+    it('bounds source admission without evicting old spent identities', async () => {
+        const f = await fixture(); try {
+            const original = f.root.getState().datasetBundle!;
+            const a = await prepareStructureRepair(f.store, 'A'); a.beforeTool('code_run', f.code);
+            for (let i = 1; i <= STRUCTURE_REPAIR_LEDGER_SOURCES; i++) {
+                const source = await captureCsvSource(f.root, new File([`Key,Amount\na,${i + 10}\n`], `source-${i}.csv`));
+                f.root.setState({ datasetBundle: { ...original, source: { ...original.source, inspection: source } } });
+                if (i === STRUCTURE_REPAIR_LEDGER_SOURCES) await expect(prepareStructureRepair(f.store, 'A')).rejects.toMatchObject({ progress: { state: 'exhausted', reason: 'session_source_ledger_capacity' } });
+                else expect((await prepareStructureRepair(f.store, 'A')).progress.attempts).toBe(0);
+            }
+            f.root.setState({ datasetBundle: original });
+            expect((await prepareStructureRepair(f.store, 'A')).progress.attempts).toBe(1);
+        } finally { beginSessionTransition(f.root); }
+    });
+    it('keeps saved task snapshots private and monotonic, and retains task/no-progress exhaustion', async () => {
+        const f = await fixture(); try {
+            const a = await prepareStructureRepair(f.store, 'A');
+            const budget = { ...createTaskBudget(), used: { toolCalls: 39, skillReads: 1, providerTurns: 31, transformationAttempts: 0, activeMs: 123 } };
+            a.saveBudget(budget); budget.used.toolCalls = 0;
+            a.recoveryBudget!.used.toolCalls = 0; a.saveBudget(createTaskBudget());
+            expect(a.recoveryBudget?.used.toolCalls).toBe(39);
+            a.stop(false, 'tool_no_progress');
+            for (const goal of ['B', 'A']) {
+                const b = await prepareStructureRepair(f.store, goal);
+                expect(b.progress.state).toBe('exhausted'); expect(b.recoveryBudget?.used.toolCalls).toBe(39);
+                expect(() => b.beforeTool('workspace_read', {})).toThrow('exhausted');
+            }
         } finally { beginSessionTransition(f.root); }
     });
     it('fences source replacement and in-place source metadata changes without publishing over replacement', async () => {

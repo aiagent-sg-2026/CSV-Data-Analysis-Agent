@@ -4,7 +4,7 @@ import type {AssistantMessage,JsonObject} from '@earendil-works/pi-ai';
 import type {StreamFn} from '@earendil-works/pi-agent-core';
 import {createAssistantMessageEventStream,getCurrentTools} from '@earendil-works/pi-ai';
 import {createSingleTableDatasetBundle} from '../services/data/datasetBundle';
-import {captureCsvSource} from '../services/data/immutableCsvSource';
+import {captureCsvSource,registerScannedCsvBlob,bindRecoverySource} from '../services/data/immutableCsvSource';
 import {runPiInitialAnalysis} from '../services/agent/runtime/pi/piInitialAnalysisRuntimeService';
 import type {StoreApi} from '../services/agent/types';
 import {beginSessionTransition} from '../services/session/sessionOwnership';
@@ -23,6 +23,8 @@ import {inspectPiCandidateReview} from '../services/agent/runtime/pi/piCandidate
 import {recoverCandidateReview,commitRecoveredCandidate} from '../services/data/candidateRecovery';
 import {scopeRunStore,finishRun} from '../services/session/sessionOwnership';
 import {createCleaningRun} from '../services/agent/cleaningRunState';
+import {prepareStructureRepair,STRUCTURE_REPAIR_LEDGER_TARGETS} from '../services/agent/runtime/pi/piStructureRepair';
+import * as sourceScan from '../services/data/csvSourceScan';
 import * as meaningInference from '../services/data/inferCandidateMeaning';
 import {preparePiStructureRepairSmoke,queryPiStructureRepairSmoke} from '../services/agent/runtime/pi/piStructureRepairQualification';
 import {executeDataQuery} from '../services/agent/execution/dataOperationRunner';
@@ -150,6 +152,94 @@ describe('initial shared coding phase',()=>{
             expect(root.getState().analysisCards).toEqual([]);expect(root.getState().canonicalCsvData).toBeNull();
             expect(f.result.error?.retryable).toBe(false);
         }finally{beginSessionTransition(root);}
+    });
+    it('preserves exhausted repair and task budgets through real runtime A → B → A',async()=>{
+        const root=bareStore();try{
+            const f=await preparePiStructureRepairSmoke(root,{mode:'no-progress'});
+            const budget=root.getState().activeAgentTask!.budget;
+            for(const researchGoal of ['Different goal',root.getState().confirmedAnalysisGoal!]){
+                const result=await runPiInitialAnalysis({appSessionId:root.getState().sessionId,datasetId:root.getState().currentDatasetId!,
+                    datasetVersion:root.getState().datasetBundle!.datasetVersion,researchGoal,provider:{provider:'default',modelId:'mock'}},root,
+                    scripted(()=>{throw new Error('Exhausted repair must not call provider');}),f.runtimeOptions);
+                expect(result.structureRepair).toMatchObject({state:'exhausted',attempts:2,validationFailures:2,resumable:false});
+                expect(result.error?.retryable).toBe(false);
+                const used=root.getState().activeAgentTask!.budget.used;
+                expect({...used,activeMs:0}).toEqual({...budget.used,activeMs:0});
+                expect(used.activeMs).toBeGreaterThanOrEqual(budget.used.activeMs);
+            }
+            expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);expect(root.getState().canonicalCsvData).toBeNull();
+        }finally{beginSessionTransition(root);}
+    });
+    it.each(['missing','retained','sync','oversized'] as const)('returns a structured %s preparation failure with honest retryability',async mode=>{
+        const f=await fixture();try{
+            f.root.setState({pipelineOutcome:{canAutoAnalyze:false} as never});
+            if(mode==='missing')f.root.setState(s=>({datasetBundle:{...s.datasetBundle!,source:{...s.datasetBundle!.source,inspection:undefined}}}));
+            if(mode==='retained')f.root.setState(s=>({datasetBundle:{...s.datasetBundle!,source:{...s.datasetBundle!.source,inspection:{...f.source,sourceId:'not-retained'}}}}));
+            if(mode==='sync')registerScannedCsvBlob(f.root,f.file,f.source,[]);
+            if(mode==='oversized'){
+                const source=await captureCsvSource(f.root,new File(['Name,Amount\n'+'a,1\n'.repeat(17000)],'large-synthetic.csv'));
+                f.root.setState(s=>({datasetBundle:{...s.datasetBundle!,source:{...s.datasetBundle!.source,inspection:source}}}));
+            }
+            const result=await runPiInitialAnalysis(f.request,f.root,scripted(()=>{throw new Error('Preparation must fail before provider');}),{codingPreparation:{enabled:true,qualified:true}});
+            expect(result.structureRepair).toMatchObject({state:'unavailable',resumable:mode!=='oversized',commitAllowed:false,
+                reason:mode==='missing'?'source_required':mode==='retained'?'retained_original_source_required':mode==='sync'?'synchronous_source_capture_required':'source_record_stream_and_spill_required'});
+            expect(result.error?.retryable).toBe(mode!=='oversized');expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);
+            if(mode!=='oversized'){
+                if(mode==='sync')await bindRecoverySource(f.root,f.file,f.source);
+                f.root.setState(s=>({datasetBundle:{...s.datasetBundle!,source:{...s.datasetBundle!.source,inspection:f.source}}}));
+                const retry=await runPiInitialAnalysis(f.request,f.root,scripted(()=>{throw new Error('Synthetic provider stopped after preparation.');}),{codingPreparation:{enabled:true,qualified:true}});
+                expect(retry.structureRepair?.state).toBe('repairing');
+            }
+        }finally{beginSessionTransition(f.root);}
+    });
+    it('returns structured non-retryable exhaustion when target admission throws before returning a coordinator',async()=>{
+        const f=await fixture();try{
+            const lease=beginRun(f.root,'initial_analysis',crypto.randomUUID()),owned=scopeRunStore(f.root,lease);
+            for(let i=0;i<STRUCTURE_REPAIR_LEDGER_TARGETS;i++)await prepareStructureRepair(owned,`target-${i}`);
+            finishRun(f.root,lease);f.root.setState({pipelineOutcome:{canAutoAnalyze:false} as never});
+            const result=await runPiInitialAnalysis(f.request,f.root,scripted(()=>{throw new Error('Provider must not run');}),{codingPreparation:{enabled:true,qualified:true}});
+            expect(result.structureRepair).toMatchObject({state:'exhausted',reason:'source_target_ledger_capacity',resumable:false,commitAllowed:false});
+            expect(result.error?.retryable).toBe(false);expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);
+        }finally{beginSessionTransition(f.root);}
+    });
+    it.each(['read-error','unsupported-error','stop','source-replace','session-replace'] as const)('preserves a structured thrown preparation outcome across %s',async mode=>{
+        const f=await fixture(),entered=deferred(),release=deferred();
+        const spy=vi.spyOn(sourceScan,'requireCurrentCsvSourceScan').mockImplementationOnce(async()=>{
+            entered.resolve();await release.promise;
+            if(mode==='unsupported-error')throw new Error('scan_fixed_width_requires_layout_scanner');
+            throw new DOMException('Synthetic original read failed','NotReadableError');
+        });
+        try{
+            f.root.setState({pipelineOutcome:{canAutoAnalyze:false} as never});
+            const running=runPiInitialAnalysis(f.request,f.root,scripted(()=>{throw new Error('Provider must not run');}),{codingPreparation:{enabled:true,qualified:true}});
+            await entered.promise;
+            if(mode==='stop')cancelOwnedRun(f.root);
+            if(mode==='source-replace')f.root.setState(s=>({datasetBundle:{...s.datasetBundle!,source:{...s.datasetBundle!.source,inspection:{...f.source,sourceId:'replacement'}}},workspaceFiles:{'/new-owner':'preserve'}}));
+            if(mode==='session-replace'){beginSessionTransition(f.root);f.root.setState({sessionId:'replacement',workspaceFiles:{'/new-owner':'preserve'}});}
+            const before=f.root.getState().workspaceFiles;
+            release.resolve();const result=await running;
+            expect(result.structureRepair).toMatchObject({state:mode.endsWith('error')?'unavailable':'cancelled',resumable:mode==='read-error',commitAllowed:false});
+            if(mode.endsWith('error'))expect(result.error?.retryable).toBe(mode==='read-error');
+            else expect(result.status).toBe('cancelled');
+            if(mode.endsWith('replace'))expect(f.root.getState().workspaceFiles).toEqual(before);
+            expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);
+        }finally{release.resolve();spy.mockRestore();beginSessionTransition(f.root);}
+    });
+    it('preserves charged execution and task budget after cancellation and resume',async()=>{
+        const root=bareStore(),entered=deferred(),release=deferred();
+        io.beforeGuest=()=>{entered.resolve();return release.promise;};
+        try{
+            const running=preparePiStructureRepairSmoke(root);await entered.promise;cancelOwnedRun(root);release.resolve();const f=await running;
+            expect(f.result.structureRepair).toMatchObject({state:'cancelled',attempts:1,resumable:false});
+            const previous=root.getState().activeAgentTask!.budget.used;
+            const result=await runPiInitialAnalysis({appSessionId:root.getState().sessionId,datasetId:root.getState().currentDatasetId!,
+                datasetVersion:root.getState().datasetBundle!.datasetVersion,researchGoal:root.getState().confirmedAnalysisGoal!,provider:{provider:'default',modelId:'mock'}},root,
+                scripted(()=>{throw new Error('Synthetic provider stopped after resume');}),f.runtimeOptions);
+            expect(result.structureRepair).toMatchObject({state:'repairing',attempts:1,validationFailures:0});
+            const used=root.getState().activeAgentTask!.budget.used;
+            expect(used.transformationAttempts).toBe(1);expect(used.toolCalls).toBe(previous.toolCalls);expect(used.providerTurns).toBeGreaterThanOrEqual(previous.providerTurns);
+            expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);
+        }finally{release.resolve();io.beforeGuest=undefined;beginSessionTransition(root);}
     });
     it.each(['meaning-stop','guest-stop','meaning-replace','guest-replace'] as const)('revokes original-source repair across the %s await',async mode=>{
         const root=bareStore(),entered=deferred(),release=deferred();

@@ -1,10 +1,21 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { captureCsvSource, readSourceBytes, readSourceRecords } from '../services/data/immutableCsvSource';
+import { captureCsvSource, readSourceBytes, readSourceRecords, registerScannedCsvBlob } from '../services/data/immutableCsvSource';
 import { beginSessionTransition } from '../services/session/sessionOwnership';
 import type { AppStore } from '../store/useAppStore';
 const store = () => ({ getState: () => ({ sessionId: 'source-session' } as AppStore), setState: () => {} });
 describe('immutable positional CSV source', () => {
+    it('restores synchronous bytes for a Blob-only original and reuses the restored capture', async () => {
+        const app = store(), file = new File(['Key,Amount\na,1\n'], 'synthetic-blob.csv');
+        try {
+            const original = await captureCsvSource(app, file);
+            registerScannedCsvBlob(app, file, original, []);
+            expect(() => readSourceBytes(app, original.sourceId, 0, original.byteSize)).toThrow('source_requires_bounded_async_read');
+            const restored = await captureCsvSource(app, file), repeated = await captureCsvSource(app, file);
+            expect(readSourceBytes(app, restored.sourceId, 0, restored.byteSize).bytes).toEqual(Array.from(new TextEncoder().encode(await file.text())));
+            expect(repeated).toEqual(restored);
+        } finally { beginSessionTransition(app); }
+    });
     it('preserves BOM, CRLF, duplicate headers, quoted newlines, blanks and ragged cells', async () => {
         const app = store();
         const text = '\uFEFFname,amount,amount\r\n"Total Solutions\nLtd",0,-2\r\nshort,4\r\nlong,5,6,extra\r\n\r\n';

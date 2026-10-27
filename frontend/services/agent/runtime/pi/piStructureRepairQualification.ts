@@ -131,5 +131,8 @@ return {schemaVersion:1,complete:true,tables:[{name:'entities',role:'fact',schem
     } };
     const result = await runPiInitialAnalysis({ appSessionId: root.getState().sessionId, datasetId, datasetVersion: bundle.datasetVersion,
         researchGoal: goal, provider: { provider: 'default', modelId: 'mock' } }, root, stream, runtimeOptions);
-    return { result, source, file, data, ir, trace, stream, runtimeOptions };
+    // Qualification-only retry on the same original/session; do not reseed the fixture or reset its ledger.
+    const retrySameSource = (researchGoal = goal) => runPiInitialAnalysis({ appSessionId: root.getState().sessionId, datasetId,
+        datasetVersion: bundle.datasetVersion, researchGoal, provider: { provider: 'default', modelId: 'mock' } }, root, stream, runtimeOptions);
+    return { result, source, file, data, ir, trace, stream, runtimeOptions, retrySameSource };
 };

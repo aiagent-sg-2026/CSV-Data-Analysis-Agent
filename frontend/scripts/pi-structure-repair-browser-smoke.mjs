@@ -66,6 +66,31 @@ try {
         if (mode === 'no-progress') {
             assert.equal(result.result.structureRepair.state, 'exhausted');
             assert.equal(result.result.structureRepair.attempts, 2); assert.equal(result.pending, false);
+            result.goalRevisits = await page.evaluate(async () => {
+                const { root, f } = globalThis.repairQa, oldBudget = root.getState().activeAgentTask.budget;
+                const different = await f.retrySameSource('Different repair goal B');
+                const original = await f.retrySameSource();
+                const bundle = root.getState().datasetBundle;
+                root.setState({ datasetBundle: { ...bundle, source: { ...bundle.source, inspection: undefined } } });
+                const unavailable = await f.retrySameSource();
+                root.setState({ datasetBundle: bundle });
+                const reattached = await f.retrySameSource(), state = root.getState();
+                return { different, original, unavailable, reattached, oldBudget, budget: state.activeAgentTask.budget,
+                    accepted: state.datasetBundle.acceptedCommit ?? null, canonical: state.canonicalCsvData, cards: state.analysisCards.length };
+            });
+            for (const outcome of [result.goalRevisits.different, result.goalRevisits.original, result.goalRevisits.reattached]) {
+                assert.equal(outcome.structureRepair.state, 'exhausted');
+                assert.equal(outcome.structureRepair.attempts, 2); assert.equal(outcome.structureRepair.validationFailures, 2);
+                assert.equal(outcome.error.retryable, false);
+            }
+            assert.equal(result.goalRevisits.unavailable.structureRepair.state, 'unavailable');
+            assert.equal(result.goalRevisits.unavailable.structureRepair.reason, 'source_required');
+            assert.equal(result.goalRevisits.unavailable.error.retryable, true);
+            for (const dimension of ['toolCalls', 'skillReads', 'providerTurns', 'transformationAttempts']) {
+                assert.equal(result.goalRevisits.budget.used[dimension], result.goalRevisits.oldBudget.used[dimension]);
+            }
+            assert.ok(result.goalRevisits.budget.used.activeMs >= result.goalRevisits.oldBudget.used.activeMs);
+            assert.equal(result.goalRevisits.accepted, null); assert.equal(result.goalRevisits.canonical, null); assert.equal(result.goalRevisits.cards, 0);
         } else {
             assert.equal(result.result.structureRepair.state, 'awaiting_commit_approval');
             assert.equal(result.result.structureRepair.attempts, mode === 'retry' ? 2 : 1); assert.equal(result.pending, true);

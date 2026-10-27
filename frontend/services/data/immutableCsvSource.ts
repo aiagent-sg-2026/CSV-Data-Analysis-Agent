@@ -55,7 +55,9 @@ export const captureCsvSource = async (store: StoreApi, file: File): Promise<Csv
     const sha256 = await sha256Bytes(bytes);
     assertSessionResourceActive(store, scope);
     const existing = sources.get(scope) ?? new Map<string, Source>();
-    const previous = [...existing.values()].find(source => source.metadata.sha256 === sha256 && source.metadata.fileName === file.name);
+    // Blob registration proves positional reads, not synchronous recovery capability.
+    // Reuse only a real byte capture, including one restored after a Blob-only registration.
+    const previous = [...existing.values()].find(source => source.bytes && source.metadata.sha256 === sha256 && source.metadata.fileName === file.name);
     if (previous) return previous.metadata;
     if ([...existing.values()].reduce((sum, source) => sum + source.metadata.byteSize, 0) + bytes.length > MAX_SESSION_BYTES) throw new Error('source_resource_limit');
     const decoder = new TextDecoder();
