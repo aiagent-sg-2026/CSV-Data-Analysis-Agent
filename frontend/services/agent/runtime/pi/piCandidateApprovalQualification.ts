@@ -16,6 +16,7 @@ import type {PiLoopCheck} from './piCodingLoopQualification';
 import {queueSessionWrite} from '../../../persistence/currentSessionPersistence';
 
 export {preparePiInitialCodingUiSmoke} from './piInitialCodingQualification';
+export {preparePiStructureRepairSmoke,queryPiStructureRepairSmoke} from './piStructureRepairQualification';
 export {executeEvaluationCase,executeEvaluationInitialProbe} from './piEvaluationRuntime';
 export {runWeightedMedianDemoProbe} from './piWeightedMedianQualification';
 export {runRepairComputationDemoProbe} from './piRepairComputationQualification';

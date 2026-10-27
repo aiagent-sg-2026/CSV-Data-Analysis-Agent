@@ -74,6 +74,7 @@ export interface InitialAnalysisRunOutcome {
     runtimeRunId: string;
     traceId: string;
     headerAlignmentDiagnostic?: import('./piHeaderAlignmentGate').InitialHeaderAlignmentDiagnostic;
+    structureRepair?: import('./piStructureRepair').StructureRepairProgress;
     error?: InitialAnalysisRunError;
 }
 

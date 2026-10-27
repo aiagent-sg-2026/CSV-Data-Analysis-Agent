@@ -42,7 +42,11 @@ export const executeCandidateAction=async(action:AiAction,store:StoreApi,policy?
             if(args.table!==undefined&&!t)throw new Error('candidate_table_unavailable');
             const offset=Number(args.offset??0),limit=Number(args.limit??10);
             if(t&&offset>t.rowCount)throw new Error('candidate_range_invalid');
-            candidate=t?{candidateId:id,table:t.name,offset,nextRow:Math.min(offset+limit,t.rowCount),complete:offset+limit>=t.rowCount,rows:t.rows.slice(offset,offset+limit),lineage:t.lineage.filter(l=>l.row>=offset&&l.row<offset+limit),validation:c.validation,answerEvidence:false}
+            const receipt=port.validationReceipt(id);
+            const draft=t&&receipt?.decision==='validated'?port.preview(id,t.name,receipt.receiptDigest,offset,limit):undefined;
+            candidate=t?(draft
+                ? {...draft,table:t.name,nextRow:offset+draft.rows.length,complete:offset+draft.rows.length>=t.rowCount,validation:'validated'}
+                : {candidateId:id,table:t.name,offset,nextRow:Math.min(offset+limit,t.rowCount),complete:offset+limit>=t.rowCount,rows:t.rows.slice(offset,offset+limit),lineage:t.lineage.filter(l=>l.row>=offset&&l.row<offset+limit),validation:c.validation,answerEvidence:false})
                 :{candidateId:id,namespaceId:c.namespaceId,changeDigest:c.changeDigest,lineageDigest:c.lineageDigest,requestedChange:c.requestedChange,protectedSource:c.protectedSource,
                     program:c.execution.program,environmentDigest:c.execution.environmentDigest,inputBindings:c.inputBindings,outputArtifacts:c.outputArtifacts,
                     tables:c.tables.map(({name,role,schema,rowCount})=>({name,role,schema,rowCount})),relationships:c.relationships,excludedRowCount:c.excludedRows.length,validation:c.validation,validationReceipt:port.validationReceipt(id),validationRequirements:port.validationRequirements(),answerEvidence:false};

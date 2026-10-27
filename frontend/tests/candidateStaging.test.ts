@@ -73,6 +73,10 @@ describe('immutable candidate staging',()=>{
             expect(v.decision).toBe('validated');const p=s.port.preview(c.candidateId,'facts',v.receiptDigest);
             expect(p.rows).toEqual([]);expect(p.truncated).toBe(true);
             expect(new TextEncoder().encode(JSON.stringify(p)).byteLength).toBeLessThanOrEqual(64*1024);
+            s.store.candidateStaging=s.port;s.store.executionContext={lease:s.lease,toolCallId:'read',stepId:'read'};
+            const result=await executeCandidateAction({type:'tool_call',toolName:'candidate.read',args:{candidateId:c.candidateId,table:'facts',offset:0,limit:2}} as never,s.store);
+            expect(result.status).toBe('success');
+            expect((result.payload as {candidate:unknown}).candidate).toMatchObject({label:'draft_uncommitted',rows:[],nextRow:0,complete:false,truncated:true});
         }finally{s.cleanup();}
     });
     it('fails closed for blocked and clarification verdicts, drift, denied access and suspended leases',async()=>{
@@ -161,6 +165,7 @@ describe('immutable candidate staging',()=>{
     it('invalidates validation on current program, scope, protected-source and same-version row drift',async()=>{
         const s=await setup(output(),undefined,false,meaning());try{const c=await s.stage();await s.port.validate(c.candidateId,{lease:s.lease,toolCallId:'v',stepId:'v'});
             await s.workspace.write(s.program.path,'return 999;',1);expect(()=>s.port.validationReceipt(c.candidateId)).toThrow('workspace_conflict');
+            expect(s.port.list()).toEqual([]);expect(()=>s.port.read(c.candidateId)).toThrow('workspace_conflict');
         }finally{s.cleanup();}
         const t=await setup(output(),undefined,false,meaning());try{const c=await t.stage();t.root.getState().csvData!.data[0].Amount=1;await expect(t.port.validate(c.candidateId,{lease:t.lease,toolCallId:'v',stepId:'v'})).rejects.toThrow('input_version_changed');}finally{t.cleanup();}
     });

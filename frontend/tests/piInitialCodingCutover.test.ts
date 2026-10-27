@@ -24,7 +24,9 @@ import {recoverCandidateReview,commitRecoveredCandidate} from '../services/data/
 import {scopeRunStore,finishRun} from '../services/session/sessionOwnership';
 import {createCleaningRun} from '../services/agent/cleaningRunState';
 import * as meaningInference from '../services/data/inferCandidateMeaning';
-const io=vi.hoisted(()=>({records:new Map<string,unknown>(),commits:0,queryCalls:0,beforeQuery:undefined as undefined|(()=>Promise<void>)}));
+import {preparePiStructureRepairSmoke,queryPiStructureRepairSmoke} from '../services/agent/runtime/pi/piStructureRepairQualification';
+import {executeDataQuery} from '../services/agent/execution/dataOperationRunner';
+const io=vi.hoisted(()=>({records:new Map<string,unknown>(),commits:0,queryCalls:0,beforeQuery:undefined as undefined|(()=>Promise<void>),beforeGuest:undefined as undefined|(()=>Promise<void>)}));
 vi.mock('../services/storageService',async original=>({...await original<typeof import('../services/storageService')>(),
     getStorageDatabase:async()=>({get:async(_name:string,key:string)=>io.records.get(key),getAllFromIndex:async()=>[...io.records.values()].filter(r=>(r as DatasetCommitMarker).kind==='commit')}) as unknown as StorageDatabase}));
 vi.mock('../services/persistence/datasetCommitStorage',()=>({
@@ -50,7 +52,7 @@ vi.mock('../services/sandbox/javascriptGuestClient',async()=>{
     const {executeQuickJsGuest}=await import('../services/sandbox/quickJsGuest');
     const {resolveGuestLimits}=await import('../services/sandbox/javascriptGuestProtocol');
     const wasm=newQuickJSWASMModuleFromVariant(variant);
-    return {createJavaScriptGuest:()=>({run:(code:string,inputJson:string,options:{limits?:Parameters<typeof resolveGuestLimits>[0];onStarted?:()=>void})=>executeQuickJsGuest({generation:1,code,inputJson,limits:resolveGuestLimits(options?.limits)},()=>wasm,options?.onStarted),cancel(){},dispose(){}})};
+    return {createJavaScriptGuest:()=>({run:async(code:string,inputJson:string,options:{limits?:Parameters<typeof resolveGuestLimits>[0];onStarted?:()=>void})=>{await io.beforeGuest?.();return executeQuickJsGuest({generation:1,code,inputJson,limits:resolveGuestLimits(options?.limits)},()=>wasm,options?.onStarted);},cancel(){},dispose(){}})};
 });
 
 const memory=new Map<string,string>();
@@ -86,7 +88,115 @@ const bareStore=():StoreApi=>{
 const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(r=>resolve=r);return {promise,resolve};};
 
 describe('initial shared coding phase',()=>{
-    beforeEach(()=>{memory.clear();io.records.clear();io.commits=0;io.queryCalls=0;io.beforeQuery=undefined;vi.stubGlobal('localStorage',{getItem:(k:string)=>memory.get(k)??null,setItem:(k:string,v:string)=>memory.set(k,v),removeItem:(k:string)=>memory.delete(k)});});
+    beforeEach(()=>{memory.clear();io.records.clear();io.commits=0;io.queryCalls=0;io.beforeQuery=undefined;io.beforeGuest=undefined;vi.stubGlobal('localStorage',{getItem:(k:string)=>memory.get(k)??null,setItem:(k:string,v:string)=>memory.set(k,v),removeItem:(k:string)=>memory.delete(k)});});
+    it('repairs original ERP source through Pi/QuickJS and independent validation, then exact approval and current queries',async()=>{
+        const root=bareStore();try{
+            const f=await preparePiStructureRepairSmoke(root);
+            expect(f.result.status,f.trace.join('\n')).toBe('blocked');
+            expect(f.result.structureRepair).toMatchObject({state:'awaiting_commit_approval',attempts:1,validationFailures:0,commitAllowed:false});
+            expect(f.trace[0]).toContain('initial_repair_analysis_locked_until_exact_commit');
+            expect(f.trace.join('\n')).toContain('sourceInspection');
+            expect(f.trace.join('\n')).toContain('"status":"succeeded"');
+            expect(f.trace.find(t=>t.startsWith('candidate_read:'))).toContain('draft_uncommitted');
+            expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);
+            expect(root.getState().canonicalCsvData).toBeNull();expect(root.getState().rawCsvData).toEqual(f.data);
+            expect(root.getState().analysisCards).toEqual([]);expect(inspectPiCandidateReview(root).available).toBe(true);
+            await expect(queryPiStructureRepairSmoke(root)).rejects.toThrow('draft_is_not_accepted');
+            await handleClarificationResponse({label:'Approve',value:'approve'},root);
+            expect(io.commits).toBe(1);expect(io.queryCalls).toBe(1);
+            expect(root.getState().datasetCommitBindingStatus).toBe('ready');
+            expect(root.getState().csvData?.data).toEqual([
+                {Entity:'Atlas',Status:'Open',Cost:250,Sales:-250,Rate:'10%'},
+                {Entity:'Birch',Status:'Closed',Cost:30,Sales:-30,Rate:'0%'},
+                {Entity:'Cedar',Status:'Open',Cost:120,Sales:-120,Rate:'5%'},
+            ]);
+            expect(root.getState().rawCsvData).toEqual(f.data);expect(root.getState().activeAgentTask?.budget.used.transformationAttempts).toBe(1);
+            expect(root.getState().analysisCards[0].provenance?.datasetVersion).toBe(root.getState().datasetBundle?.datasetVersion);
+            // Ten independent local query expectations, not ten live model/SQL-worker answers.
+            const rows=root.getState().csvData!.data,columns=['Entity','Status','Cost','Sales','Rate'];
+            const aggregate=(column:string,fn:'sum'|'min'|'max'|'count')=>executeDataQuery(rows,{groupBy:[],aggregates:[{function:fn,column,as:'Value'}],limit:10},
+                {allowedColumns:columns,maxRows:50,maxColumns:10,maxOrderBy:3}).rows;
+            expect(rows).toHaveLength(3); // 1: entity count, not metric cells
+            expect(rows.map(r=>r.Entity)).toEqual(['Atlas','Birch','Cedar']); // 2
+            expect(aggregate('Cost','sum')).toEqual([{Value:400}]); // 3
+            expect(aggregate('Sales','sum')).toEqual([{Value:-400}]); // 4
+            expect(aggregate('Cost','min')).toEqual([{Value:30}]); // 5
+            expect(aggregate('Cost','max')).toEqual([{Value:250}]); // 6
+            expect(aggregate('Sales','min')).toEqual([{Value:-250}]); // 7
+            expect(rows.filter(r=>r.Status==='Open').length).toBe(2); // 8
+            expect(rows.map(r=>r.Rate)).toEqual(['10%','0%','5%']); // 9: not summed
+            expect(rows.some(r=>r.Entity==='TOTAL')).toBe(false); // 10
+            expect(await queryPiStructureRepairSmoke(root)).toHaveLength(10);expect(io.queryCalls).toBe(11);
+        }finally{beginSessionTransition(root);}
+    });
+    it('feeds independent validation errors back to Pi and repairs automatically without intermediate approval',async()=>{
+        const root=bareStore();try{
+            const f=await preparePiStructureRepairSmoke(root,{mode:'retry'});
+            expect(f.result.structureRepair,f.trace.join('\n')).toMatchObject({state:'awaiting_commit_approval',attempts:2,validationFailures:1});
+            expect(f.trace.join('\n')).toContain('validation_');expect(f.trace.filter(t=>t.startsWith('candidate_validate:'))).toHaveLength(2);
+            expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);
+            expect(root.getState().activeAgentTask?.budget.used.transformationAttempts).toBe(2);
+            expect(root.getState().taskInspection?.candidate?.validation?.decision).toBe('validated');
+            expect(root.getState().taskInspection?.candidate?.candidateId).toBe(inspectPiCandidateReview(root).review?.candidateId);
+            await handleClarificationResponse({label:'Deny',value:'deny'},root);
+            expect(io.commits).toBe(0);expect(root.getState().rawCsvData).toEqual(f.data);expect(root.getState().canonicalCsvData).toBeNull();
+        }finally{beginSessionTransition(root);}
+    });
+    it('stops repeated validation failure even when the program hash changes',async()=>{
+        const root=bareStore();try{
+            const f=await preparePiStructureRepairSmoke(root,{mode:'no-progress'});
+            expect(f.result.structureRepair,f.trace.join('\n')).toMatchObject({state:'exhausted',attempts:2,validationFailures:2,resumable:false});
+            expect(root.getState().pendingClarification).toBeNull();expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);
+            expect(root.getState().analysisCards).toEqual([]);expect(root.getState().canonicalCsvData).toBeNull();
+            expect(f.result.error?.retryable).toBe(false);
+        }finally{beginSessionTransition(root);}
+    });
+    it.each(['meaning-stop','guest-stop','meaning-replace','guest-replace'] as const)('revokes original-source repair across the %s await',async mode=>{
+        const root=bareStore(),entered=deferred(),release=deferred();
+        const original=meaningInference.inferCandidateMeaning;
+        const spy=mode.startsWith('meaning')?vi.spyOn(meaningInference,'inferCandidateMeaning').mockImplementationOnce(async(...args)=>{
+            const result=await original(...args);entered.resolve();await release.promise;return result;
+        }):undefined;
+        if(mode.startsWith('guest'))io.beforeGuest=()=>{entered.resolve();return release.promise;};
+        try{
+            const running=preparePiStructureRepairSmoke(root);await entered.promise;
+            if(mode.endsWith('stop'))cancelOwnedRun(root);
+            else{beginSessionTransition(root);root.setState({sessionId:'replacement',csvData:{fileName:'new.csv',data:[{Value:77}]},canonicalCsvData:null,
+                analysisCards:[],finalSummary:null,isBusy:true});beginRun(root,'follow_up','new-run','new-turn');}
+            release.resolve();const f=await running;
+            expect(f.result.status).toBe('cancelled');expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);
+            expect(root.getState().analysisCards).toEqual([]);expect(root.getState().canonicalCsvData).toBeNull();
+            if(mode.endsWith('replace')){expect(root.getState().csvData?.data).toEqual([{Value:77}]);expect(root.getState().activeExecution?.runId).toBe('new-run');expect(root.getState().isBusy).toBe(true);}
+        }finally{release.resolve();spy?.mockRestore();io.beforeGuest=undefined;beginSessionTransition(root);}
+    });
+    it('rejects stale exact ERP approval after source replacement',async()=>{
+        const root=bareStore();try{
+            await preparePiStructureRepairSmoke(root);
+            root.setState(state=>({datasetBundle:{...state.datasetBundle!,source:{...state.datasetBundle!.source,inspection:{...state.datasetBundle!.source.inspection!,sourceId:'replacement'}}}}));
+            await handleClarificationResponse({label:'Approve',value:'approve'},root);
+            expect(io.commits).toBe(0);expect(io.queryCalls).toBe(0);expect(root.getState().canonicalCsvData).toBeNull();
+            expect(root.getState().pendingClarification).toBeNull();
+        }finally{beginSessionTransition(root);}
+    });
+    it('recovers an exact original-source ERP commit from a lost stage-zero acknowledgement without replaying approval',async()=>{
+        const root=bareStore(),restored=bareStore();try{
+            const f=await preparePiStructureRepairSmoke(root),cp=readPiInitialCheckpoint(root.getState().sessionId) as PiInitialCheckpointV2;
+            expect(cp.pendingStageIndex).toBe(0);
+            await handleClarificationResponse({label:'Approve',value:'approve'},root);
+            const marker=[...io.records.values()].find((r):r is DatasetCommitMarker=>(r as DatasetCommitMarker).kind==='commit')!;
+            await expect(verifyInitialCodingCommit({...cp,pendingStageIndex:7},marker)).rejects.toThrow('stage_side_effects_uncertain');
+            beginSessionTransition(root);restored.setState({...root.getState(),csvData:null,canonicalCsvData:null,rawCsvData:null,
+                activeAgentTask:null,taskInspection:null,activeExecution:null,pendingClarification:null,datasetCommitBindingStatus:undefined,
+                analysisCards:[],queryHistory:[],finalSummary:null,finalSummaryProvenance:null});
+            writePiInitialCheckpoint(cp);
+            await recoverPiInitialAnalysisIfNeeded(restored,f.stream,f.runtimeOptions);
+            expect(restored.getState().initialAnalysisRecovery?.status).toBe('awaiting_source');
+            const result=await reattachPiInitialCheckpointSource(f.file,restored,f.stream,f.runtimeOptions);
+            expect(result?.status,restored.getState().initialAnalysisRecovery?.reason??'').toBe('completed');
+            expect(io.commits).toBe(1);expect(io.queryCalls).toBe(2);expect(restored.getState().csvData?.data).toHaveLength(3);
+            expect(restored.getState().activeAgentTask?.budget.used.transformationAttempts).toBe(1);
+        }finally{beginSessionTransition(root);beginSessionTransition(restored);}
+    });
     it('exposes automatic meaning in the same Pi initial Agent after inspection',async()=>{
         const f=await fixture();let calls=0,offered=false;
         try{

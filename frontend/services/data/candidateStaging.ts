@@ -296,7 +296,18 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
         return { binding:structuredClone(validationBinding), inputs:structuredClone(inputs), execution:c.execution };
     };
     return Object.freeze({namespaceId,stage,read,diff,validate,validationReceipt,validationRequirements,bindInferredMeaning,captureCommitCheck,captureRecovery,preview,
-        suspend:()=>{own();suspended=true;},list:()=>{own();return [...candidates.keys()].map(current);},
+        suspend:()=>{own();suspended=true;},list:()=>{
+            own();const live:StagedDatasetCandidate[]=[];
+            for(const id of candidates.keys()){
+                try{live.push(current(id));}
+                catch(error){
+                    // A repaired program/output supersedes earlier scratch. Keep exact stale reads
+                    // fail-closed, but do not let one historical revision hide the new valid candidate.
+                    if(!(error instanceof Error)||error.message!=='workspace_conflict')throw error;
+                }
+            }
+            return live;
+        },
         abandon:(id:string)=>{policyCheck('candidate.abandon');const c=candidates.get(id);if(!c)throw new Error('candidate_unavailable');candidates.delete(id);differences.delete(id);validations.delete(id);validationChecks.delete(id);validationAttempts.delete(id);recoveryInputs.delete(id);
             bytes-=new TextEncoder().encode(workspace.read(c.outputArtifacts[0].path,c.outputArtifacts[0].revision).content).byteLength;
             return {candidateId:id,status:'abandoned' as const,namespaceId};},dispose});
