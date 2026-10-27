@@ -55,8 +55,10 @@ describe('host spill candidate semantics and read-only draft', () => {
             expect(tail.status).toBe('success'); expect((tail.payload as {candidate: unknown}).candidate).toMatchObject({ rows: [{ key: String(rows - 1), payload: expect.stringContaining('α\r\n末尾'), value: -1 }], complete: true, nextRow: rows, answerEvidence: false });
             expect(s.reads.bytes).toBe(sourceBytes); // draft uses authenticated random-access spill only
             expect(JSON.stringify(s.root.getState())).toBe(before);
-            await expect(createCandidateCommitService(s.store).review(c.candidateId, { idempotencyKey: 'synthetic', primaryTable: 'records' })).rejects.toThrow('candidate_spill_commit_not_supported');
-            expect(() => s.port.captureCommitCheck(c.candidateId)).toThrow('candidate_spill_commit_not_supported');
+            // A structural manifest or copied object still cannot authorize commit. Connected exact
+            // commit tests use the full task/bundle fixture, not this intentionally minimal stream fixture.
+            expect(()=>createCandidateCommitService(s.store).approve({} as never)).toThrow('approval_invalid');
+            expect(typeof s.port.captureCommitCheck(c.candidateId)).toBe('function');
             expect(JSON.stringify(s.root.getState())).toBe(before);
             console.log(JSON.stringify({ qualification: 'spill-candidate-draft-only', rows, bytes: s.source.byteSize, reads: s.reads, elapsedMs: Date.now() - started, sampledNodeMemory: samples, memoryScope: '25ms whole test-worker samples; includes fixture/QuickJS, not a peak or browser memory; no commit qualification' }));
         } finally { clearInterval(timer); sample(); s.adapter.dispose(); }

@@ -28,6 +28,7 @@ export interface DatasetColumnSchema {
 }
 
 export type DatasetStorageBacking =
+    | { mode: 'accepted_spill'; generation: string; manifestDigest: string; loadVersion: string; ephemeral: false }
     | { mode: 'memory'; ephemeral: boolean }
     | {
         mode: 'duckdb';

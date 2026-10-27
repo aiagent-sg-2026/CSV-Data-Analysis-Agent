@@ -1,3 +1,4 @@
+import { readDetachedCandidateDraft } from '../../../data/detachedCandidateDraft';
 import type { ToolExecutionResult } from '../../../../types';
 import type { StoreApi } from '../../types';
 import type { TaskWorkspace } from '../../taskWorkspace';
@@ -52,6 +53,7 @@ export const readTaskCandidateDraft = async (store: StoreApi, taskId: string, ca
     if (!reader?.candidates || !ownsSessionScope(store, reader.lease.scope) || reader.taskId !== taskId
         || state.activeAgentTask?.taskId !== taskId || state.taskInspection?.candidate?.candidateId !== candidateId
         || state.taskInspection.candidate.validation?.receiptDigest !== digest) throw new Error('candidate_draft_unavailable');
+    if(state.activeAgentTask?.status==='awaiting_approval')return readDetachedCandidateDraft(store,candidateId,table,digest,offset,10);
     return reader.candidates.previewAsync(candidateId, table, digest, offset, 10);
 };
 

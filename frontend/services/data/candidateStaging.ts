@@ -3,7 +3,7 @@ import type {TaskWorkspace} from '../agent/taskWorkspace';
 import type {CodeExecutionPort,CodeExecutionReceipt,CodePolicyContext} from '../agent/execution/codeExecutionContract';
 import {captureCodeTables,codeDigest} from '../agent/execution/codeTableInputs';
 import type {AgentTaskContract} from '../agent/runtime/pi/piTaskContract';
-import {assertRunActive,registerSessionResource,rootStore,type ExecutionContext} from '../session/sessionOwnership';
+import {assertRunActive,assertSessionResourceActive,registerSessionResource,rootStore,type ExecutionContext} from '../session/sessionOwnership';
 import {validateCandidateSemantics,type CandidateSemanticVerdict,type ValidationInputs} from './candidateValidation';
 import {readSourceBytes,readSourceRecords} from './immutableCsvSource';
 import {parseCandidateOutput,type CandidateRowOrigin,type CandidateCellOrigin,type StagedDatasetCandidate} from './candidateContract';
@@ -34,7 +34,8 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
     const validationBindingChecks=new Map<string,(target:StoreApi)=>void>();
     const recoveryInputs=new Map<string,ValidationInputs>();
     // Capture a host-provided contract before the candidate exists. Agent tool arguments cannot install one.
-    let supplied=rootStore(store).candidateValidationContract;
+    const authorityRoot=rootStore(store);
+    let supplied=authorityRoot.candidateValidationContract;
     const sourceAtPreparation=store.getState().datasetBundle?.source.inspection;
     const sourceSignatureAtPreparation=JSON.stringify(sourceAtPreparation);
     const sourceBinding=sourceAtPreparation?{sourceId:sourceAtPreparation.sourceId,sha256:sourceAtPreparation.sha256}:null;
@@ -379,8 +380,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
     };
     const captureCommitCheck=(id:string)=>{
         const candidate=current(id),validation=validationReceipt(id),bindingCheck=validationBindingChecks.get(id);
-        if(candidate.spill)throw new Error('candidate_spill_commit_not_supported');
-        if(!validation||validation.decision!=='validated'||!bindingCheck)throw new Error('validation_failed');
+        if(!validation||validation.decision!=='validated'||!candidate.spill&&!bindingCheck)throw new Error('validation_failed');
         return (target:StoreApi,context:ExecutionContext)=>{
             assertRunActive(target,context.lease);
             const task=target.piTask?.snapshot;
@@ -393,15 +393,44 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             for(const ref of [candidate.execution.program!,...(candidate.execution.inputs??[]),...candidate.outputArtifacts]){
                 const actual=workspace.read(ref.path);if(actual.revision!==ref.revision||actual.sha256!==ref.sha256)throw new Error('workspace_conflict');
             }
-            bindingCheck(target);
+            if(candidate.spill){
+                if(JSON.stringify(source)!==sourceSignatureAtPreparation
+                    ||JSON.stringify(readSourceBytes(target,source!.sourceId,0,0).source)!==sourceSignatureAtPreparation
+                    ||JSON.stringify(authorityRoot.candidateValidationContract)!==JSON.stringify(supplied))throw new Error('input_version_changed');
+                if(JSON.stringify(target.getState().datasetBundle?.tables.map(t=>({tableId:t.tableId,datasetVersion:t.datasetVersion,relationshipSetId:target.getState().datasetBundle!.relationshipSetId})))!==JSON.stringify(candidate.inputBindings))throw new Error('input_version_changed');
+            }else bindingCheck!(target);
         };
+    };
+    const captureSpillRead = (id:string) => {
+        const candidate=current(id),receipt=validationReceipt(id),capability=spills.get(id);
+        if(!candidate.spill||!capability||receipt?.decision!=='validated')throw new Error('candidate_spill_unavailable');
+        const reader=capability.captureRead(),signature=JSON.stringify(store.getState().settings.runtimeAccessControl);
+        const check=(target:StoreApi)=>{
+            assertSessionResourceActive(target,lease.scope);
+            const state=target.getState(),task=target.piTask?.snapshot??state.activeAgentTask??(!lease.closed?getTask():undefined);
+            if(disposed||candidates.get(id)!==candidate||validations.get(id)!==receipt||!task||task.taskId!==taskId
+                ||task.revision!==candidate.taskRevision||task.scope.digest!==candidate.requestedChange.scopeDigest
+                ||task.scope.intentDigest!==candidate.requestedChange.intentDigest||task.goal!==candidate.requestedChange.goal
+                ||!task.capabilityGrants.some(g=>g.id===candidate.execution.grant?.id&&g.digest===candidate.execution.grant.digest)
+                ||JSON.stringify(state.settings.runtimeAccessControl)!==signature)throw new Error('approval_invalid');
+            if(JSON.stringify(state.datasetBundle?.source.inspection)!==sourceSignatureAtPreparation
+                ||JSON.stringify(readSourceBytes(target,candidate.protectedSource!.sourceId,0,0).source)!==sourceSignatureAtPreparation
+                ||JSON.stringify(authorityRoot.candidateValidationContract)!==JSON.stringify(supplied)
+                ||JSON.stringify(state.datasetBundle?.tables.map(t=>({tableId:t.tableId,datasetVersion:t.datasetVersion,relationshipSetId:state.datasetBundle!.relationshipSetId})))!==JSON.stringify(candidate.inputBindings))throw new Error('input_version_changed');
+            for(const ref of [candidate.execution.program!,...(candidate.execution.inputs??[]),...candidate.outputArtifacts]){
+                const actual=workspace.read(ref.path);if(actual.revision!==ref.revision||actual.sha256!==ref.sha256)throw new Error('workspace_conflict');
+            }
+        };
+        return Object.freeze({candidate,receipt,check,authority:reader,budget:reader.budget,readChunk:async(sequence:number,target:StoreApi,current:()=>void)=>{
+            const fence=()=>{check(target);current();};fence();const chunk=await reader.readChunk(sequence,fence);fence();return chunk;
+        }});
     };
     const captureRecovery = (id:string) => {
         const c=current(id), receipt=validationReceipt(id), inputs=recoveryInputs.get(id);
         if (!validationBinding || receipt?.decision!=='validated' || !inputs) throw new Error('recovery_metadata_unavailable');
         return { binding:structuredClone(validationBinding), inputs:structuredClone(inputs), execution:c.execution };
     };
-    return Object.freeze({namespaceId,stage,read,diff,validate,validationReceipt,validationRequirements,bindInferredMeaning,captureCommitCheck,captureRecovery,preview,previewAsync,validationError:(id:string)=>{own();return validationErrors.get(id);},
+    return Object.freeze({namespaceId,stage,read,diff,validate,validationReceipt,validationRequirements,bindInferredMeaning,captureCommitCheck,captureSpillRead,captureRecovery,preview,previewAsync,validationError:(id:string)=>{own();return validationErrors.get(id);},
         suspend:()=>{own();suspended=true;},list:()=>{
             own();const live:StagedDatasetCandidate[]=[];
             for(const id of candidates.keys()){

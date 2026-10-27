@@ -6,7 +6,8 @@ import { executeArqueroQuery } from '../data/arqueroEngine';
 import { isRuntimeAbortError, throwIfAborted } from '../agent/runtime/runtimeAbort';
 import { compileQueryPlanToDuckDbSql } from './queryCompiler';
 import type { DimensionNormalizationConfig } from './dimensionNormalization';
-import { duckDbWorkerClient } from '../workers/duckDbWorkerClient';
+import { duckDbWorkerClient, DuckDbWorkerClient, exchangeDuckDbWorkerClient } from '../workers/duckDbWorkerClient';
+import type { AcceptedSpillManifest } from '../data/acceptedSpill';
 import type { WorkerDiagnosticsReporter } from '../workers/workerDiagnostics';
 import { collectOrderedColumnNames } from '../data/columnRegistry';
 import { normalizeDecimalCommaColumns } from '../data/numberLocale';
@@ -399,6 +400,33 @@ const primeDuckDbFileDatasetUnlocked = async (
     return { binding, rowCount: result.rowCount, preview: result.preview };
 };
 
+/** Load accepted backing in isolation: failure cannot drop the currently accepted worker/table.
+ * The returned switch is synchronous; publication may explicitly compensate before releasing old resources.
+ */
+export const prepareAcceptedSpillBinding = async(file:File,manifest:AcceptedSpillManifest,current:()=>void,signal?:AbortSignal)=>{
+    const generation=engineGeneration,client=new DuckDbWorkerClient();
+    const check=()=>{assertGeneration(generation);throwIfAborted(signal);current();};
+    try{
+        check();await client.initDuckDb(DUCKDB_INIT_TIMEOUT_MS,signal);check();
+        const loadVersion=`accepted-${manifest.digest}`;
+        const result=await client.loadFileDataset({file,csvFileName:`${loadVersion}.csv`,loadVersion,tableName:DUCKDB_TABLE_NAME,previewRows:20,
+            exactColumns:manifest.meaning.columns.map(c=>({name:c.name,type:c.conversion==='decimal'?`DECIMAL(24,${c.scale})`:'VARCHAR'}))},DUCKDB_FILE_LOAD_TIMEOUT_MS,signal);check();
+        if(result.rowCount!==manifest.rowCount||result.preview.some(row=>Object.keys(row).join('\u0000')!==manifest.meaning.columns.map(c=>c.name).join('\u0000')))throw new Error('accepted_worker_mismatch');
+        const binding:DuckDbDatasetBinding={engine:'duckdb',tableName:DUCKDB_TABLE_NAME,loadVersion,fallbackReason:null,fallbackStage:null};
+        let switched=false,finished=false;
+        let previous: DuckDbWorkerClient | undefined;
+        const cached={binding:cachedDuckDbBinding,prime:cachedDuckDbPrime,payload:cachedSerializedPayload,queries:queryResultCache};
+        return {binding,preview:result.preview,
+            activate(){check();if(switched||finished)throw new Error('accepted_activation_invalid');previous=exchangeDuckDbWorkerClient(client);switched=true;
+                engineGeneration++;cachedDuckDbBinding=binding;cachedDuckDbPrime=null;cachedSerializedPayload=null;queryResultCache=new Map();},
+            rollback(){if(finished)return;if(switched&&duckDbWorkerClient===client){exchangeDuckDbWorkerClient(previous!);engineGeneration++;
+                    cachedDuckDbBinding=cached.binding;cachedDuckDbPrime=cached.prime;cachedSerializedPayload=cached.payload;queryResultCache=cached.queries;}
+                client.retireSession();finished=true;},
+            finish(){if(!switched||finished)throw new Error('accepted_activation_invalid');previous!.retireSession();finished=true;},
+        };
+    }catch(e){client.retireSession();throw e;}
+};
+
 export const disposeDuckDbQueryEngine = async () => {
     engineGeneration += 1;
     queryQueue = Promise.resolve();
@@ -443,6 +471,7 @@ const executeManagedDataQueryUnlocked = async (
 
     const loadVersion = getCsvDatasetLoadVersion(data);
     const compiled = compileQueryPlanToDuckDbSql(plan, {
+        exactDecimalColumns:data.backing?.ephemeral===false?data.backing.exactDecimalColumns?.map(c=>c.name):undefined,
         allowedColumns,
         tableName: DUCKDB_TABLE_NAME,
         maxRows: DEFAULT_MAX_ROWS,

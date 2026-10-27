@@ -422,6 +422,7 @@ export class DuckDbWorkerClient {
             loadVersion: string;
             tableName: string;
             previewRows: number;
+            exactColumns?: Array<{name:string; type:string}>;
         },
         timeoutMs = 180_000,
         abortSignal?: AbortSignal,
@@ -505,4 +506,8 @@ export class DuckDbWorkerClient {
     }
 }
 
-export const duckDbWorkerClient = new DuckDbWorkerClient();
+export let duckDbWorkerClient = new DuckDbWorkerClient();
+/** Host-only synchronous swap after an isolated worker has fully loaded and passed integrity checks. */
+export const exchangeDuckDbWorkerClient = (next:DuckDbWorkerClient):DuckDbWorkerClient => {
+    const previous=duckDbWorkerClient;duckDbWorkerClient=next;return previous;
+};

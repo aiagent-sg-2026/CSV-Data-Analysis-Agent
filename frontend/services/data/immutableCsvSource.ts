@@ -127,16 +127,31 @@ export const captureRecoverySource = (store: StoreApi, id: string): { metadata: 
 };
 /** A saved source ID is a locator. Only newly verified bytes acquire access in this epoch. */
 export const bindRecoverySource = async (store: StoreApi, file: File, expected: CsvSourceMetadata): Promise<void> => {
-    const scope = captureSessionScope(store);
-    if (file.size > 8 * 1024 * 1024 || expected.byteSize > 8 * 1024 * 1024) throw new Error('recovery_source_capacity');
+    const scope = captureSessionScope(store), sourceSignature=JSON.stringify(store.getState().datasetBundle?.source.inspection);
+    const current=()=>{
+        assertSessionResourceActive(store,scope);
+        if(JSON.stringify(store.getState().datasetBundle?.source.inspection)!==sourceSignature)throw new Error('input_version_changed');
+    };
+    current();
+    if(file.size!==expected.byteSize)throw new Error('recovery_source_mismatch');
+    if(file.size>MAX_SOURCE_BYTES||expected.recordCount>MAX_RECORDS)throw new Error('recovery_source_capacity');
+    if (file.size > 8 * 1024 * 1024) {
+        const checkpoints:CsvRecordSpan[]=[];let lastByte=-512*1024;
+        const scanner=new CsvStreamScanner(file,{delimiter:expected.dialect.delimiter,quoteChar:expected.dialect.quoteChar,onRecord:span=>{
+            if(span.row%1024===0||span.start-lastByte>=512*1024){checkpoints.push(span);lastByte=span.start;}
+        }});
+        const result=await scanner.run(undefined,current);current();
+        if(result.parsingCoverage!=='complete'||result.sha256!==expected.sha256||result.rows!==expected.recordCount)throw new Error('recovery_source_mismatch');
+        registerScannedCsvBlob(store,file,Object.freeze(structuredClone(expected)),checkpoints);return;
+    }
     const bytes = new Uint8Array(await file.arrayBuffer());
-    assertSessionResourceActive(store, scope);
+    current();
     if (bytes.length !== expected.byteSize || await sha256Bytes(bytes) !== expected.sha256) throw new Error('recovery_source_mismatch');
-    assertSessionResourceActive(store, scope);
+    current();
     const actual = await captureCsvSource(store, new File([bytes], expected.fileName));
     const signature = (s: CsvSourceMetadata) => JSON.stringify([s.sha256, s.byteSize, s.recordCount, s.dialect, s.diagnostics]);
     if (signature(actual) !== signature(expected)) throw new Error('recovery_source_structure_mismatch');
-    assertSessionResourceActive(store, scope);
+    current();
     const entries = sources.get(scope)!, verified = entries.get(actual.sourceId)!;
     if (entries.has(expected.sourceId) && entries.get(expected.sourceId)!.metadata.sha256 !== expected.sha256) throw new Error('recovery_source_mismatch');
     entries.set(expected.sourceId, { ...verified, metadata: Object.freeze(structuredClone(expected)) });

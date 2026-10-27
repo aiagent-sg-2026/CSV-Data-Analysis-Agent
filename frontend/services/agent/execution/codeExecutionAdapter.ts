@@ -43,6 +43,7 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
     } }>();
     const jobs = new Map<string, { receipt: Readonly<CodeExecutionReceipt>; controller: AbortController; grantId?: string }>();
     const sourceStreams = new Map<string, SourceRecordStream>();
+    const spillReaders=new WeakMap<object,string>();
     let disposed = false, suspended = false, active: string | undefined;
     const own = (execution = context) => {
         if (disposed || suspended || execution.lease !== lease || !execution.toolCallId || (lease.kind === 'initial_analysis' ? !execution.stepId : !lease.turnId)) throw new Error('scope_revoked');
@@ -303,18 +304,27 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
             return Object.freeze({ manifest,
                 inspectRows: (invocation: () => void) => stream.inspectRows(() => { current(); invocation(); }),
                 readChunk: (sequence: number, invocation: () => void) => stream.readChunk(sequence, () => { current(); invocation(); }),
+                captureRead: () => {
+                    current();const issued=grants.get(job.grantId!);
+                    // Only authenticated read access is detached. Ordinary execution/inspect stay retired.
+                    const reader=Object.freeze({budget:()=>stream.budget,readChunk: (sequence: number, invocation: () => void) => stream.readChunk(sequence, () => {
+                        if (disposed||!issued||grants.get(job.grantId!)!==issued||issued.payload.expiresAt<=Date.now()) throw new Error('scope_revoked');
+                        invocation();
+                    },true)});
+                    spillReaders.set(reader,jobId);return reader;
+                },
             });
         },
-        assertCommitEligible(jobId: string, execution: ExecutionContext, policyContext?: CodePolicyContext) {
+        assertCommitEligible(jobId: string, execution: ExecutionContext, policyContext?: CodePolicyContext,spillAuthority?:object) {
             policy('code.run', policyContext);
             const job = jobs.get(jobId);
-            if (!job?.grantId || job.receipt.status !== 'succeeded' || job.receipt.mode === 'source_records') throw new Error('approval_invalid');
+            if (!job?.grantId || job.receipt.status !== 'succeeded'||job.receipt.mode==='source_records'&&(!spillAuthority||spillReaders.get(spillAuthority)!==jobId)) throw new Error('approval_invalid');
             check(job.grantId, execution, undefined, policyContext);
         },
-        captureCommitCheck(jobId: string, execution: ExecutionContext, policyContext?: CodePolicyContext) {
+        captureCommitCheck(jobId: string, execution: ExecutionContext, policyContext?: CodePolicyContext,spillAuthority?:object) {
             policy('code.run', policyContext);
             const job = jobs.get(jobId);
-            if (!job?.grantId || job.receipt.status !== 'succeeded' || job.receipt.mode === 'source_records') throw new Error('approval_invalid');
+            if (!job?.grantId || job.receipt.status !== 'succeeded'||job.receipt.mode==='source_records'&&(!spillAuthority||spillReaders.get(spillAuthority)!==jobId)) throw new Error('approval_invalid');
             const issued = check(job.grantId, execution, undefined, policyContext), capturedTask = getTask();
             // Retained grant data permits exact commit checks only. The guest and old execution API stay retired.
             return (target: StoreApi, fresh: ExecutionContext) => {

@@ -7,7 +7,9 @@ import { reconstructDatasetCommit, type RecoveryOptions } from './datasetRecover
 import { readRetainedRows, retainDatasetRows, collectRetainedRows, type RetentionDirectory } from '../persistence/datasetRetention';
 import { currentRecoveryMaterial, rememberRecoveryMaterial } from './datasetReplay';
 import { registerSandboxTableRows, clearSandboxTableRows } from './sandboxTableRegistry';
-import { primeDuckDbDataset } from '../duckdb/queryEngine';
+import { primeDuckDbDataset, prepareAcceptedSpillBinding } from '../duckdb/queryEngine';
+import { verifyAcceptedSpillMarker, verifyAcceptedSpill, acceptedSpillCsv, acceptedPublicationSnapshot, type AcceptedSpillStorage } from './acceptedSpill';
+import { bindRecoverySource } from './immutableCsvSource';
 import { getCsvDatasetVersion } from '../../utils/datasetId';
 import { codeDigest } from '../agent/execution/codeTableInputs';
 import { commitDatasetTransaction } from '../persistence/datasetCommitStorage';
@@ -19,7 +21,7 @@ import { buildToolAvailabilityContext } from '../agent/tools/toolGovernance';
 
 type Reconstructed = Awaited<ReturnType<typeof reconstructDatasetCommit>>;
 export interface RecoveryDependencies { database?: () => Promise<StorageDatabase>; bind?: typeof primeDuckDbDataset; directory?: () => Promise<RetentionDirectory>;
-    persist?: (store:StoreApi)=>Promise<boolean> }
+    persist?: (store:StoreApi)=>Promise<boolean>; acceptedStorage?:AcceptedSpillStorage; prepareSpillBinding?:typeof prepareAcceptedSpillBinding; spillFactory?:import('./candidateSpill').CandidateSpillFactory }
 const own = (store: StoreApi) => {
     const lease = store.executionContext?.lease; if (!lease) throw new Error('scope_revoked'); assertRunActive(store, lease); return lease;
 };
@@ -81,11 +83,40 @@ export const installVerifiedDatasetCommit = async (store: StoreApi, db: StorageD
     }
 };
 
+export const installAcceptedSpillCommit=async(store:StoreApi,db:StorageDatabase,marker:DatasetCommitMarker,options:RecoveryOptions={},dependencies:RecoveryDependencies={})=>{
+    const lease=own(store),previous=store.getState(),signature=JSON.stringify(previous.datasetBundle);
+    const current=()=>{own(store);if(JSON.stringify(store.getState().datasetBundle)!==signature)throw new Error('input_version_changed');};
+    let prepared:Awaited<ReturnType<typeof prepareAcceptedSpillBinding>>|undefined;
+    try{
+        const manifest=await verifyAcceptedSpillMarker(marker);current();
+        if(options.file){await bindRecoverySource(store,options.file,manifest.source);current();}
+        const file=await verifyAcceptedSpill(manifest,current,dependencies.acceptedStorage);current();
+        prepared=await (dependencies.prepareSpillBinding??prepareAcceptedSpillBinding)(file,manifest,current,lease.signal);current();
+        if(!same(await readCurrentCommit(db,store),marker))throw new Error('input_version_changed');current();
+        const csv=acceptedSpillCsv(manifest,prepared.preview);
+        prepared.activate();
+        store.setState({datasetBundle:structuredClone(marker.bundle),csvData:csv,canonicalCsvData:csv,rawCsvData:null,candidateRecovery:null,
+            datasetCommitBindingStatus:'ready',activeDataQuery:null,datasetSemanticSnapshot:null,semanticDatasetVersion:null,semanticStatus:'idle',
+            columnRegistry:null,columnProfiles:[],canonicalBuildMeta:null,activeMetricMappingValidation:null,activeSpreadsheetFilter:null,spreadsheetFilterFunction:null,
+            vectorStoreDocuments:[],pendingVectorMemoryDocs:[],vectorMemoryState:'cold',reportMemoryScope:null,
+            currentView:'analysis_dashboard',initialAnalysisStatus:'ready',
+            duckDbSessionStatus:{...prepared.binding,status:'ready',fallbackReason:null,lastSyncedAt:new Date()}});
+        prepared.finish();
+    }catch(e){prepared?.rollback();
+        if(canCommitRun(store,lease)&&JSON.stringify(store.getState().datasetBundle?.source.inspection)===JSON.stringify(previous.datasetBundle?.source.inspection)){
+            try{store.setState({...acceptedPublicationSnapshot(previous),datasetCommitBindingStatus:previous.datasetBundle?.acceptedCommit?.commitId===marker.commitId?'binding_failed':previous.datasetCommitBindingStatus,activeDataQuery:null});}
+            catch{/* A throwing observer must not keep a ready partial publication. */}
+        }
+        throw e;
+    }
+};
+
 export const restoreAcceptedDataset = async (store: StoreApi, options: RecoveryOptions = {}, dependencies: RecoveryDependencies = {}): Promise<DatasetCommitMarker> => {
     own(store); const db = await (dependencies.database ?? getStorageDatabase)(); own(store);
     let marker: DatasetCommitMarker;
     try { marker = await readCurrentCommit(db, store); own(store); }
     catch (error) { if (canCommitRun(store, store.executionContext!.lease)) store.setState({ datasetCommitBindingStatus: 'commit_unknown', activeDataQuery: null }); throw error; }
+    if(marker.acceptedSpill){await installAcceptedSpillCommit(store,db,marker,options,dependencies);own(store);return marker;}
     const result = await reconstruct(store, db, marker, options, dependencies); own(store);
     await installVerifiedDatasetCommit(store, db, marker, result, dependencies); own(store); return marker;
 };

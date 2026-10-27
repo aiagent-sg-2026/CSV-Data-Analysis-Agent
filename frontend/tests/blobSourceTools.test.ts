@@ -65,10 +65,15 @@ describe('actual Blob-backed immutable source tools', () => {
             expect(completed.parsingCoverage).toBe('complete');
             expect(peakRead).toBeLessThanOrEqual(65536);
             expect(() => captureRecoverySource(store, source.sourceId)).toThrow('recovery_source_capacity');
-            await expect(bindRecoverySource(store, file, source)).rejects.toThrow('recovery_source_capacity');
             beginSessionTransition(store);
             await expect(readSourceBytesBounded(store, source.sourceId, 0, 10)).rejects.toThrow('source_unavailable');
-            // Metadata alone cannot resurrect access; exact re-selection and rescan can.
+            // Metadata alone cannot resurrect access. Explicit recovery verifies the complete
+            // large File through bounded slices; synchronous byte capture remains unavailable.
+            await bindRecoverySource(store,file,source);
+            expect((await dispatch(store,'/intake/source-records.json',{startRow:27001,rowCount:1}))!.payload).toBeDefined();
+            expect(()=>captureRecoverySource(store,source.sourceId)).toThrow('recovery_source_capacity');
+            expect(peakRead).toBeLessThanOrEqual(65536);
+            beginSessionTransition(store);
             await scanCsvSourceForImport(store, file);
             const rebound = attach(store, file);
             expect(rebound.sourceId).not.toBe(source.sourceId);
@@ -76,6 +81,22 @@ describe('actual Blob-backed immutable source tools', () => {
             expect((await dispatch(store, '/intake/source-records.json', { startRow: 27001, rowCount: 1 }))!.payload).toBeDefined();
         } finally { beginSessionTransition(store); }
     }, 30000);
+
+    it('rejects oversized recovery before reading and fences source replacement during reattachment',async()=>{
+        const store=setup(),file=new File(['key,value\nx,1\n'],'source.csv');
+        try{
+            await scanCsvSourceForImport(store,file);const source=attach(store,file);
+            const huge=new File([],'huge.csv');Object.defineProperty(huge,'size',{value:100*1024*1024+1});
+            const full=vi.spyOn(huge,'arrayBuffer'),slice=vi.spyOn(huge,'slice');
+            await expect(bindRecoverySource(store,huge,{...source,byteSize:huge.size})).rejects.toThrow('recovery_source_capacity');
+            expect(full).not.toHaveBeenCalled();expect(slice).not.toHaveBeenCalled();
+            let release!:(bytes:ArrayBuffer)=>void;
+            const bytes=await file.arrayBuffer();vi.spyOn(file,'arrayBuffer').mockImplementation(()=>new Promise(resolve=>{release=resolve;}));
+            const pending=bindRecoverySource(store,file,source);await until(()=>!!release);
+            store.setState({datasetBundle:{...store.getState().datasetBundle!,source:{...store.getState().datasetBundle!.source,inspection:{...source,byteSize:source.byteSize+1}}}});
+            release(bytes);await expect(pending).rejects.toThrow('input_version_changed');
+        }finally{beginSessionTransition(store);vi.restoreAllMocks();}
+    });
 
     it('enforces Blob record/output quotas without skipping an oversized record', async () => {
         const store = setup(), file = new File(['key,value\n' + 'x'.repeat(70000) + ',1\nshort,2\n'], 'wide-record.csv');

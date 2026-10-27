@@ -27,7 +27,7 @@ const digest = (value: unknown) => sha256Bytes(new TextEncoder().encode(JSON.str
 const codingTool = (name: string) => name.startsWith('code.') || name.startsWith('candidate.') || ['workspace.write', 'workspace.append', 'workspace.replace'].includes(name);
 
 /** Session-retained task state is host-owned. A saved continuation is only a locator, never executable authority. */
-export const preparePiTask = async (store: StoreApi, message: string, continuation?: PiTaskContinuation, guest?: Guest, recoveryBudget?: TaskBudget): Promise<PiCodingTask> => {
+export const preparePiTask = async (store: StoreApi, message: string, continuation?: PiTaskContinuation, guest?: Guest, recoveryBudget?: TaskBudget, spillFactory?:Parameters<typeof createCodeExecutionAdapter>[4]): Promise<PiCodingTask> => {
     if (store.piTask) return store.piTask;
     const lease = store.executionContext?.lease;
     if (!lease) throw new Error('scope_revoked');
@@ -118,7 +118,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
     };
     const ensureAdapter = () => {
         current();
-        adapter ??= createCodeExecutionAdapter(store, record.workspace, () => record.task, guest);
+        adapter ??= createCodeExecutionAdapter(store, record.workspace, () => record.task, guest, spillFactory);
         store.codeExecution = adapter;
         return adapter;
     };

@@ -256,6 +256,7 @@ const handleLoadFileDataset = async (payload: {
     loadVersion: string;
     tableName: string;
     previewRows: number;
+    exactColumns?: Array<{name:string; type:string}>;
 }) => {
     if (security && (currentLoadVersion !== payload.loadVersion || currentTableName !== payload.tableName)) await handleDispose();
     await ensureConnection();
@@ -285,9 +286,15 @@ const handleLoadFileDataset = async (payload: {
     );
     try {
         await conn!.query(`DROP TABLE IF EXISTS ${quotedTable}`);
-        await conn!.query(
-            `CREATE TABLE ${quotedTable} AS SELECT * FROM read_csv_auto('${escapedFileName}', header=true, all_varchar=true)`,
-        );
+        let reader=`read_csv_auto('${escapedFileName}', header=true, all_varchar=true)`;
+        if(payload.exactColumns){
+            const columns=payload.exactColumns;
+            if(!columns.length||columns.length>256||new Set(columns.map(c=>c.name)).size!==columns.length
+                ||columns.some(c=>!c.name||! /^(VARCHAR|DECIMAL\(24,[0-6]\))$/.test(c.type)))throw new Error('accepted_schema_invalid');
+            const literal=(s:string)=>`'${s.replace(/'/g,"''")}'`;
+            reader=`read_csv('${escapedFileName}', header=true, auto_detect=false, delim=',', quote='"', escape='"', columns={${columns.map(c=>`${literal(c.name)}:${literal(c.type)}`).join(',')}}, force_not_null=[${columns.map(c=>literal(c.name)).join(',')}])`;
+        }
+        await conn!.query(`CREATE TABLE ${quotedTable} AS SELECT * FROM ${reader}`);
     } finally {
         await db!.dropFile(payload.csvFileName).catch(() => undefined);
     }

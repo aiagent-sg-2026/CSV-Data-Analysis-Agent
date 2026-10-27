@@ -48,7 +48,7 @@ try {
                     const second = await f.port.previewAsync(c.candidateId, 'records', v.receiptDigest, first.offset + first.rows.length, 10);
                     const tail = await f.port.previewAsync(c.candidateId, 'records', v.receiptDigest, rows - 1, 10);
                     let exactCommitBlocked = false;
-                    try { f.port.captureCommitCheck(c.candidateId); } catch (e) { exactCommitBlocked = e.message === 'candidate_spill_commit_not_supported'; }
+                    try { qa.createCandidateCommitService(f.store).approve({}); } catch (e) { exactCommitBlocked = e.message === 'approval_invalid'; }
                     const root = await navigator.storage.getDirectory(), app = await root.getDirectoryHandle('csv-analysis-agent-temp');
                     const session = await app.getDirectoryHandle(f.root.getState().sessionId), generation = await session.getDirectoryHandle(`candidate-${c.spill.manifest.generation}`);
                     const saved = await (await (await generation.getFileHandle('manifest.json')).getFile()).text();

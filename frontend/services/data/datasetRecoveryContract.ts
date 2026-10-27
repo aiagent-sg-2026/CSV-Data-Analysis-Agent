@@ -43,6 +43,8 @@ export interface DatasetRetainedArtifact {
 export interface CandidateRecoveryCheckpoint {
     version: 1; checkpointId: string; digest: string;
     proposal: DatasetCommitMarker;
+    /** Conservative crash reservation, diagnostic consumed work only, never permission. */
+    spillSourceBudget?:import('../agent/execution/codeSourceRecordStream').SourceStreamBudget;
     task: AgentTaskContract;
     failureKey: string; repetitions: number;
 }

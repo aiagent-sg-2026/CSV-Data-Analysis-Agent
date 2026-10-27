@@ -55,9 +55,11 @@ export interface CodeExecutionPort {
         manifest: Readonly<import('../../data/candidateSpill').SpillManifest>;
         inspectRows(current: () => void): ReturnType<import('./codeSourceRecordStream').SourceRecordStream['inspectRows']>;
         readChunk(sequence: number, current: () => void): Promise<import('../../data/candidateSpill').SpillChunk>;
+        /** Captured live custody, not a restored execution grant. Caller must fence review identity. */
+        captureRead(): { budget():import('./codeSourceRecordStream').SourceStreamBudget; readChunk(sequence: number, current: () => void): Promise<import('../../data/candidateSpill').SpillChunk> };
     };
-    captureCommitCheck?(jobId: string, context: ExecutionContext, policy?: CodePolicyContext): (target: StoreApi, context: ExecutionContext) => void;
-    assertCommitEligible?(jobId: string, context: ExecutionContext, policy?: CodePolicyContext): void;
+    captureCommitCheck?(jobId: string, context: ExecutionContext, policy?: CodePolicyContext, spillAuthority?:object): (target: StoreApi, context: ExecutionContext) => void;
+    assertCommitEligible?(jobId: string, context: ExecutionContext, policy?: CodePolicyContext, spillAuthority?:object): void;
     workspace: TaskWorkspace;
     run(request: CodeRunRequest, context: ExecutionContext, signal?: AbortSignal, policy?: CodePolicyContext): Promise<Readonly<CodeExecutionReceipt>>;
     inspect(jobId: string | undefined, context: ExecutionContext, policy?: CodePolicyContext): Readonly<CodeExecutionReceipt> | Readonly<CodeExecutionReceipt>[];

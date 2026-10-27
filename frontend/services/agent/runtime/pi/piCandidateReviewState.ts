@@ -1,3 +1,4 @@
+import { revokeDetachedCandidateDraft } from '../../../data/detachedCandidateDraft';
 import type { ClarificationRequest } from '../../../../types';
 import type { StoreApi } from '../../types';
 import type { CandidateCommitReview } from '../../../data/candidateCommit';
@@ -11,6 +12,7 @@ export const publishPiCandidateReview = (store: StoreApi, lease: RunLease, revie
     reviews.set(rootStore(store).getState, { lease, review, pending });
 };
 export const retirePiCandidateReview = (key: StoreApi['getState'], reviewId: string) => {
+    revokeDetachedCandidateDraft(key,reviewId);
     if (reviews.get(key)?.review.reviewId === reviewId) reviews.delete(key);
 };
 export const inspectPiCandidateReview = (store: StoreApi, request?: ClarificationRequest | null) => {

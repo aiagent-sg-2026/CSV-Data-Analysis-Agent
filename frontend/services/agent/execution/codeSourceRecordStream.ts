@@ -1,5 +1,5 @@
 import type { StoreApi } from '../types';
-import { captureSessionScope, registerSessionResource } from '../../session/sessionOwnership';
+import { captureSessionScope, registerSessionResource, rootStore } from '../../session/sessionOwnership';
 import { captureSourceRangeFence, createSourceRecordReader, readSourceBytes } from '../../data/immutableCsvSource';
 import { createCandidateSpill, spillBytes, spillDigest, type CandidateSpillFactory, type SpillManifest } from '../../data/candidateSpill';
 import type { GuestOutcome } from '../../sandbox/javascriptGuestProtocol';
@@ -7,7 +7,8 @@ import { serializeCodeState } from './codeStatefulStream';
 
 export const SOURCE_STREAM_LIMITS = Object.freeze({ batchRows: 50, steps: 10000, activeMs: 15 * 60 * 1000,
     batchJsonBytes: 256 * 1024, cumulativeReadBytes: 600 * 1024 * 1024, sources: 128, attempts: 3 });
-interface Ledger { attempts: number; steps: number; activeMs: number; readBytes: number; owner: symbol }
+export interface SourceStreamBudget { attempts:number;steps:number;activeMs:number;readBytes:number }
+interface Ledger extends SourceStreamBudget { owner: symbol }
 const ledgers = new WeakMap<ReturnType<typeof captureSessionScope>, Map<string, Ledger>>();
 export interface SourceStreamOptions { sourceId: string; sha256: string; width: number; initialState: unknown }
 export interface SourceStreamMetrics {
@@ -15,6 +16,19 @@ export interface SourceStreamMetrics {
     peakOutputJsonBytes: number; peakSpillChunkBytes: number; peakStateBytes: number; validatedRows: number;
     physicalReadBytes: number; physicalReadCalls: number; cumulativePhysicalReadBytes: number; peakReaderRetainedBytes: number;
 }
+
+/** Recovery installs only conservative consumed-budget floors, never an owner/grant/frontier. */
+export const seedRecoveredSourceStreamBudget=(store:StoreApi,source:NonNullable<ReturnType<StoreApi['getState']>['datasetBundle']>['source']['inspection']&{},budget:SourceStreamBudget)=>{
+    const scope=captureSessionScope(store),key=JSON.stringify([source.sha256,source.byteSize,source.recordCount,source.dialect]);
+    if(JSON.stringify(store.getState().datasetBundle?.source.inspection)!==JSON.stringify(source)
+        ||Object.values(budget).some(v=>!Number.isSafeInteger(v)||v<0)||budget.attempts>=SOURCE_STREAM_LIMITS.attempts
+        ||budget.steps>=SOURCE_STREAM_LIMITS.steps||budget.activeMs>=SOURCE_STREAM_LIMITS.activeMs||budget.readBytes>SOURCE_STREAM_LIMITS.cumulativeReadBytes)throw new Error('source_stream_budget_exhausted');
+    let map=ledgers.get(scope);if(!map){map=new Map();ledgers.set(scope,map);registerSessionResource(scope,()=>{map!.clear();ledgers.delete(scope);});}
+    const prior=map.get(key);
+    if(!prior&&map.size>=SOURCE_STREAM_LIMITS.sources)throw new Error('source_stream_ledger_capacity');
+    map.set(key,{owner:Symbol(),attempts:Math.max(prior?.attempts??0,budget.attempts),steps:Math.max(prior?.steps??0,budget.steps),
+        activeMs:Math.max(prior?.activeMs??0,budget.activeMs),readBytes:Math.max(prior?.readBytes??0,budget.readBytes)});
+};
 
 /** Host-only continuation. Neither a guest cursor nor a saved manifest can instantiate this owner.
  * Restricted first contract: one ordered output row per original record, same physical cells;
@@ -30,6 +44,8 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
         || source.diagnostics.some(d => ['invalid_utf8', 'unclosed_quote'].includes(d))) throw new Error('source_stream_binding_invalid');
     const initialState = serializeCodeState(options.initialState);
     const scope = captureSessionScope(store), fence = captureSourceRangeFence(store, source.sourceId);
+    const detachedFence=captureSourceRangeFence(rootStore(store),source.sourceId);
+    let sourceFence=fence;
     const signature = JSON.stringify(source);
     if (JSON.stringify(readSourceBytes(store, source.sourceId, 0, 0).source) !== signature) throw new Error('source_stream_binding_invalid');
     const identity = await spillDigest(JSON.stringify({ scope, source, identityValue, options })); current(); fence();
@@ -46,7 +62,7 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
     const account = ledger, owner = Symbol(); account.owner = owner;
     let assertInvocation = current, activeStarted: number | undefined;
     const check = () => {
-        assertInvocation(); fence();
+        assertInvocation(); sourceFence();
         if (account.owner !== owner || JSON.stringify(store.getState().datasetBundle?.source.inspection) !== signature) throw new Error('source_stream_stale');
         if (account.activeMs + (activeStarted === undefined ? 0 : Date.now() - activeStarted) >= SOURCE_STREAM_LIMITS.activeMs || account.readBytes > SOURCE_STREAM_LIMITS.cumulativeReadBytes
             || account.steps >= SOURCE_STREAM_LIMITS.steps) throw new Error('source_stream_budget_exhausted');
@@ -96,11 +112,12 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
     } catch (error) { await dispose().catch(() => {}); throw error; }
     return {
         identity, generation: spill.generation,
+        get budget():SourceStreamBudget{return {attempts:account.attempts,steps:account.steps,activeMs:account.activeMs,readBytes:account.readBytes};},
         get cursor() { return Object.freeze({ nextRow, nextByte }); },
         get metrics() { return structuredClone({ ...metrics, cumulativePhysicalReadBytes: account.readBytes }); },
         async execute(run: (json: string) => Promise<GuestOutcome>, invocation: () => void): Promise<SpillManifest> {
             if (failed || busy) throw new Error('source_stream_unavailable');
-            assertInvocation = invocation; busy = true;
+            assertInvocation = invocation; sourceFence=fence; busy = true;
             const started = Date.now(); activeStarted = started; let writing = false;
             try {
                 check();
@@ -171,7 +188,7 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
         async *inspectRows(invocation: () => void) {
             if (failed || busy || !manifest) throw new Error('source_stream_unavailable');
             if (semanticAttempts >= SOURCE_STREAM_LIMITS.attempts) throw new Error('source_stream_attempts_exhausted');
-            semanticAttempts++; assertInvocation = invocation; busy = true; const started = Date.now(); activeStarted = started;
+            semanticAttempts++; assertInvocation = invocation; sourceFence=fence; busy = true; const started = Date.now(); activeStarted = started;
             try {
                 check(); await spill.verifyManifest(manifest); check();
                 const reader = createSourceRecordReader(store, source.sourceId, check, charge);
@@ -186,9 +203,9 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
                 check();
             } finally { account.activeMs += Date.now() - started; activeStarted = undefined; busy = false; }
         },
-        async readChunk(sequence: number, invocation: () => void) {
+        async readChunk(sequence: number, invocation: () => void, detached=false) {
             if (failed || busy || !manifest) throw new Error('source_stream_unavailable');
-            assertInvocation = invocation; busy = true;
+            assertInvocation = invocation; sourceFence=detached?detachedFence:fence; busy = true;
             try { account.steps++; check(); await spill.verifyManifest(manifest); check(); const chunk = await spill.readChunk(sequence); check(); return chunk; }
             finally { busy = false; }
         },

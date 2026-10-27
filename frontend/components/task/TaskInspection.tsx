@@ -125,6 +125,7 @@ export const TaskInspectionView: React.FC<{ onReturnToChat?: () => void; onOpenR
                         {candidate.validation.truncated && <p>Validation preview truncated.</p>}</> : <p>Independent validation is pending; staging cannot change accepted data.</p>}
                 </> : <p>No current candidate snapshot. Historical metadata cannot be approved here.</p>}
                 {review.review && <><p>Primary table: {review.review.primaryTable}</p><p>Expires: {new Date(review.review.expiresAt).toISOString()}</p>
+                    {review.review.spill && <p>Approval retains {review.review.spill.rowCount} projected rows in immutable local storage ({review.review.spill.bytes} bytes). Host-declared source-record grain and units remain explicit assumptions. Draft reads never grant commit.</p>}
                     <details><summary className="cursor-pointer py-2">Exact approval identity</summary><pre className={pre}>{JSON.stringify(review.review, null, 2)}</pre></details></>}
                 <p role="status">{review.reason}</p>
             </section>}

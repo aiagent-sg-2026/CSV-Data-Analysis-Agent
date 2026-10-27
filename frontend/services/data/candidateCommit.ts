@@ -14,7 +14,10 @@ import { commitDatasetTransaction, readCommitIntent } from '../persistence/datas
 import { datasetCommitBindings } from '../persistence/datasetCommitProjection';
 import { queueSessionWrite } from '../persistence/currentSessionPersistence';
 import { buildPersistedReportRecord } from '../persistence/persistedAppState';
-import { primeDuckDbDataset } from '../duckdb/queryEngine';
+import { primeDuckDbDataset, prepareAcceptedSpillBinding } from '../duckdb/queryEngine';
+import { planAcceptedSpill, writeAcceptedSpill, acceptedSpillCsv, acceptedPublicationSnapshot, type AcceptedSpillManifest, type AcceptedSpillStorage, type SpillReadCustody } from './acceptedSpill';
+import { detachCandidateDraft } from './detachedCandidateDraft';
+import { compensateSpillCommit } from '../persistence/datasetCommitStorage';
 import { normalizeRuntimeAccessControlSettings } from '../runtimeAccessControl';
 import { captureDatasetReplay, rememberRecoveryMaterial } from './datasetReplay';
 import type { DatasetRecoveryMaterial, CandidateRecoveryCheckpoint } from './datasetRecoveryContract';
@@ -38,7 +41,8 @@ export interface CandidateCommitReview {
     changeDigest: string; validationDigest: string; programDigest: string; environmentDigest: string; outputDigest: string;
     scopeDigest: string; grantDigest: string; policyDigest: string;
     tables: Array<{name: string; rowCount: number; columns: string[]}>;
-    rowStorage: 'transient';
+    rowStorage: 'transient' | 'durable_spill';
+    spill?: AcceptedSpillManifest;
 }
 export interface CandidateCommitApproval { approvalId: string; reviewDigest: string; approvedAt: number; expiresAt: number }
 export interface CandidateCommitOutcome {
@@ -48,7 +52,8 @@ export interface CandidateCommitOutcome {
 }
 type Prepared = { review: CandidateCommitReview; candidate: StagedDatasetCandidate; validation: Readonly<CandidateValidationReceipt>;
     marker: DatasetCommitMarker; csv: CsvData; output: SandboxTransformationOutput; check: () => void;
-    recovery: DatasetRecoveryMaterial;
+    recovery?: DatasetRecoveryMaterial;
+    spill?: {manifest:AcceptedSpillManifest;custody:SpillReadCustody};
     bindingStatus: ReturnType<StoreApi['getState']>['datasetCommitBindingStatus'] };
 
 /** Host-only review/approval boundary. No model tool, saved record or copied object grants approval. */
@@ -57,6 +62,8 @@ export const createCandidateCommitService = (store: StoreApi, options: {
     bind?: typeof primeDuckDbDataset;
     policy?: CodePolicyContext;
     onAdmitted?: () => void;
+    acceptedStorage?: AcceptedSpillStorage;
+    prepareSpillBinding?: typeof prepareAcceptedSpillBinding;
 } = {}) => {
     let lease = store.executionContext?.lease;
     const originalLease = lease, originalRoot = rootStore(store), port = store.candidateStaging, execution = store.codeExecution;
@@ -66,14 +73,14 @@ export const createCandidateCommitService = (store: StoreApi, options: {
     let approvals = new WeakMap<CandidateCommitApproval, Prepared>();
     const unresolved = new WeakSet<CandidateCommitApproval>();
     const capsules = new WeakMap<object, Prepared>();
-    let suspended = false, resumed = false;
+    let suspended = false, resumed = false, spillPolicy = false;
     let detachedCheck: ((target: StoreApi, context: typeof store.executionContext & {}) => void) | undefined;
     const database = options.database ?? getStorageDatabase;
     const own = () => { if (suspended) throw new Error('scope_revoked'); assertRunActive(store, lease!); };
     const policy = () => {
         const state = store.getState();
         const allowed = resolveAllowedTools(buildBuiltinToolRegistry(state.columnProfiles?.map(c=>c.name)??[]),
-            buildToolAvailabilityContext(state,{...options.policy,hasCodeExecution:true}));
+            buildToolAvailabilityContext(state,{...options.policy,hasCodeExecution:true,...(spillPolicy?{hasCsvData:Boolean(state.datasetBundle)}:{})}));
         if (!allowed.decisions['data.mutate']?.allowed) throw new Error('capability_unavailable');
         return JSON.stringify(normalizeRuntimeAccessControlSettings(state.settings.runtimeAccessControl));
     };
@@ -82,19 +89,21 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         own();
         if (!validCommitKey(input.idempotencyKey)) throw new Error('idempotency_key_invalid');
         const candidate = port.read(candidateId), validation = port.validationReceipt(candidateId);
-        // The existing durable replay/activation path requires full arrays. Never publish the
-        // metadata-only projection of a spill as an empty accepted table.
-        if (candidate.spill) throw new Error('candidate_spill_commit_not_supported');
         if (!validation || validation.decision !== 'validated') throw new Error('validation_failed');
+        if(candidate.spill&&(candidate.tables.length!==1||candidate.execution.inputs?.length||candidate.execution.coverage?.length||candidate.execution.sources?.length))throw new Error('candidate_spill_inputs_unsupported');
         const sourceBundle = store.getState().datasetBundle;
         if (!sourceBundle) throw new Error('complete_input_unavailable');
+        const custody = candidate.spill ? port.captureSpillRead(candidateId) : undefined;
+        // Review revalidation can have a complete retained original without an accepted preview.
+        // This affects only the host commit policy check, never ordinary tool/execution grants.
+        spillPolicy=Boolean(custody);
         const capturedPolicy = policy(), expiresAt = Date.now()+300_000;
         const check = () => {
             own();
             if (Date.now() >= expiresAt || policy() !== capturedPolicy) throw new Error('approval_invalid');
             if (resumed) { detachedCheck!(store, context); return; }
             if (port.read(candidateId) !== candidate || port.validationReceipt(candidateId) !== validation) throw new Error('validation_failed');
-            execution.assertCommitEligible!(candidate.execution.jobId,context,options.policy);
+            execution.assertCommitEligible!(candidate.execution.jobId,context,options.policy,custody?.authority);
         };
         check();
         const primary = candidate.tables.find(t=>t.name===input.primaryTable);
@@ -104,12 +113,13 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         if (!environment || await codeDigest(environment) !== validation.environmentDigest
             || await sha256Bytes(new TextEncoder().encode(artifact.content)) !== validation.programDigest) throw new Error('candidate_artifact_mismatch');
         check();
-        const recovery = await captureDatasetReplay(store, candidate, sourceBundle); check();
-        const csv: CsvData = {fileName:sourceBundle.source.fileName,data:primary.rows.map(row=>({...row}))};
+        const spill = custody ? await planAcceptedSpill(custody,store,check) : undefined;check();
+        const recovery = spill ? undefined : await captureDatasetReplay(store, candidate, sourceBundle); check();
+        const csv: CsvData = spill ? acceptedSpillCsv(spill) : {fileName:sourceBundle.source.fileName,data:primary.rows.map(row=>({...row}))};
         const outputVersion = getCsvDatasetVersion(csv), now = new Date().toISOString();
         const tables = candidate.tables.map((table,index)=>({tableId:table===primary?sourceBundle.primaryTableId:`${candidate.candidateId}-table-${index}`,
             bundleId:sourceBundle.bundleId,name:table.name,role:table.role,schema:structuredClone(table.schema),rowCount:table.rowCount,
-            storage:{mode:'memory' as const,ephemeral:true},sourceRange:null,datasetVersion:outputVersion}));
+            storage:spill?{mode:'accepted_spill' as const,generation:spill.generation,manifestDigest:spill.digest,loadVersion:`accepted-${spill.digest}`,ephemeral:false as const}:{mode:'memory' as const,ephemeral:true},sourceRange:null,datasetVersion:outputVersion}));
         const output: SandboxTransformationOutput = {tables:tables.map((table,index)=>({tableId:table.tableId,name:table.name,role:table.role,
             columns:table.schema.map(c=>c.name),rows:candidate.tables[index].rows.map(row=>({...row}))})),lineage:[],relationships:[]};
         const relationships = candidate.relationships.map(r=>{
@@ -133,11 +143,11 @@ export const createCandidateCommitService = (store: StoreApi, options: {
             candidateId,primaryTable:primary.name,inputBindings:candidate.inputBindings,changeDigest:candidate.changeDigest,
             validationDigest:validation.receiptDigest,programDigest:validation.programDigest,environmentDigest:validation.environmentDigest,
             outputDigest:validation.outputDigest,scopeDigest:validation.scopeDigest,grantDigest:candidate.execution.grant!.digest,policyDigest:await codeDigest(capturedPolicy),
-            recoveryDigest:recovery.manifest.digest};
+            recoveryDigest:spill?.digest??recovery!.manifest.digest,...(spill?{spill}: {})};
         check();
         const payloadDigest=await codeDigest(payload);
         const body={...payload,reviewId:`review-${crypto.randomUUID()}`,idempotencyKey:input.idempotencyKey,payloadDigest,expiresAt,
-            tables:tables.map(t=>({name:t.name,rowCount:t.rowCount,columns:t.schema.map(c=>c.name)})),rowStorage:'transient' as const};
+            tables:tables.map(t=>({name:t.name,rowCount:t.rowCount,columns:t.schema.map(c=>c.name)})),rowStorage:spill?'durable_spill' as const:'transient' as const};
         const result=immutable({...body,reviewDigest:await codeDigest(body)});check();
         const marker: DatasetCommitMarker = {kind:'commit',recordId:commitIntentKey(lease.scope.sessionId,input.idempotencyKey),
             intentKey:commitIntentKey(lease.scope.sessionId,input.idempotencyKey),approvalKey:'',sessionId:lease.scope.sessionId,commitId,revision,
@@ -148,9 +158,9 @@ export const createCandidateCommitService = (store: StoreApi, options: {
             lineage:{tables:candidate.tables.map(t=>({name:t.name,cells:structuredClone(t.lineage)})),excludedRows:structuredClone(candidate.excludedRows)},
             approval:{approvalId:'',reviewDigest:result.reviewDigest,approvedAt:0,expiresAt,consumedAt:0},
             audit:{sessionEpoch:lease.scope.epoch,taskId:candidate.taskId,taskRevision:candidate.taskRevision,runId:lease.runId,turnId:lease.turnId,
-                toolCallId:context.toolCallId,stepId:context.stepId,grantDigest:payload.grantDigest,committedAt:now},rowStorage:'transient',replayManifest:recovery.manifest,
+                toolCallId:context.toolCallId,stepId:context.stepId,grantDigest:payload.grantDigest,committedAt:now},rowStorage:spill?'durable_spill':'transient',...(spill?{acceptedSpill:spill,spillRunRequest:structuredClone(candidate.execution.runRequest!)}:{replayManifest:recovery!.manifest}),
             previousCommit:sourceBundle.acceptedCommit};
-        reviews.set(result,{review:result,candidate,validation,marker,csv,output,check,recovery:recovery.material,bindingStatus:store.getState().datasetCommitBindingStatus});
+        reviews.set(result,{review:result,candidate,validation,marker,csv,output,check,recovery:recovery?.material,...(spill?{spill:{manifest:spill,custody:custody!}}:{}),bindingStatus:store.getState().datasetCommitBindingStatus});
         return result;
     };
 
@@ -178,7 +188,7 @@ export const createCandidateCommitService = (store: StoreApi, options: {
             vectorStoreDocuments:[],pendingVectorMemoryDocs:[],vectorMemoryState:'cold',reportMemoryScope:null,
             duckDbSessionStatus:{status:'binding',engine:null,tableName:null,loadVersion:null,fallbackReason:null,lastSyncedAt:null}});
         registerSandboxTableRows(marker.bundle.bundleId,prepared.output,marker.bundle.datasetVersion);
-        rememberRecoveryMaterial(store, marker.commitId, prepared.recovery);
+        rememberRecoveryMaterial(store, marker.commitId, prepared.recovery!);
         registerSessionResource(lease.scope,()=>clearSandboxTableRows(marker.bundle.bundleId));
         try {
             const binding=await (options.bind??primeDuckDbDataset)(prepared.csv,lease.signal);
@@ -199,9 +209,84 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         }
     };
 
+    const spillAttempts=new WeakSet<Prepared>();
+    const commitSpill=async(approval:CandidateCommitApproval,prepared:Prepared):Promise<CandidateCommitOutcome>=>{
+        if(spillAttempts.has(prepared))return {status:'not_committed',admitted:false,replay:false,reason:'approval_consumed'};
+        spillAttempts.add(prepared);
+        let admitted=false,durable=false,created:Awaited<ReturnType<typeof writeAcceptedSpill>>|undefined;
+        let binding:Awaited<ReturnType<typeof prepareAcceptedSpillBinding>>|undefined;
+        let marker:DatasetCommitMarker|undefined;
+        const previous=store.getState();
+        try{
+            prepared.check();
+            const db=await database();prepared.check();
+            if(await readCommitIntent(db,lease!.scope.sessionId,prepared.review.idempotencyKey))throw new Error('approval_consumed');
+            prepared.check();
+            const spill=prepared.spill!;
+            // Authentication is repeated during copy; a stored PASS never attests current backing availability.
+            created=await writeAcceptedSpill(spill.manifest,spill.custody,store,prepared.check,options.acceptedStorage);prepared.check();
+            binding=await (options.prepareSpillBinding??prepareAcceptedSpillBinding)(created.file,spill.manifest,prepared.check,lease!.signal);prepared.check();
+            const csv=acceptedSpillCsv(spill.manifest,binding.preview);
+            marker=immutable({...prepared.marker,...(store.piTask?{taskBudget:structuredClone(store.piTask.snapshot.budget)}:{}),
+                approvalKey:commitApprovalKey(lease!.scope.sessionId,approval.approvalId),approval:{...approval,consumedAt:Date.now()},
+                audit:{...prepared.marker.audit,runId:lease!.runId,turnId:lease!.turnId,toolCallId:context.toolCallId,stepId:context.stepId}});
+            const accepted=marker;
+            return await queueSessionWrite(async()=>{
+                prepared.check();
+                const baseline=buildPersistedReportRecord(previous,{id:lease!.scope.sessionId,filename:csv.fileName});
+                const saved=await db.get('reports',lease!.scope.sessionId),head=await db.get(DATASET_COMMITS_STORE,commitHeadKey(lease!.scope.sessionId));prepared.check();
+                if(head&&head.kind!=='head')throw new Error('commit_marker_invalid');
+                try{
+                    await commitDatasetTransaction(db,accepted,baseline,prepared.check,()=>{admitted=true;
+                        store.setState({datasetCommitBindingStatus:'commit_unknown',activeDataQuery:null,datasetSemanticSnapshot:null});options.onAdmitted?.();});
+                    durable=true;
+                }catch(error){
+                    if(admitted){
+                        try{const stored=await readCommitIntent(db,accepted.sessionId,accepted.idempotencyKey);durable=stored?.payloadDigest===accepted.payloadDigest;}
+                        catch{binding!.rollback();return {status:'unknown' as const,admitted,replay:false,reason:'commit_outcome_unknown'};}
+                    }
+                    if(!durable)throw error;
+                }
+                if(!canCommitRun(store,lease)){binding!.rollback();return {status:'committed' as const,admitted,replay:false,marker:accepted,acknowledgement:'revoked' as const};}
+                try{
+                    prepared.check();
+                    const latest=await db.get(DATASET_COMMITS_STORE,commitHeadKey(accepted.sessionId));prepared.check();
+                    if(latest?.kind!=='head'||latest.commitId!==accepted.commitId)throw new Error('commit_activation_superseded');
+                    binding!.activate();
+                    store.setState({datasetBundle:structuredClone(accepted.bundle),csvData:csv,canonicalCsvData:csv,rawCsvData:null,candidateRecovery:null,
+                        datasetCommitBindingStatus:'ready',activeDataQuery:null,datasetSemanticSnapshot:null,semanticDatasetVersion:null,semanticStatus:'idle',
+                        columnRegistry:null,columnProfiles:[],canonicalBuildMeta:null,activeMetricMappingValidation:null,activeSpreadsheetFilter:null,spreadsheetFilterFunction:null,
+                        vectorStoreDocuments:[],pendingVectorMemoryDocs:[],vectorMemoryState:'cold',reportMemoryScope:null,
+                        duckDbSessionStatus:{...binding!.binding,status:'ready',fallbackReason:null,lastSyncedAt:new Date()}});
+                    binding!.finish();
+                    return {status:'committed' as const,admitted,replay:false,marker:accepted,acknowledgement:'installed' as const};
+                }catch(error){
+                    binding!.rollback();
+                    // Do not publish stale state across a source/session switch. The accepted journal remains recoverable.
+                    if(!canCommitRun(store,lease))return {status:'committed' as const,admitted,replay:false,marker:accepted,acknowledgement:'revoked' as const};
+                    try{
+                        await compensateSpillCommit(db,accepted,saved??baseline,head?.kind==='head'?head:undefined);
+                        if(canCommitRun(store,lease)&&JSON.stringify(store.getState().datasetBundle?.source.inspection)===JSON.stringify(previous.datasetBundle?.source.inspection))
+                            store.setState({...acceptedPublicationSnapshot(previous),activeDataQuery:null});
+                        return {status:'not_committed' as const,admitted,replay:false,reason:reason(error)};
+                    }catch{
+                        if(canCommitRun(store,lease))store.setState({datasetCommitBindingStatus:'commit_unknown',activeDataQuery:null});
+                        return {status:'unknown' as const,admitted,replay:false,reason:'commit_compensation_failed'};
+                    }
+                }
+            });
+        }catch(error){
+            binding?.rollback();
+            if(!durable&&created)await created.remove().catch(()=>{});
+            if(!durable&&canCommitRun(store,lease)&&store.getState().datasetCommitBindingStatus==='commit_unknown')store.setState({datasetCommitBindingStatus:previous.datasetCommitBindingStatus});
+            return {status:durable?'unknown':'not_committed',admitted,replay:false,reason:reason(error),...(durable?{marker}: {})};
+        }
+    };
+
     const commit = async (approval: CandidateCommitApproval): Promise<CandidateCommitOutcome> => {
         const prepared=approvals.get(approval);
         if (!prepared||approval.reviewDigest!==prepared.review.reviewDigest) return {status:'not_committed',admitted:false,replay:false,reason:'approval_invalid'};
+        if(prepared.spill)return commitSpill(approval,prepared);
         let commitDb: StorageDatabase | undefined;
         const durable = await queueSessionWrite(async(): Promise<CandidateCommitOutcome>=>{
             let admitted=false,db:StorageDatabase;
@@ -258,9 +343,10 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         if (!prepared || suspended || resumed || !execution.captureCommitCheck) throw new Error('approval_invalid');
         prepared.check();
         const candidateCheck = port.captureCommitCheck(reviewed.candidateId);
-        const grantCheck = execution.captureCommitCheck(prepared.candidate.execution.jobId, context, options.policy);
+        const grantCheck = execution.captureCommitCheck(prepared.candidate.execution.jobId, context, options.policy,prepared.spill?.custody.authority);
         detachedCheck = (target, fresh) => { candidateCheck(target, fresh); grantCheck(target, fresh); };
         const capsule = Object.freeze({reviewId: reviewed.reviewId, reviewDigest: reviewed.reviewDigest});
+        if(prepared.spill)detachCandidateDraft(store,reviewed.reviewId,reviewed.reviewDigest,reviewed.expiresAt,prepared.spill.custody);
         capsules.set(capsule, prepared); approvals = new WeakMap(); suspended = true;
         return capsule;
     };

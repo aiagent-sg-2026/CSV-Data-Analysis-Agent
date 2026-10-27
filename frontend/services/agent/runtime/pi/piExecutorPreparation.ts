@@ -21,12 +21,13 @@ export interface PiExecutorPreparation {
 export const preparePiExecutor = async (store: StoreApi, options: {
     entryPoint: ExecutorPreparationReference['entryPoint']; goal: string;
     continuation?: PiTaskContinuation; guest?: Parameters<typeof preparePiTask>[3];
+    spillFactory?: import('../../../data/candidateSpill').CandidateSpillFactory;
     qualified?: boolean; recoveryBudget?: import('./piTaskBudget').TaskBudget;
 }): Promise<PiExecutorPreparation> => {
     const lease = store.executionContext?.lease;
     if (!lease || lease.kind !== options.entryPoint) throw new Error('executor_entry_point_mismatch');
     assertRunActive(store, lease);
-    const task = await preparePiTask(store, options.goal, options.continuation, options.guest, options.recoveryBudget);
+    const task = await preparePiTask(store, options.goal, options.continuation, options.guest, options.recoveryBudget,options.spillFactory);
     assertRunActive(store, lease);
     task.refreshInputs();
     const reference = (): ExecutorPreparationReference => {
