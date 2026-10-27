@@ -56,7 +56,7 @@ export const inspectInitialHeaderAlignment = async (intake: ReportIntakeIr | nul
         }
         return {status:result.status, blocked, associatedSourceSha256:sha, rawRowsFingerprintSha256:null,
             reasons, possibleChoices:[],
-            summary:blocked ? `${identity} ${intake.diagnostics?.headerShapeDrift ? 'Header/body shape drift was detected, but no reliable alignment was found.' : 'Complete parsing with no unresolved structural signal is not available.'} Ordinary analysis is blocked pending automatic source repair. The bounded original-source repair lane can inspect this evidence; full large-source execution and validation continuation remain unavailable. See /intake/source-scan.json for source-bound evidence when available. A partial header scan is not proof of no issues; no candidate can be committed.` : ''};
+            summary:blocked ? `${identity} ${intake.diagnostics?.headerShapeDrift ? 'Header/body shape drift was detected, but no reliable alignment was found.' : 'Complete parsing with no unresolved structural signal is not available.'} Ordinary analysis is blocked pending automatic source repair. The bounded original-source repair lane can inspect this evidence; eligible retained large sources use bounded source-record execution and independent spill validation; unsupported structures remain explicit. See /intake/source-scan.json for source-bound evidence when available. A partial header scan is not proof of no issues; no candidate can be committed.` : ''};
     }
     const fingerprint = result.candidates[0]?.sourceFingerprint ?? null;
     const possibleChoices = result.candidates.map((candidate, index) => ({

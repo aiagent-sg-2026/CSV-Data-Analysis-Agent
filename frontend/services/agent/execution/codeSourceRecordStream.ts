@@ -8,7 +8,7 @@ import { serializeCodeState } from './codeStatefulStream';
 export const SOURCE_STREAM_LIMITS = Object.freeze({ batchRows: 50, steps: 10000, activeMs: 15 * 60 * 1000,
     batchJsonBytes: 256 * 1024, cumulativeReadBytes: 600 * 1024 * 1024, sources: 128, attempts: 3 });
 export interface SourceStreamBudget { attempts:number;steps:number;activeMs:number;readBytes:number }
-interface Ledger extends SourceStreamBudget { owner: symbol }
+interface Ledger extends SourceStreamBudget { owner: symbol; meaningAttempts?: number }
 const ledgers = new WeakMap<ReturnType<typeof captureSessionScope>, Map<string, Ledger>>();
 export interface SourceStreamOptions { sourceId: string; sha256: string; width: number; initialState: unknown }
 export interface SourceStreamMetrics {
@@ -26,8 +26,49 @@ export const seedRecoveredSourceStreamBudget=(store:StoreApi,source:NonNullable<
     let map=ledgers.get(scope);if(!map){map=new Map();ledgers.set(scope,map);registerSessionResource(scope,()=>{map!.clear();ledgers.delete(scope);});}
     const prior=map.get(key);
     if(!prior&&map.size>=SOURCE_STREAM_LIMITS.sources)throw new Error('source_stream_ledger_capacity');
-    map.set(key,{owner:Symbol(),attempts:Math.max(prior?.attempts??0,budget.attempts),steps:Math.max(prior?.steps??0,budget.steps),
+    map.set(key,{owner:Symbol(),meaningAttempts:prior?.meaningAttempts??0,attempts:Math.max(prior?.attempts??0,budget.attempts),steps:Math.max(prior?.steps??0,budget.steps),
         activeMs:Math.max(prior?.activeMs??0,budget.activeMs),readBytes:Math.max(prior?.readBytes??0,budget.readBytes)});
+};
+
+/** Public-tool compilation uses the execution ledger, not a resettable per-proposal allowance. */
+export const inspectSourceMeaning = async (store: StoreApi, current: () => void,
+    inspect: (records: Awaited<ReturnType<ReturnType<typeof createSourceRecordReader>['read']>>['records']) => void) => {
+    current();
+    const source = store.getState().datasetBundle?.source.inspection;
+    if (!source || source.recordCount < 2) throw new Error('meaning_source_unavailable');
+    if (JSON.stringify(readSourceBytes(store, source.sourceId, 0, 0).source) !== JSON.stringify(source)) throw new Error('source_stream_binding_invalid');
+    const scope = captureSessionScope(store), key = JSON.stringify([source.sha256, source.byteSize, source.recordCount, source.dialect]);
+    let map = ledgers.get(scope);
+    if (!map) { map = new Map(); ledgers.set(scope, map); registerSessionResource(scope, () => { map!.clear(); ledgers.delete(scope); }); }
+    let account = map.get(key);
+    if (!account) {
+        if (map.size >= SOURCE_STREAM_LIMITS.sources) throw new Error('source_stream_ledger_capacity');
+        account = { attempts: 0, steps: 0, activeMs: 0, readBytes: 0, owner: Symbol() }; map.set(key, account);
+    }
+    const ledger = account, owner = ledger.owner, started = Date.now();
+    if ((ledger.meaningAttempts ?? 0) >= SOURCE_STREAM_LIMITS.attempts) throw new Error('source_stream_meaning_attempts_exhausted');
+    ledger.meaningAttempts = (ledger.meaningAttempts ?? 0) + 1;
+    const check = () => {
+        current();
+        if (ledger.owner !== owner) throw new Error('source_stream_stale');
+        if (ledger.activeMs + Date.now() - started >= SOURCE_STREAM_LIMITS.activeMs || ledger.steps >= SOURCE_STREAM_LIMITS.steps) throw new Error('source_stream_budget_exhausted');
+    };
+    const reader = createSourceRecordReader(store, source.sourceId, check, bytes => {
+        check();
+        if (ledger.readBytes + bytes > SOURCE_STREAM_LIMITS.cumulativeReadBytes) throw new Error('source_stream_budget_exhausted');
+        ledger.readBytes += bytes;
+    });
+    let next = 0;
+    try {
+        while (next < source.recordCount) {
+            check(); ledger.steps++;
+            const batch = await reader.read(SOURCE_STREAM_LIMITS.batchRows); check();
+            if (batch.startRow !== next || !batch.records.length) throw new Error('source_stream_no_progress');
+            inspect(batch.records); next = batch.nextRow; reader.commit();
+        }
+        check();
+        if (next !== source.recordCount) throw new Error('source_stream_incomplete');
+    } finally { ledger.activeMs += Date.now() - started; }
 };
 
 /** Host-only continuation. Neither a guest cursor nor a saved manifest can instantiate this owner.

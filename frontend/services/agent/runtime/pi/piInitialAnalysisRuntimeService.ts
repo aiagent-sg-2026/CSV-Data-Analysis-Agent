@@ -35,6 +35,7 @@ import { prepareStructureRepair, StructureRepairPreparationError, type PiStructu
 
 const STAGES = createInitialAnalysisStageToolManifests();
 import { INITIAL_CHECKPOINT_PREFIX as CHECKPOINT_PREFIX, initialCheckpointKey as checkpointKey, hasPiInitialCheckpoint, readPiInitialCheckpoint as readCheckpoint, writePiInitialCheckpoint as writeCheckpoint, discardPiInitialCheckpoint as discardCheckpoint, captureCheckpointSource, captureCheckpointSourceBoundary, checkpointLineageSignature, validateCheckpointState, type PiInitialCheckpoint, type InitialStageReceipt } from './piInitialCheckpoint';
+import { pendingSpillMeaningChoice, sealSpillMeaningChoice } from './piSpillMeaningChoice';
 import { getCsvDatasetVersion } from '../../../../utils/datasetId';
 export interface PiInitialAnalysisOptions {
     plannerStream?: StreamFn;
@@ -45,6 +46,7 @@ export interface PiInitialAnalysisOptions {
         qualified?: boolean;
         continuation?: import('./piCodingTask').PiTaskContinuation;
         guest?: Parameters<typeof preparePiExecutor>[1]['guest'];
+        spillFactory?: Parameters<typeof preparePiExecutor>[1]['spillFactory'];
         prepareStage?: (store: StoreApi, stage: InitialExecutorStage) => Promise<void>;
     };
 }
@@ -151,6 +153,7 @@ const run = async (
     let executorPreparation: PiExecutorPreparation | undefined;
     const qualified=options.codingPreparation?.qualified===true;
     let pendingApproval:ClarificationRequest|undefined;
+    let pendingMeaning:ClarificationRequest|undefined;
     let approvalSealed=false;
     let headerGateBlocked = false;
     let structureRepair: PiStructureRepair | undefined;
@@ -232,8 +235,11 @@ const run = async (
         Math.max(1,INITIAL_ANALYSIS_BUDGET_MS-(checkpoint?.coding?.budget.used.activeMs??0)));
     const persistCheckpoint = async (pendingStageIndex: number | null) => {
         assertRunActive(store, lease);
-        if (!recoveryEnabled) return;
         const savedState = store.getState();
+        // Source-only intake can have no material rows before validation. A newly persisted
+        // candidate checkpoint provides the first recovery anchor; do not permanently disable it.
+        if (!recoveryEnabled && !savedState.candidateRecovery) return;
+        if (savedState.candidateRecovery) recoveryEnabled = true;
         if (pendingStageIndex === null) {
             recoveryEnabled = await persistCurrentAppSessionSnapshot(savedState, { store, scope: lease.scope });
             assertRunActive(store, lease);
@@ -470,7 +476,7 @@ const run = async (
             }
             return nextStageIndex >= STAGES.length
                 || structureRepair?.progress.state === 'exhausted'
-                || Boolean(pendingApproval)
+                || Boolean(pendingApproval || pendingMeaning)
                 || results.at(-1)?.decision === 'fail'
                 ? { action: 'end' } : { action: 'continue' };
         },
@@ -519,11 +525,11 @@ const run = async (
                     assertRunActive(store, lease);
                     throw new Error(`initial_header_alignment_blocked: ${headerAlignmentDiagnostic.summary}`);
                 }
-                structureRepair = await prepareStructureRepair(store, request.researchGoal);
+                structureRepair = await prepareStructureRepair(store, request.researchGoal, options.codingPreparation?.spillFactory ? true : undefined);
             }
         }
         if (options.codingPreparation?.enabled === true) executorPreparation = await preparePiExecutor(store, {entryPoint:'initial_analysis',
-            goal:request.researchGoal,guest:options.codingPreparation.guest,qualified,continuation:options.codingPreparation.continuation,
+            goal:request.researchGoal,guest:options.codingPreparation.guest,spillFactory:options.codingPreparation.spillFactory,qualified,continuation:options.codingPreparation.continuation,
             recoveryBudget:options.codingPreparation.continuation?undefined:structureRepair?.recoveryBudget??checkpoint?.coding?.budget});
         structureRepair?.current();
         const preparedRepairProgress = structureRepair?.progress;
@@ -553,6 +559,7 @@ const run = async (
                     if (structureRepair) structureRepair.afterTool(t.name, t.name === 'candidate_validate' ? executorPreparation!.task.validationState().receipt : undefined);
                     if(t.name==='candidate_infer_meaning'){
                         const text=result.content.filter(part=>part.type==='text').map(part=>part.text).join('');
+                        if (structureRepair && /source_stream_[a-z_]*exhausted/.test(text)) structureRepair.stop(false, text);
                         const guidance=countMeaningOutcome(classifyMeaningResult(text,false),providerTurns+1);
                         if(guidance){
                             let annotated:string;
@@ -560,9 +567,11 @@ const run = async (
                             result={...result,content:[{type:'text',text:annotated}]};
                         }
                     }
+                    pendingMeaning=pendingSpillMeaningChoice(store);
+                    if (pendingMeaning) structureRepair?.awaitingMeaning();
                     pendingApproval=pendingPiCandidateApproval(store);
                     if (pendingApproval) structureRepair?.awaitingApproval();
-                    return {...result,...(pendingApproval || structureRepair?.progress.state === 'exhausted' ? {terminate:true}:{})};
+                    return {...result,...(pendingApproval || pendingMeaning || structureRepair?.progress.state === 'exhausted' ? {terminate:true}:{})};
                 }catch(error){
                     // A thrown proposal error is also a rejection unless the run or scope failed; carry new skip guidance in the same tool result.
                     const guidance=t.name==='candidate_infer_meaning'&&error instanceof Error
@@ -582,8 +591,13 @@ const run = async (
             throw new Error(agent.state.errorMessage);
         }
         if (meaningStopReason && !pendingApproval) throw new Error(meaningStopReason);
-        if(pendingApproval&&qualified){
+        if (pendingMeaning && qualified) {
+            pendingMeaning = executorPreparation!.task.suspend(pendingMeaning);
+            sealSpillMeaningChoice(store, pendingMeaning, target => run({ ...request, signal: undefined }, target, null, streamOverride, options));
+            status = 'blocked';
+        } else if(pendingApproval&&qualified){
             const suspended=executorPreparation!.task.suspend(pendingApproval);
+            await persistCheckpoint(nextStageIndex);
             const captured=readCheckpoint(request.appSessionId)!;
             if(!captured||captured.schemaVersion!==2)throw new Error('initial_checkpoint_unavailable');
             sealPiCandidateApproval(store,suspended,{message:request.researchGoal},agent.state.messages,
@@ -617,7 +631,7 @@ const run = async (
             status = nextStageIndex === STAGES.length && results.every(result => result.decision === 'pass')
                 && warnings.length === 0 ? 'completed' : 'degraded';
         }
-        if(qualified&&!pendingApproval&&!headerGateBlocked&&status!=='failed'){
+        if(qualified&&!pendingApproval&&!pendingMeaning&&!headerGateBlocked&&status!=='failed'){
             const state=store.getState(),version=getCurrentAnalysisDatasetVersion(state);
             const emitted=new Set(stageReceipts.filter(r=>r.toolName==='analysis.executeEvidence').flatMap(r=>r.cardIds));
             const trusted=resolveAnalysisCompletionGate({cards:state.analysisCards.filter(c=>emitted.has(c.id)),currentDatasetVersion:version,columnProfiles:state.columnProfiles}).trustedBusinessCardIds;
@@ -646,7 +660,7 @@ const run = async (
                 try { structureRepair.stop(false, errorMessage); } catch { /* Replacement revokes all publication. */ }
             } else structureRepair.stop(true, errorMessage);
         }
-        if(qualified&&(!headerGateBlocked||structureRepair)&&!pendingApproval&&ownsRun(store,lease)&&!lease.signal.aborted&&(status==='failed'||status==='blocked')){
+        if(qualified&&(!headerGateBlocked||structureRepair)&&!pendingApproval&&!pendingMeaning&&ownsRun(store,lease)&&!lease.signal.aborted&&(status==='failed'||status==='blocked')){
             // Retain consumed provider/tool counters without converting an uncertain stage into a stable boundary.
             try {await persistCheckpoint(readCheckpoint(request.appSessionId)?.pendingStageIndex ?? null);}
             catch { /* The original failure and last durable checkpoint remain the recovery boundary. */ }
@@ -727,12 +741,13 @@ const run = async (
         totalSteps: STAGES.length,
         currentStep: Math.min(nextStageIndex, STAGES.length),
     });
-    if (ownsLease || pendingApproval) finishRun(store, lease);
-    if (pendingApproval) {
-        // Expose the review only after releasing the old lease, including when the caller acquired it.
-        store.setState(prev => ({pendingClarification: pendingApproval!, activeAgentTask: executorPreparation!.task.snapshot, chatHistory: [...prev.chatHistory,
-            createChatMessage({sender: 'ai', type: 'ai_clarification', text: pendingApproval!.question,
-                clarificationRequest: pendingApproval, timestamp: new Date()})]}));
+    if (ownsLease || pendingApproval || pendingMeaning) finishRun(store, lease);
+    if (pendingApproval || pendingMeaning) {
+        // Expose human questions only after releasing the old lease.
+        const pending = (pendingApproval || pendingMeaning)!;
+        store.setState(prev => ({pendingClarification: pending, activeAgentTask: executorPreparation!.task.snapshot, chatHistory: [...prev.chatHistory,
+            createChatMessage({sender: 'ai', type: 'ai_clarification', text: pending.question,
+                clarificationRequest: pending, timestamp: new Date()})]}));
     }
     return {
         status,
@@ -744,7 +759,7 @@ const run = async (
         traceId,
         ...(headerAlignmentDiagnostic ? { headerAlignmentDiagnostic } : {}),
         ...(structureRepair || repairPreparationFailure ? { structureRepair: structureRepair?.progress ?? repairPreparationFailure } : {}),
-        ...(status === 'failed'||status==='blocked'&&!pendingApproval ? { error: {
+        ...(status === 'failed'||status==='blocked'&&!pendingApproval&&!pendingMeaning ? { error: {
             code: 'pi_initial_analysis_failed',
             message: errorMessage || 'Pi did not complete the governed analysis.',
             retryable: structureRepair?.progress.resumable ?? repairPreparationFailure?.resumable ?? !headerGateBlocked,

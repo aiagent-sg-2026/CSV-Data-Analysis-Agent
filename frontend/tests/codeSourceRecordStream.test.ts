@@ -12,7 +12,7 @@ import { createCandidateSpill, openCandidateSpill, type CandidateSpillFactory } 
 import { createCandidateStaging } from '../services/data/candidateStaging';
 import { beginSessionTransition } from '../services/session/sessionOwnership';
 import type { CodeExecutionReceipt } from '../services/agent/execution/codeExecutionContract';
-import { createSourceRecordStream } from '../services/agent/execution/codeSourceRecordStream';
+import { createSourceRecordStream, inspectSourceMeaning, seedRecoveredSourceStreamBudget } from '../services/agent/execution/codeSourceRecordStream';
 
 const directories: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(directories.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
@@ -34,6 +34,14 @@ const realGuest = () => ({
 });
 
 describe('real original-record stream through governed executor, QuickJS and disk spill', () => {
+    it('does not reset meaning inspection attempts when installing recovered execution budget floors', async () => {
+        const storage = await disk(), s = await qualifySourceStream(3, realGuest(), storage.factory);
+        try {
+            for (let i = 0; i < 3; i++) await inspectSourceMeaning(s.store, () => {}, () => {});
+            seedRecoveredSourceStreamBudget(s.store, s.source, { attempts: 0, steps: 0, activeMs: 0, readBytes: 0 });
+            await expect(inspectSourceMeaning(s.store, () => {}, () => {})).rejects.toThrow('source_stream_meaning_attempts_exhausted');
+        } finally { s.adapter.dispose(); beginSessionTransition(s.root); }
+    });
     it.each([9000, 27000])('repairs and independently checks %i records including ragged UTF-8/multiline tail without full Blob reads', async rows => {
         const started = Date.now(), memory = { samples: 0, heapUsed: 0, rss: 0, external: 0, arrayBuffers: 0 };
         const sample = () => {

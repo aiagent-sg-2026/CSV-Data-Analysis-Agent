@@ -23,6 +23,7 @@ export {executeManagedDataQuery} from '../../../duckdb/queryEngine';
 export {createCandidateCommitService} from '../../../data/candidateCommit';
 export {preparePiInitialCodingUiSmoke} from './piInitialCodingQualification';
 export {preparePiStructureRepairSmoke,queryPiStructureRepairSmoke} from './piStructureRepairQualification';
+export {preparePiLargeCoordinatorSmoke} from './piLargeCoordinatorQualification';
 export {executeEvaluationCase,executeEvaluationInitialProbe} from './piEvaluationRuntime';
 export {runWeightedMedianDemoProbe} from './piWeightedMedianQualification';
 export {runRepairComputationDemoProbe} from './piRepairComputationQualification';

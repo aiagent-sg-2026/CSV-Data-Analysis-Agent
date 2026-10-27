@@ -19,6 +19,7 @@ export interface ClarificationRequest {
     targetProperty?: keyof AnalysisPlan | 'merge';
     resumeContext?: {
         piCandidateApproval?: { reviewId: string; reviewDigest: string };
+        piSpillMeaningChoice?: { id: string };
         piTaskContinuation?: import('../services/agent/runtime/pi/piCodingTask').PiTaskContinuation;
         turnId?: string;
         resumeMessagePrefix?: string;

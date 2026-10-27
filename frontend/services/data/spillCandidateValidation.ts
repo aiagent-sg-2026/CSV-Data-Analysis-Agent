@@ -11,11 +11,8 @@ import type { HostCandidateValidationContract } from './candidateValidationBindi
  * natural-key uniqueness, joins, arbitrary exclusions or grouped/multi-table semantics implied.
  * Numeric units/additivity must already be resolved by the host integration before binding.
  */
-export interface SpillCandidateMeaning {
-    version: 1; kind: 'ordered-source-records'; table: string; grain: 'source_record';
-    columns: Array<{ name: string; sourceColumn: number; conversion: 'identity' | 'trim' | 'decimal'; scale?: number; unit?: string }>;
-    headerRow: 0; summary: 'none' | 'last_record_sum';
-}
+export { assertSpillMeaning, type SpillCandidateMeaning } from './spillMeaningContract';
+import { assertSpillMeaning, type SpillCandidateMeaning } from './spillMeaningContract';
 export type SourceSpillCapability = ReturnType<NonNullable<CodeExecutionPort['sourceSpill']>>;
 export const spillSchema = (meaning: SpillCandidateMeaning): DatasetColumnSchema[] => meaning.columns.map(c => ({
     name: c.name, dataType: c.conversion === 'decimal' ? 'number' : 'string', nullable: false,
@@ -28,19 +25,6 @@ export const spillRow = (meaning: SpillCandidateMeaning, cells: string[]): CsvRo
     if (c.conversion === 'decimal' && minor(value as number, c.scale!) !== minor(raw, c.scale!)) throw new Error('validation_decimal_precision');
     return [c.name, value];
 }));
-const validName = (value: string) => typeof value === 'string' && value.trim() === value && value.length > 0 && value.length <= 240
-    && !['__proto__', 'prototype', 'constructor'].includes(value);
-export const assertSpillMeaning = (meaning: SpillCandidateMeaning) => {
-    if (meaning.version !== 1 || meaning.kind !== 'ordered-source-records' || meaning.grain !== 'source_record' || meaning.headerRow !== 0
-        || !validName(meaning.table) || !['none', 'last_record_sum'].includes(meaning.summary) || !Array.isArray(meaning.columns)
-        || !meaning.columns.length || meaning.columns.length > 256 || new Set(meaning.columns.map(c => c.name)).size !== meaning.columns.length
-        || new Set(meaning.columns.map(c => c.sourceColumn)).size !== meaning.columns.length
-        || meaning.columns.some(c => !validName(c.name) || !Number.isSafeInteger(c.sourceColumn) || c.sourceColumn < 0 || c.sourceColumn >= meaning.columns.length
-            || !['identity', 'trim', 'decimal'].includes(c.conversion) || c.conversion === 'decimal' && (!c.unit?.trim()
-                || !Number.isInteger(c.scale) || c.scale! < 0 || c.scale! > 6)
-            || c.conversion !== 'decimal' && (c.scale !== undefined || c.unit !== undefined))
-        || meaning.summary === 'last_record_sum' && !meaning.columns.some(c => c.conversion === 'decimal')) throw new Error('candidate_spill_meaning_invalid');
-};
 /** Trusted host adapter only. Does not capture provisional rows or install model-provided PASS. */
 export const bindSpillCandidateValidationContract = async (store: StoreApi, goal: string, value: SpillCandidateMeaning): Promise<HostCandidateValidationContract> => {
     const meaning = structuredClone(value); assertSpillMeaning(meaning);

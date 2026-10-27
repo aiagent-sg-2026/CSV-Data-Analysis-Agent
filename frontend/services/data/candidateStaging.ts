@@ -36,6 +36,9 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
     // Capture a host-provided contract before the candidate exists. Agent tool arguments cannot install one.
     const authorityRoot=rootStore(store);
     let supplied=authorityRoot.candidateValidationContract;
+    // The optional root host integration must remain unchanged. Public inference instead fixes
+    // a private compiled binding; it must not be required to mutate a root test-host hook.
+    const rootBindingSignature=JSON.stringify(supplied);
     const sourceAtPreparation=store.getState().datasetBundle?.source.inspection;
     const sourceSignatureAtPreparation=JSON.stringify(sourceAtPreparation);
     const sourceBinding=sourceAtPreparation?{sourceId:sourceAtPreparation.sourceId,sha256:sourceAtPreparation.sha256}:null;
@@ -396,7 +399,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             if(candidate.spill){
                 if(JSON.stringify(source)!==sourceSignatureAtPreparation
                     ||JSON.stringify(readSourceBytes(target,source!.sourceId,0,0).source)!==sourceSignatureAtPreparation
-                    ||JSON.stringify(authorityRoot.candidateValidationContract)!==JSON.stringify(supplied))throw new Error('input_version_changed');
+                    ||JSON.stringify(authorityRoot.candidateValidationContract)!==rootBindingSignature)throw new Error('input_version_changed');
                 if(JSON.stringify(target.getState().datasetBundle?.tables.map(t=>({tableId:t.tableId,datasetVersion:t.datasetVersion,relationshipSetId:target.getState().datasetBundle!.relationshipSetId})))!==JSON.stringify(candidate.inputBindings))throw new Error('input_version_changed');
             }else bindingCheck!(target);
         };
@@ -415,7 +418,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
                 ||JSON.stringify(state.settings.runtimeAccessControl)!==signature)throw new Error('approval_invalid');
             if(JSON.stringify(state.datasetBundle?.source.inspection)!==sourceSignatureAtPreparation
                 ||JSON.stringify(readSourceBytes(target,candidate.protectedSource!.sourceId,0,0).source)!==sourceSignatureAtPreparation
-                ||JSON.stringify(authorityRoot.candidateValidationContract)!==JSON.stringify(supplied)
+                ||JSON.stringify(authorityRoot.candidateValidationContract)!==rootBindingSignature
                 ||JSON.stringify(state.datasetBundle?.tables.map(t=>({tableId:t.tableId,datasetVersion:t.datasetVersion,relationshipSetId:state.datasetBundle!.relationshipSetId})))!==JSON.stringify(candidate.inputBindings))throw new Error('input_version_changed');
             for(const ref of [candidate.execution.program!,...(candidate.execution.inputs??[]),...candidate.outputArtifacts]){
                 const actual=workspace.read(ref.path);if(actual.revision!==ref.revision||actual.sha256!==ref.sha256)throw new Error('workspace_conflict');

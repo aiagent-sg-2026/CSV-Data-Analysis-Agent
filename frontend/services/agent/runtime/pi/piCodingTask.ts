@@ -21,7 +21,7 @@ import { admitComputationEvidence, type ComputationEvidenceReceipt } from '../..
 export interface PiTaskContinuation { taskId: string; revision: number; scopeDigest: string }
 type Adapter = ReturnType<typeof createCodeExecutionAdapter>;
 type Guest = Parameters<typeof createCodeExecutionAdapter>[3];
-type RecordState = { task: AgentTaskContract; workspace: TaskWorkspace; skills:SkillSnapshot; mcp:import('../../connectors/httpMcpContract').McpTaskPort; skillPrograms:Map<string,{pin:PinnedSkill;reference:import('../../execution/codeExecutionContract').CodeArtifactRef}>; coding: boolean; workStarted: boolean; scopeRepairAttempts:number; failureKey: string; repetitions: number; repairCommit?: TaskRepairCommit; retire?: () => void; inspection?: TaskInspectionProjection };
+type RecordState = { guest?: Guest; spillFactory?: Parameters<typeof createCodeExecutionAdapter>[4]; task: AgentTaskContract; workspace: TaskWorkspace; skills:SkillSnapshot; mcp:import('../../connectors/httpMcpContract').McpTaskPort; skillPrograms:Map<string,{pin:PinnedSkill;reference:import('../../execution/codeExecutionContract').CodeArtifactRef}>; coding: boolean; workStarted: boolean; scopeRepairAttempts:number; failureKey: string; repetitions: number; repairCommit?: TaskRepairCommit; retire?: () => void; inspection?: TaskInspectionProjection };
 const tasks = new WeakMap<StoreApi['getState'], RecordState>();
 const digest = (value: unknown) => sha256Bytes(new TextEncoder().encode(JSON.stringify(value)));
 const codingTool = (name: string) => name.startsWith('code.') || name.startsWith('candidate.') || ['workspace.write', 'workspace.append', 'workspace.replace'].includes(name);
@@ -65,7 +65,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
         const mcp = await awaitOwned(captureMcpTask(store, task.taskId, () => tasks.get(key) === record), store, lease);
         const workspace = createTaskWorkspace(root, task.taskId, { allowedPrefixes: ['/workspace/'], allowedPaths: ['/dataset/cleaned.csv'] });
         task = { ...task, protectedInvariants: [...task.protectedInvariants, { id: 'mcp-snapshot', digest: mcp.digest }] };
-        record = { task, workspace, skills,mcp,skillPrograms:new Map(), coding: false, workStarted: false, scopeRepairAttempts:0, failureKey: '', repetitions: 0 };
+        record = { guest, spillFactory, task, workspace, skills,mcp,skillPrograms:new Map(), coding: false, workStarted: false, scopeRepairAttempts:0, failureKey: '', repetitions: 0 };
         tasks.set(key, record);
         const captured = record;
         registerSessionResource(lease.scope, () => { captured.retire?.(); captured.workspace.dispose(); if (tasks.get(key) === captured) tasks.delete(key); });
@@ -118,7 +118,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
     };
     const ensureAdapter = () => {
         current();
-        adapter ??= createCodeExecutionAdapter(store, record.workspace, () => record.task, guest, spillFactory);
+        adapter ??= createCodeExecutionAdapter(store, record.workspace, () => record.task, guest ?? record.guest, spillFactory ?? record.spillFactory);
         store.codeExecution = adapter;
         return adapter;
     };
@@ -164,7 +164,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
                 }
             } catch { /* Invalidated candidates cannot advance the plan. */ }
             const requirements=candidatePort?.validationRequirements();
-            return projectTypedTaskPlan(record.task,{meaningConfigured:Boolean(requirements?.configured),repairInput:requirements?.inference?.input,
+            return projectTypedTaskPlan(record.task,{meaningConfigured:Boolean(requirements?.configured),sourceSpill:Boolean(requirements?.spill),repairInput:requirements?.inference?.input,
                 candidateId,candidateValidated,successfulJobId,repairCommit,scopeRepairRemaining:2-record.scopeRepairAttempts,
                 computationAccepted:Boolean(computations.length&&admitComputationEvidence(store,lease,computations).receipt),computationNeedsRevision});
         },

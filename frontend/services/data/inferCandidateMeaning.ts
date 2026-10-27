@@ -5,10 +5,11 @@ import {readSourceRecords} from './immutableCsvSource';
 import {bindCandidateValidationContract} from './candidateValidationBinding';
 import {compileInferredCandidateMeaning,isCandidateMeaningProposal} from './inferredCandidateMeaning';
 import type {ValidationInputs} from './candidateValidation';
+import { isSpillMeaningProposal, compileSpillMeaningProposal } from './spillMeaningProposal';
 
 /** Host compilation is automatic. It cannot inspect guest output or approve a dataset commit. */
 export const inferCandidateMeaning=async(store:StoreApi,proposal:unknown)=>{
-    if(!isCandidateMeaningProposal(proposal))throw new Error('meaning_proposal_invalid');
+    if(!isCandidateMeaningProposal(proposal)&&!isSpillMeaningProposal(proposal))throw new Error('meaning_proposal_invalid');
     const context=store.executionContext,task=store.piTask,port=store.candidateStaging;
     if(!context||!task||!port||!store.codeExecution)throw new Error('meaning_task_unavailable');
     const lease=context.lease,version=task.snapshot.revision,binding=structuredClone(task.snapshot.inputBindings);
@@ -24,6 +25,10 @@ export const inferCandidateMeaning=async(store:StoreApi,proposal:unknown)=>{
         if(!Array.isArray(jobs)||jobs.length||port.validationRequirements().configured)throw new Error('meaning_contract_locked');
     };
     check();
+    if (isSpillMeaningProposal(p)) {
+        const compiled = await awaitOwned(compileSpillMeaningProposal(store, p, check), store, lease); check();
+        return port.bindInferredMeaning(compiled, context);
+    }
     const inputs:ValidationInputs={tables:{},sources:{}};
     let captured:Awaited<ReturnType<typeof captureCodeTables>>|undefined;
     if(p.input.kind==='table'){
