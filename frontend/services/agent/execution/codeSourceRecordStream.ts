@@ -1,6 +1,6 @@
 import type { StoreApi } from '../types';
 import { captureSessionScope, registerSessionResource } from '../../session/sessionOwnership';
-import { captureSourceRangeFence, readSourceBytes, readSourceRecordsBounded } from '../../data/immutableCsvSource';
+import { captureSourceRangeFence, createSourceRecordReader, readSourceBytes } from '../../data/immutableCsvSource';
 import { createCandidateSpill, spillBytes, spillDigest, type CandidateSpillFactory, type SpillManifest } from '../../data/candidateSpill';
 import type { GuestOutcome } from '../../sandbox/javascriptGuestProtocol';
 import { serializeCodeState } from './codeStatefulStream';
@@ -13,6 +13,7 @@ export interface SourceStreamOptions { sourceId: string; sha256: string; width: 
 export interface SourceStreamMetrics {
     batches: number; peakSourceRecords: number; peakSourceJsonBytes: number; peakInputJsonBytes: number;
     peakOutputJsonBytes: number; peakSpillChunkBytes: number; peakStateBytes: number; validatedRows: number;
+    physicalReadBytes: number; physicalReadCalls: number; cumulativePhysicalReadBytes: number; peakReaderRetainedBytes: number;
 }
 
 /** Host-only continuation. Neither a guest cursor nor a saved manifest can instantiate this owner.
@@ -27,6 +28,7 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
     if (!source || source.sourceId !== options.sourceId || source.sha256 !== options.sha256
         || !Number.isSafeInteger(options.width) || options.width < 1 || options.width > 256
         || source.diagnostics.some(d => ['invalid_utf8', 'unclosed_quote'].includes(d))) throw new Error('source_stream_binding_invalid');
+    const initialState = serializeCodeState(options.initialState);
     const scope = captureSessionScope(store), fence = captureSourceRangeFence(store, source.sourceId);
     const signature = JSON.stringify(source);
     if (JSON.stringify(readSourceBytes(store, source.sourceId, 0, 0).source) !== signature) throw new Error('source_stream_binding_invalid');
@@ -49,14 +51,25 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
         if (account.activeMs + (activeStarted === undefined ? 0 : Date.now() - activeStarted) >= SOURCE_STREAM_LIMITS.activeMs || account.readBytes > SOURCE_STREAM_LIMITS.cumulativeReadBytes
             || account.steps >= SOURCE_STREAM_LIMITS.steps) throw new Error('source_stream_budget_exhausted');
     };
-    const spill = await createCandidateSpill(scope.sessionId, identity, check, factory); check();
-    let nextRow = 0, nextByte = 0, state = serializeCodeState(options.initialState), failed = false, busy = false, batchAttempts = 0;
+    let nextRow = 0, nextByte = 0, state = initialState, failed = false, busy = false, batchAttempts = 0, validationAttempts = 0;
     let manifest: SpillManifest | undefined;
     const metrics: SourceStreamMetrics = { batches: 0, peakSourceRecords: 0, peakSourceJsonBytes: 0, peakInputJsonBytes: 0,
-        peakOutputJsonBytes: 0, peakSpillChunkBytes: 0, peakStateBytes: spillBytes(state), validatedRows: 0 };
-    const read = async (row: number, count: number) => {
-        check(); const batch = await readSourceRecordsBounded(store, source.sourceId, row, count); check();
-        const size = spillBytes(JSON.stringify(batch)); account.readBytes += size;
+        peakOutputJsonBytes: 0, peakSpillChunkBytes: 0, peakStateBytes: spillBytes(state), validatedRows: 0,
+        physicalReadBytes: 0, physicalReadCalls: 0, cumulativePhysicalReadBytes: account.readBytes, peakReaderRetainedBytes: 0 };
+    const charge = (bytes: number) => {
+        check();
+        if (account.readBytes + bytes > SOURCE_STREAM_LIMITS.cumulativeReadBytes) throw new Error('source_stream_budget_exhausted');
+        account.readBytes += bytes; metrics.physicalReadBytes += bytes; metrics.physicalReadCalls++;
+    };
+    const executionReader = createSourceRecordReader(store, source.sourceId, check, charge);
+    let validationReader = createSourceRecordReader(store, source.sourceId, check, charge);
+    const read = async (reader: typeof executionReader, row: number, count: number) => {
+        check();
+        let batch;
+        try { batch = await reader.read(count); }
+        finally { metrics.peakReaderRetainedBytes = Math.max(metrics.peakReaderRetainedBytes, reader.retainedBytes); }
+        check();
+        const size = spillBytes(JSON.stringify(batch));
         metrics.peakSourceRecords = Math.max(metrics.peakSourceRecords, batch.records.length);
         metrics.peakSourceJsonBytes = Math.max(metrics.peakSourceJsonBytes, size);
         if (!batch.records.length || batch.startRow !== row || batch.nextRow !== row + batch.records.length || size > 128 * 1024
@@ -74,29 +87,38 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
                 || record.cells.slice(options.width).some(cell => cell.value !== '')) throw new Error('source_stream_cell_mismatch');
         }
     };
+    const spill = await createCandidateSpill(scope.sessionId, identity, check, factory);
     const dispose = () => spill.dispose();
-    registerSessionResource(scope, () => { failed = true; void dispose().catch(() => {}); });
+    try {
+        check();
+        registerSessionResource(scope, () => { failed = true; void dispose().catch(() => {}); });
+    } catch (error) { await dispose().catch(() => {}); throw error; }
     return {
         identity, generation: spill.generation,
         get cursor() { return Object.freeze({ nextRow, nextByte }); },
-        get metrics() { return structuredClone(metrics); },
+        get metrics() { return structuredClone({ ...metrics, cumulativePhysicalReadBytes: account.readBytes }); },
         async execute(run: (json: string) => Promise<GuestOutcome>, invocation: () => void): Promise<SpillManifest> {
             if (failed || busy) throw new Error('source_stream_unavailable');
-            assertInvocation = invocation; check(); busy = true;
+            assertInvocation = invocation; busy = true;
             const started = Date.now(); activeStarted = started; let writing = false;
             try {
-                if (manifest) { await spill.verifyManifest(manifest); check(); }
+                check();
+                if (manifest) {
+                    await spill.verifyManifest(manifest); check();
+                    validationReader = createSourceRecordReader(store, source.sourceId, check, charge); metrics.validatedRows = 0;
+                }
                 while (nextRow < source.recordCount) {
                     check(); if (Date.now() - started + account.activeMs >= SOURCE_STREAM_LIMITS.activeMs) throw new Error('source_stream_budget_exhausted');
-                    const batch = await read(nextRow, SOURCE_STREAM_LIMITS.batchRows);
+                    if (batchAttempts >= SOURCE_STREAM_LIMITS.attempts) throw new Error('source_stream_no_progress_exhausted');
+                    batchAttempts++; account.steps++;
+                    const batch = await read(executionReader, nextRow, SOURCE_STREAM_LIMITS.batchRows);
                     if (batch.records[0].byteStart !== nextByte) throw new Error('source_stream_cursor_invalid');
                     const json = JSON.stringify({ source: { sha256: source.sha256, dialect: source.dialect },
                         records: batch.records.map(record => ({ sourceRow: record.row, cells: record.cells.map(cell => cell.value) })),
                         stream: { startRow: nextRow, nextRow: batch.nextRow, final: batch.complete, state: JSON.parse(state) } });
                     metrics.peakInputJsonBytes = Math.max(metrics.peakInputJsonBytes, spillBytes(json));
                     if (spillBytes(json) > SOURCE_STREAM_LIMITS.batchJsonBytes) throw new Error('source_stream_input_capacity');
-                    if (batchAttempts >= SOURCE_STREAM_LIMITS.attempts) throw new Error('source_stream_no_progress_exhausted');
-                    batchAttempts++; account.steps++; check();
+                    check();
                     const result = await run(json); check();
                     if (result.status !== 'completed' || typeof result.outputJson !== 'string') throw new Error(`source_stream_guest_${result.code}`);
                     metrics.peakOutputJsonBytes = Math.max(metrics.peakOutputJsonBytes, spillBytes(result.outputJson));
@@ -108,21 +130,33 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
                     validateRows(value.rows, batch.records);
                     const chunk = { startRow: nextRow, nextRow: batch.nextRow, startByte: nextByte,
                         endByte: batch.records.at(-1)!.byteEnd, rows: value.rows };
-                    writing = true; const chunkBytes = await spill.append(chunk); writing = false; check();
+                    writing = true; const chunkBytes = await spill.append(chunk); check();
                     metrics.peakSpillChunkBytes = Math.max(metrics.peakSpillChunkBytes, chunkBytes);
-                    nextRow = chunk.nextRow; nextByte = chunk.endByte; state = nextState; batchAttempts = 0;
+                    nextRow = chunk.nextRow; nextByte = chunk.endByte; state = nextState; batchAttempts = 0; executionReader.commit(); writing = false;
                     metrics.peakStateBytes = Math.max(metrics.peakStateBytes, spillBytes(state)); metrics.batches++;
                 }
                 if (nextByte !== source.byteSize) throw new Error('source_stream_incomplete');
-                metrics.validatedRows = 0;
-                for await (const chunk of spill.read()) {
-                    const batch = await read(chunk.startRow, chunk.rows.length);
+                const iterator = spill.read();
+                let validationAttemptCharged = false;
+                while (true) {
+                    if (!validationAttemptCharged) {
+                        if (validationAttempts >= SOURCE_STREAM_LIMITS.attempts) throw new Error('source_stream_no_progress_exhausted');
+                        validationAttempts++; validationAttemptCharged = true;
+                    }
+                    account.steps++; check();
+                    const item = await iterator.next(); check();
+                    if (item.done === true) { validationAttempts = 0; break; }
+                    const chunk = item.value;
+                    // On resume the chain is reverified, but acknowledged original records are not reread.
+                    if (chunk.nextRow <= metrics.validatedRows) continue;
+                    const batch = await read(validationReader, chunk.startRow, chunk.rows.length);
                     if (batch.nextRow !== chunk.nextRow || batch.records[0].byteStart !== chunk.startByte
                         || batch.records.at(-1)!.byteEnd !== chunk.endByte) throw new Error('source_stream_lineage_invalid');
                     validateRows(chunk.rows, batch.records); metrics.validatedRows += chunk.rows.length;
+                    validationReader.commit(); validationAttempts = 0; validationAttemptCharged = false;
                 }
                 check(); if (metrics.validatedRows !== source.recordCount) throw new Error('source_stream_incomplete');
-                if (!manifest) { writing = true; manifest = await spill.seal(source.recordCount, source.byteSize); writing = false; }
+                if (!manifest) { writing = true; manifest = await spill.seal(source.recordCount, source.byteSize); check(); writing = false; }
                 check(); return manifest;
             } catch (error) {
                 // Only a pre-write cancellation may reuse the private exact frontier. Unknown persistence

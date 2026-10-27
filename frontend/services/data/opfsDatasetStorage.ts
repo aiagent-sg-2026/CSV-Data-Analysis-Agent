@@ -51,8 +51,16 @@ export const openCandidateSpillDirectory = async (sessionId: string, generation:
     await writeTextFile(session, SESSION_METADATA_FILE, JSON.stringify({ sessionId, createdAt: new Date().toISOString() }), current);
     current();
     const name = `candidate-${generation}`;
-    const directory = await session.getDirectoryHandle(name, { create: true }); current();
-    return { directory, remove: () => session.removeEntry(name, { recursive: true }) };
+    // Never retire a pre-existing generation. Random private names and one owner are required;
+    // OPFS does not offer an atomic cross-tab exclusive directory-create primitive.
+    try { await session.getDirectoryHandle(name); throw new Error('spill_immutable_conflict'); }
+    catch (error) { if (!(error instanceof DOMException) || error.name !== 'NotFoundError') throw error; }
+    current();
+    const remove = () => session.removeEntry(name, { recursive: true });
+    try {
+        const directory = await session.getDirectoryHandle(name, { create: true });
+        current(); return { directory, remove };
+    } catch (error) { await remove().catch(() => {}); throw error; }
 };
 
 export const isOpfsAvailable = (): boolean =>

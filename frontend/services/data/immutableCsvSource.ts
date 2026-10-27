@@ -1,4 +1,5 @@
 import * as Papa from 'papaparse';
+import { createCsvSequentialRecords } from './csvSequentialRecords';
 import type { StoreApi } from '../agent/types';
 import { assertSessionResourceActive, captureSessionScope, registerSessionResource, type SessionScope } from '../session/sessionOwnership';
 import { parseCsvTextWithDetection } from './csvDialectDetector';
@@ -175,6 +176,11 @@ const rangeFence = (store: StoreApi, id: string, source: Source) => {
     };
 };
 export const captureSourceRangeFence = (store: StoreApi, id: string): (() => void) => rangeFence(store, id, sourceFor(store, id));
+/** Host-owned sequential pass, independent from positional tools and their sparse seeks. */
+export const createSourceRecordReader = (store: StoreApi, id: string, current: () => void, charge: (bytes: number) => void) => {
+    const source = sourceFor(store, id), fence = rangeFence(store, id, source);
+    return createCsvSequentialRecords(source.blob, source.metadata, () => { current(); fence(); }, charge);
+};
 export const readSourceBytesBounded = async (store: StoreApi, id: string, offset: number, length: number) => {
     const source = sourceFor(store, id), assertCurrent = rangeFence(store, id, source);
     if (source.bytes) return readSourceBytes(store, id, offset, length);

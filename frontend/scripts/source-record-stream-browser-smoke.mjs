@@ -74,6 +74,8 @@ try {
         assert.equal(result.status, 'succeeded', JSON.stringify(result));
         assert.ok(result.sourceBytes > (rows === 9000 ? 8 : 25) * 1024 * 1024);
         assert.equal(result.reads.fullReads, 0); assert.ok(result.reads.maxBytes <= 65536);
+        assert.ok(result.reads.bytes <= 3 * result.sourceBytes + 3);
+        assert.equal(result.metrics.physicalReadBytes, 2 * result.sourceBytes);
         assert.equal(result.metrics.validatedRows, rows + 1); assert.equal(result.manifest.sourceRows, rows + 1);
         assert.equal(result.manifest.semanticValidation, 'not_performed'); assert.equal(result.manifest.commitAllowed, false);
         assert.equal(result.persistedManifestMatches, true); assert.equal(result.tail.utf8Multiline, true);
@@ -81,6 +83,19 @@ try {
         assert.equal(result.commitBlocked, true); assert.equal(result.acceptedVersion, 'v1');
         evidence.scenarios.push({ rows, durationMs: Date.now() - started, sampledRendererHeapHighWaterBytes: peakHeap, heapSamples: samples, ...result });
         console.log(JSON.stringify(evidence.scenarios.at(-1)));
+        const unavailableBlob = await page.evaluate(async ({ agent, alias }) => {
+            const qa = (await import(`/assets/${agent}`))[alias];
+            const f = await qa.qualifySourceStream(3);
+            const original = Blob.prototype.arrayBuffer;
+            try {
+                // Inject an unavailable native-read boundary after successful intake, not a browser fix.
+                Blob.prototype.arrayBuffer = async () => { throw new DOMException('unavailable fixture', 'NotReadableError'); };
+                const receipt = await f.adapter.run(f.request, f.context);
+                return { status: receipt.status, reason: receipt.reasonCode, acceptedVersion: f.root.getState().datasetBundle.tables[0].datasetVersion };
+            } finally { Blob.prototype.arrayBuffer = original; f.adapter.dispose(); }
+        }, { agent, alias });
+        assert.deepEqual(unavailableBlob, { status: 'blocked', reason: 'source_record_scan_failed', acceptedVersion: 'v1' });
+        evidence.scenarios.at(-1).injectedUnavailableBlob = unavailableBlob;
         await page.close();
     }
     assert.deepEqual(evidence.pageErrors, []); assert.deepEqual(evidence.externalAttempts, []);

@@ -35,8 +35,15 @@ const realGuest = () => ({
 
 describe('real original-record stream through governed executor, QuickJS and disk spill', () => {
     it.each([9000, 27000])('repairs and independently checks %i records including ragged UTF-8/multiline tail without full Blob reads', async rows => {
-        const storage = await disk(), s = await qualifySourceStream(rows, realGuest(), storage.factory);
-        const result = await s.dispatch();
+        const started = Date.now(), memory = { samples: 0, heapUsed: 0, rss: 0, external: 0, arrayBuffers: 0 };
+        const sample = () => {
+            const usage = process.memoryUsage(); memory.samples++;
+            for (const key of ['heapUsed', 'rss', 'external', 'arrayBuffers'] as const) memory[key] = Math.max(memory[key], usage[key]);
+        };
+        sample(); const timer = setInterval(sample, 25);
+        let storage: Awaited<ReturnType<typeof disk>>, s: Awaited<ReturnType<typeof qualifySourceStream>>, result: Awaited<ReturnType<Awaited<ReturnType<typeof qualifySourceStream>>['dispatch']>>;
+        try { storage = await disk(); s = await qualifySourceStream(rows, realGuest(), storage.factory); result = await s.dispatch(); }
+        finally { clearInterval(timer); sample(); }
         const receipt = result.artifacts?.codeExecution as CodeExecutionReceipt | undefined;
         expect(receipt, JSON.stringify(result)).toMatchObject({ status: 'succeeded', mode: 'source_records', sourceStream: {
             manifest: { sourceRows: rows + 1, sourceBytes: s.source.byteSize, semanticValidation: 'not_performed', commitAllowed: false },
@@ -45,6 +52,7 @@ describe('real original-record stream through governed executor, QuickJS and dis
         expect(s.source.byteSize).toBeGreaterThan(rows === 9000 ? 8 * 1024 * 1024 : 25 * 1024 * 1024);
         expect(s.scan.counts.width_mismatch).toBe(1);
         expect(s.reads.fullReads).toBe(0); expect(s.reads.maxBytes).toBeLessThanOrEqual(65536);
+        expect(s.reads.bytes).toBeLessThanOrEqual(3 * s.source.byteSize + 2 * 65536 + 3);
         expect(receipt!.workerGenerations!.length).toBeLessThanOrEqual(20);
         expect(receipt!.sourceStream!.metrics.peakSourceRecords).toBeLessThanOrEqual(50);
         expect(receipt!.sourceStream!.metrics.peakInputJsonBytes).toBeLessThan(256 * 1024);
@@ -56,9 +64,118 @@ describe('real original-record stream through governed executor, QuickJS and dis
         const staging = createCandidateStaging(s.store, s.workspace, s.getTask, s.adapter);
         await expect(staging.stage(receipt!.jobId, s.context)).rejects.toThrow('candidate_stream_semantic_contract_required');
         expect(s.root.getState().datasetBundle!.tables[0].datasetVersion).toBe('v1');
-        console.log(JSON.stringify({ rows, bytes: s.source.byteSize, reads: s.reads, metrics: receipt!.sourceStream!.metrics }));
+        expect(receipt!.sourceStream!.metrics.physicalReadBytes).toBe(2 * s.source.byteSize);
+        console.log(JSON.stringify({ rows, bytes: s.source.byteSize, elapsedMs: Date.now() - started, sampledNodeMemory: memory,
+            memoryScope: '25ms samples, whole Node test worker including fixture/QuickJS; not a proven peak or browser memory; cursor retained bytes are backing capacities plus serialized live records, not JS heap',
+            reads: s.reads, metrics: receipt!.sourceStream!.metrics }));
         s.adapter.dispose();
     }, 180000);
+    it('charges the prior four-cancel mid-read loophole before asynchronous source work', async () => {
+        const storage = await disk(), s = await qualifySourceStream(3, realGuest(), storage.factory);
+        const original = Blob.prototype.arrayBuffer;
+        let controller: AbortController;
+        const spy = vi.spyOn(Blob.prototype, 'arrayBuffer').mockImplementation(async function(this: Blob) {
+            controller.abort(); return original.call(this);
+        });
+        for (let i = 0; i < 3; i++) {
+            controller = new AbortController();
+            expect((await s.adapter.run(s.request, s.context, controller.signal)).status).toBe('cancelled');
+        }
+        spy.mockRestore();
+        expect(await s.adapter.run(s.request, s.context)).toMatchObject({ status: 'blocked', reasonCode: 'source_stream_no_progress_exhausted' });
+        expect(s.root.getState().datasetBundle!.tables[0].datasetVersion).toBe('v1'); s.adapter.dispose();
+    });
+    it('preserves physical charges on cancelled reads and denies a fourth read without losing the frontier', async () => {
+        const storage = await disk(), s = await qualifySourceStream(3, realGuest(), storage.factory);
+        const stream = await createSourceRecordStream(s.store, s.request.sourceRecords!, {}, () => {}, storage.factory);
+        const original = Blob.prototype.arrayBuffer; let revoked = false;
+        vi.spyOn(Blob.prototype, 'arrayBuffer').mockImplementation(async function(this: Blob) { revoked = true; return original.call(this); });
+        const current = () => { if (revoked) throw new Error('scope_revoked'); };
+        const guest = vi.fn();
+        for (let i = 0; i < 3; i++) {
+            revoked = false; await expect(stream.execute(guest, current)).rejects.toThrow('scope_revoked');
+            expect(stream.cursor).toEqual({ nextRow: 0, nextByte: 0 });
+            expect(stream.metrics).toMatchObject({ physicalReadBytes: (i + 1) * s.source.byteSize, physicalReadCalls: i + 1 });
+        }
+        revoked = false;
+        await expect(stream.execute(guest, current)).rejects.toThrow('source_stream_no_progress_exhausted');
+        expect(stream.metrics.physicalReadCalls).toBe(3); expect(guest).not.toHaveBeenCalled(); s.adapter.dispose();
+    });
+    it('preserves active-time charges across pre-write cancelled resumes', async () => {
+        const storage = await disk(), s = await qualifySourceStream(3, realGuest(), storage.factory);
+        const stream = await createSourceRecordStream(s.store, s.request.sourceRecords!, {}, () => {}, storage.factory);
+        const original = Blob.prototype.arrayBuffer; let revoked = false, now = Date.now();
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        vi.spyOn(Blob.prototype, 'arrayBuffer').mockImplementation(async function(this: Blob) { now += 5 * 60 * 1000; revoked = true; return original.call(this); });
+        const current = () => { if (revoked) throw new Error('scope_revoked'); };
+        for (let i = 0; i < 3; i++) { revoked = false; await expect(stream.execute(vi.fn(), current)).rejects.toThrow('scope_revoked'); }
+        revoked = false;
+        await expect(stream.execute(vi.fn(), current)).rejects.toThrow('source_stream_budget_exhausted');
+        expect(stream.metrics.physicalReadCalls).toBe(3); s.adapter.dispose();
+    });
+    it('resumes independent validation after mid-read cancellation without rereading acknowledged originals', async () => {
+        const storage = await disk(), s = await qualifySourceStream(200, realGuest(), storage.factory);
+        const stream = await createSourceRecordStream(s.store, s.request.sourceRecords!, {}, () => {}, storage.factory);
+        const original = Blob.prototype.arrayBuffer;
+        let revoked = false, reads = 0, guestCalls = 0, retryBytes = 0;
+        const executionReads = Math.ceil(s.source.byteSize / 65536);
+        const spy = vi.spyOn(Blob.prototype, 'arrayBuffer').mockImplementation(async function(this: Blob) {
+            if (++reads === executionReads + 2) { revoked = true; retryBytes = this.size; }
+            return original.call(this);
+        });
+        const current = () => { if (revoked) throw new Error('scope_revoked'); };
+        const guest = realGuest(), code = s.workspace.read(s.request.program.path).content;
+        const run = (json: string) => { guestCalls++; return guest.run(code, json, { limits: resolveGuestLimits() }); };
+        await expect(stream.execute(run, current)).rejects.toThrow('scope_revoked');
+        const priorCalls = guestCalls;
+        expect(stream.metrics.validatedRows).toBeGreaterThan(0);
+        spy.mockRestore(); revoked = false;
+        expect(await stream.execute(run, current)).toMatchObject({ sourceRows: 201, semanticValidation: 'not_performed', commitAllowed: false });
+        expect(guestCalls).toBe(priorCalls);
+        expect(stream.metrics.physicalReadBytes).toBe(2 * s.source.byteSize + retryBytes);
+        expect(stream.metrics.validatedRows).toBe(201); s.adapter.dispose();
+    });
+    it('does not reset validation no-progress attempts while replay-verifying earlier spill chunks', async () => {
+        const storage = await disk(), s = await qualifySourceStream(200, realGuest(), storage.factory);
+        const stream = await createSourceRecordStream(s.store, s.request.sourceRecords!, {}, () => {}, storage.factory);
+        const original = Blob.prototype.arrayBuffer; let revoked = false, reads = 0;
+        const cancelAfter = Math.ceil(s.source.byteSize / 65536) + 1;
+        vi.spyOn(Blob.prototype, 'arrayBuffer').mockImplementation(async function(this: Blob) {
+            if (++reads > cancelAfter) revoked = true;
+            return original.call(this);
+        });
+        const current = () => { if (revoked) throw new Error('scope_revoked'); };
+        const guest = realGuest(), code = s.workspace.read(s.request.program.path).content;
+        const run = (json: string) => guest.run(code, json, { limits: resolveGuestLimits() });
+        for (let i = 0; i < 3; i++) { revoked = false; await expect(stream.execute(run, current)).rejects.toThrow('scope_revoked'); }
+        expect(stream.metrics.validatedRows).toBeGreaterThan(0);
+        revoked = false;
+        await expect(stream.execute(run, current)).rejects.toThrow('source_stream_no_progress_exhausted');
+        expect(reads).toBe(cancelAfter + 3); s.adapter.dispose();
+    });
+    it('validates initial state before opening scratch', async () => {
+        const s = await qualifySourceStream(3); let opened = 0, removed = 0;
+        const factory: CandidateSpillFactory = async () => { opened++; return { put: async () => {}, get: async () => '', remove: async () => { removed++; } }; };
+        await expect(createSourceRecordStream(s.store, { ...s.request.sourceRecords!, initialState: 'x'.repeat(70000) }, {}, () => {}, factory)).rejects.toThrow();
+        expect({ opened, removed }).toEqual({ opened: 0, removed: 0 });
+        for (const options of [{ ...s.request.sourceRecords!, width: 257 }, { ...s.request.sourceRecords!, sourceId: 'forged' }]) {
+            await expect(createSourceRecordStream(s.store, options, {}, () => {}, factory)).rejects.toThrow('source_stream_binding_invalid');
+        }
+        await expect(createSourceRecordStream(s.store, s.request.sourceRecords!, {}, () => { throw new Error('workspace_conflict'); }, factory)).rejects.toThrow('workspace_conflict');
+        expect(opened).toBe(0);
+        const valid = await createSourceRecordStream(s.store, s.request.sourceRecords!, {}, () => {}, factory);
+        await valid.dispose();
+        expect({ opened, removed }).toEqual({ opened: 1, removed: 1 });
+        expect(s.root.getState().datasetBundle!.tables[0].datasetVersion).toBe('v1'); s.adapter.dispose();
+    });
+    it('retires the owned allocation when the factory completion fence fails, preserving the original error', async () => {
+        let revoked = false, removed = 0;
+        await expect(createCandidateSpill('s', 'identity', () => { if (revoked) throw new Error('scope_revoked'); }, async () => {
+            revoked = true;
+            return { put: async () => {}, get: async () => '', remove: async () => { removed++; throw new Error('cleanup failed'); } };
+        })).rejects.toThrow('scope_revoked');
+        expect(removed).toBe(1);
+    });
     it('rejects forged stream options/cursors and preserves the default exact request contract', async () => {
         const storage = await disk(), s = await qualifySourceStream(4, realGuest(), storage.factory);
         for (const extra of [{ nextRow: 2 }, { generation: 'forged' }, { width: 257 }]) {
@@ -93,6 +210,19 @@ describe('real original-record stream through governed executor, QuickJS and dis
         expect(await s.adapter.run(s.request, s.context)).toMatchObject({ status: 'blocked', reasonCode: 'source_stream_no_progress_exhausted' });
         expect(storage.paths.length).toBe(1); s.adapter.dispose();
     });
+    it.each(['program', 'source', 'session'] as const)('fences %s mutation during actual source I/O', async change => {
+        const storage = await disk(), s = await qualifySourceStream(3, realGuest(), storage.factory);
+        const original = Blob.prototype.arrayBuffer;
+        vi.spyOn(Blob.prototype, 'arrayBuffer').mockImplementation(async function(this: Blob) {
+            const result = await original.call(this);
+            if (change === 'program') await s.workspace.write(s.request.program.path, 'return {};', 1);
+            if (change === 'source') s.root.setState({ datasetBundle: { ...s.root.getState().datasetBundle!, source: { ...s.root.getState().datasetBundle!.source, inspection: { ...s.source, sha256: 'f'.repeat(64) } } } });
+            if (change === 'session') beginSessionTransition(s.root);
+            return result;
+        });
+        expect((await s.adapter.run(s.request, s.context)).status).not.toBe('succeeded');
+        expect(s.root.getState().datasetBundle!.tables[0].datasetVersion).toBe('v1'); s.adapter.dispose();
+    });
     it.each(['chunk-write', 'chunk-read', 'manifest-write'] as const)('fences program changes during spill %s awaits', async point => {
         const storage = await disk(); let s: Awaited<ReturnType<typeof qualifySourceStream>>, changed = false;
         const mutate = async () => { if (!changed) { changed = true; await s.workspace.write(s.request.program.path, 'return {};', 1); } };
@@ -121,6 +251,22 @@ describe('real original-record stream through governed executor, QuickJS and dis
         s = await qualifySourceStream(10, guest, storage.factory);
         const result = await s.adapter.run(s.request, s.context);
         expect(result.status).not.toBe('succeeded'); expect(result.output).toBeUndefined(); s.adapter.dispose();
+    });
+    it('poisons a durable append cancelled between spill completion and host frontier acknowledgement', async () => {
+        const storage = await disk(), s = await qualifySourceStream(3, realGuest(), storage.factory);
+        let persisted = false, postWriteChecks = 0;
+        const factory: CandidateSpillFactory = async (...args) => {
+            const io = await storage.factory(...args);
+            return { ...io, async put(name, text) { await io.put(name, text); if (name.startsWith('chunk-')) persisted = true; } };
+        };
+        const current = () => { if (persisted && ++postWriteChecks === 2) throw new Error('scope_revoked'); };
+        const stream = await createSourceRecordStream(s.store, s.request.sourceRecords!, {}, current, factory);
+        const guest = realGuest(), code = s.workspace.read(s.request.program.path).content;
+        const run = (json: string) => guest.run(code, json, { limits: resolveGuestLimits() });
+        await expect(stream.execute(run, current)).rejects.toThrow('scope_revoked');
+        await expect(stream.execute(run, () => {})).rejects.toThrow('source_stream_unavailable');
+        await expect(readdir(storage.paths[0])).rejects.toThrow();
+        expect(s.root.getState().datasetBundle!.tables[0].datasetVersion).toBe('v1'); s.adapter.dispose();
     });
     it.each(['quota', 'read', 'corruption', 'cancel-write'] as const)('fails closed for persistent spill %s and preserves accepted data', async fault => {
         const storage = await disk(); let s: Awaited<ReturnType<typeof qualifySourceStream>>;

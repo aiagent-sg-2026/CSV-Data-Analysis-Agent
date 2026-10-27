@@ -250,7 +250,8 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
                         if (sourceStreams.size >= 3) throw new Error('resource_limit');
                         stream = await createSourceRecordStream(store, request.sourceRecords,
                             { taskId, revision: envelope.taskRevision, program: request.program, workspaceRevision }, current, spillFactory);
-                        current(); sourceStreams.set(streamKey, stream);
+                        try { current(); sourceStreams.set(streamKey, stream); }
+                        catch (error) { await stream.dispose().catch(() => {}); throw error; }
                     }
                     const manifest = await stream.execute(runGuest, current); current();
                     publish({ sourceStream: { manifest, metrics: stream.metrics } });

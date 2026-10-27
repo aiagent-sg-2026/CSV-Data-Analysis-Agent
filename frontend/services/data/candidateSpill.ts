@@ -19,6 +19,7 @@ export interface CandidateSpillIO {
     get(name: string): Promise<string>;
     remove(): Promise<void>;
 }
+/** Factories must clean allocations they cannot return; the caller owns every returned IO. */
 export type CandidateSpillFactory = (sessionId: string, generation: string, current: () => void) => Promise<CandidateSpillIO>;
 export const openCandidateSpill: CandidateSpillFactory = async (sessionId, generation, current) => {
     const { directory, remove } = await openCandidateSpillDirectory(sessionId, generation, current);
@@ -50,7 +51,9 @@ export const openCandidateSpill: CandidateSpillFactory = async (sessionId, gener
 export const createCandidateSpill = async (sessionId: string, identity: string, current: () => void,
     factory: CandidateSpillFactory = openCandidateSpill) => {
     current(); const generation = crypto.randomUUID();
-    const io = await factory(sessionId, generation, current); current();
+    const io = await factory(sessionId, generation, current);
+    try { current(); } catch (error) { await io.remove().catch(() => {}); throw error; }
+    let disposing: Promise<void> | undefined;
     let chunks = 0, bytes = 0, sourceRows = 0, sourceBytes = 0, chain = identity, sealed = false, poisoned = false;
     const own = () => { current(); if (poisoned) throw new Error('spill_poisoned'); };
     return {
@@ -100,7 +103,11 @@ export const createCandidateSpill = async (sessionId: string, identity: string, 
             own(); const text = await io.get('manifest.json'); own();
             if (!sealed || text !== JSON.stringify(manifest)) throw new Error('spill_manifest_corrupt');
         },
-        async dispose() { poisoned = true; await io.remove(); },
+        async dispose() {
+            poisoned = true;
+            if (!disposing) disposing = io.remove().catch(error => { disposing = undefined; throw error; });
+            await disposing;
+        },
     };
 };
 export type CandidateSpill = Awaited<ReturnType<typeof createCandidateSpill>>;
