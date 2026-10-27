@@ -55,12 +55,12 @@ export interface IDataSlice {
     resumeCleaningRun: () => Promise<void>;
     restartCleaningRun: () => Promise<void>;
     revertToOriginal: () => Promise<void>;
-    ensureDatasetSemanticSnapshot: (dataset?: CsvData | null, options?: { force?: boolean; sessionScope?: SessionScope; runLease?: RunLease }) => Promise<DatasetSemanticSnapshot | null>;
-    refreshDuckDbSession: (datasetOverride?: CsvData | null, sessionScope?: SessionScope, runLease?: RunLease) => Promise<DuckDbSessionStatus>;
+    ensureDatasetSemanticSnapshot: (dataset?: CsvData | null, options?: { force?: boolean; sessionScope?: SessionScope; runLease?: RunLease; assertCurrent?: () => void }) => Promise<DatasetSemanticSnapshot | null>;
+    refreshDuckDbSession: (datasetOverride?: CsvData | null, sessionScope?: SessionScope, runLease?: RunLease, assertCurrent?: () => void) => Promise<DuckDbSessionStatus>;
     promoteToCanonicalDataset: (options: { reason: string; reshapeProvenance: CanonicalReshapeProvenance }) => void;
     runWorkspaceDataQuery: (payload: WorkspaceDataQueryRequest) => Promise<WorkspaceQueryRunOutcome>;
     prepareStructureRepairReview: () => Promise<import('../../types/structureRepair').StructureRepairReview | null>;
-    confirmStructureRepairMeaning: (reviewId: string, choice: string) => Promise<void>;
+    confirmStructureRepairMeaning: (reviewId: string, choice: string, rendered?: import('../../services/agent/structureRepairConfirmation').RenderedStructureRepairReview) => Promise<void>;
     resumeStructureRepairDraft: (reviewId: string) => Promise<void>;
     cancelStructureRepairReview: (reviewId?: string) => void;
     saveReportStructureBoundaryOverride: (boundary: ReportBoundary) => Promise<void>;
@@ -153,11 +153,13 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
         analysisDataset: CsvData,
         analysisOutcome?: InitialAnalysisOutcome | null,
         owner: StoreApi = scopeCurrentExecution(storeApi),
+        fence?: () => void,
     ) => {
         if (analysisOutcome?.summaryPromise) {
             await analysisOutcome.summaryPromise;
         }
         if (owner.isActive?.() === false) return;
+        fence?.();
         await owner.getState().proposeAnalysisGoals(analysisDataset);
     };
 
@@ -177,9 +179,12 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
         return duckDbRefreshHelpersPromise;
     };
 
-    const refreshDuckDbSession = async (datasetOverride?: CsvData | null, sessionScope = captureSessionScope(storeApi), runLease?: RunLease): Promise<DuckDbSessionStatus> => {
+    const refreshDuckDbSession = async (datasetOverride?: CsvData | null, sessionScope = captureSessionScope(storeApi), runLease?: RunLease, assertCurrent?: () => void): Promise<DuckDbSessionStatus> => {
         const owned = scopeStore(storeApi, sessionScope, runLease);
-        const { getState: get, setState: set } = owned;
+        // Legacy review can be revoked without changing the analysis version or session.
+        const get = () => { assertCurrent?.(); return owned.getState(); };
+        const set: typeof owned.setState = patch => { assertCurrent?.(); owned.setState(patch); };
+        assertCurrent?.();
         const startVersion = getCurrentAnalysisDatasetVersion(storeApi.getState());
         const t0 = performance.now();
         const {
@@ -210,7 +215,7 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
             return currentStatus;
         }
         if (
-            inFlightDuckDbSessionRefresh
+            !assertCurrent && inFlightDuckDbSessionRefresh
             && inFlightDuckDbScope === sessionScope
             && (inFlightDuckDbOwner as { isActive?: () => boolean } | null)?.isActive?.() !== false
             && inFlightDuckDbSessionDatasetVersion === bindingTarget.datasetVersion
@@ -304,7 +309,7 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
         }
     };
 
-    const rebuildStructureArtifacts = async (humanBoundary?: ReportBoundary | null, owner = scopeCurrentExecution(storeApi)) => {
+    const rebuildStructureArtifacts = async (humanBoundary?: ReportBoundary | null, owner = scopeCurrentExecution(storeApi), fence?: () => void) => {
         const { getState: get, setState: set } = owner;
         if (owner.isActive?.() === false) return;
         const datasetVersion = getCurrentAnalysisDatasetVersion(get());
@@ -318,6 +323,7 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
             import('../../services/agent/datasetSemantics'),
         ]);
         if (owner.isActive?.() === false) return;
+        fence?.();
         const state = get();
         const artifacts = await resolveReportStructureArtifactsWithProposal({
             rawCsvData: state.rawCsvData,
@@ -343,6 +349,8 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
         const nextVersion = nextPreferred ? buildSemanticDatasetVersion(nextPreferred) : null;
         const datasetVersionChanged = prevVersion !== nextVersion;
 
+        // No await between the final source/repair fence and canonical publication.
+        fence?.();
         set(prev => ({
             reportStructureResolution: artifacts.reportStructureResolution,
             canonicalCsvData: artifacts.canonicalCsvData,
@@ -358,6 +366,7 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
             activeDataQuery: null,
             duckDbSessionStatus: createBindingDuckDbSessionStatus(prev.duckDbSessionStatus),
         }));
+        return true;
     };
 
     const runFilePipeline = async (file: File) => {
@@ -495,7 +504,9 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
         ensureDatasetSemanticSnapshot: async (dataset, options) => {
             const sessionScope = options?.sessionScope ?? captureSessionScope(storeApi);
             const owned = scopeStore(storeApi, sessionScope, options?.runLease);
-            const { getState: get, setState: set } = owned;
+            const get = () => { options?.assertCurrent?.(); return owned.getState(); };
+            const set: typeof owned.setState = patch => { options?.assertCurrent?.(); owned.setState(patch); };
+            options?.assertCurrent?.();
             const startVersion = getCurrentAnalysisDatasetVersion(storeApi.getState());
             const [
                 { getPreferredAnalysisDataset },
@@ -535,7 +546,7 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
             )) {
                 return null;
             }
-            if (!options?.force && inFlightSemanticSnapshot && inFlightSemanticScope === sessionScope && (inFlightSemanticOwner as { isActive?: () => boolean } | null)?.isActive?.() !== false && inFlightSemanticDatasetVersion === datasetVersion) {
+            if (!options?.assertCurrent && !options?.force && inFlightSemanticSnapshot && inFlightSemanticScope === sessionScope && (inFlightSemanticOwner as { isActive?: () => boolean } | null)?.isActive?.() !== false && inFlightSemanticDatasetVersion === datasetVersion) {
                 return inFlightSemanticSnapshot;
             }
 
@@ -1002,10 +1013,10 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
             const { prepareStructureRepairReview } = await import('../../services/agent/structureRepairConfirmation');
             return prepareStructureRepairReview(owner);
         },
-        confirmStructureRepairMeaning: async (reviewId, choice) => {
+        confirmStructureRepairMeaning: async (reviewId, choice, rendered) => {
             const owner = scopeCurrentExecution(storeApi);
             const { confirmStructureRepairMeaning } = await import('../../services/agent/structureRepairConfirmation');
-            await confirmStructureRepairMeaning(owner, reviewId, choice);
+            await confirmStructureRepairMeaning(owner, reviewId, choice, rendered);
         },
         resumeStructureRepairDraft: async (reviewId) => {
             const owner = scopeCurrentExecution(storeApi);
@@ -1016,9 +1027,12 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
         saveReportStructureBoundaryOverride: async (boundary) => {
             const ownedStore = scopeCurrentExecution(storeApi);
             const { getState: get, setState: set } = ownedStore;
-            const { assertLegacyBoundaryAllowed } = await import('../../services/agent/structureRepairConfirmation');
+            const { assertLegacyBoundaryAllowed, captureLegacyBoundaryFence } = await import('../../services/agent/structureRepairConfirmation');
             if (!ownedStore.isActive?.()) return;
+            const fence = captureLegacyBoundaryFence(ownedStore);
+            fence();
             await assertLegacyBoundaryAllowed(ownedStore);
+            fence();
             const [
                 { getPreferredAnalysisDataset },
                 { resolveAnalysisDatasetProfiles },
@@ -1030,9 +1044,17 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
             ]);
             if (!ownedStore.isActive?.()) return;
 
+            fence();
             await assertLegacyBoundaryAllowed(ownedStore);
-            await rebuildStructureArtifacts(boundary, ownedStore);
+            fence();
+            if (!await rebuildStructureArtifacts(boundary, ownedStore, fence)) return;
             if (ownedStore.isActive?.() === false) return;
+            fence();
+            const publishedVersion = getCurrentAnalysisDatasetVersion(get());
+            const downstreamFence = () => {
+                fence();
+                if (getCurrentAnalysisDatasetVersion(get()) !== publishedVersion) throw new Error('repair_source_changed');
+            };
             // Close the modal immediately after rebuilding — analysis runs in the background.
             get().setIsReportBoundaryConfirmModalOpen(false);
             const pipelineOutcome = get().pipelineOutcome;
@@ -1063,13 +1085,18 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
                         columnRegistry: buildRegistryForDataset(analysisDataset, resolvedProfiles, get().datasetSemanticSnapshot),
                     });
                     if (!ownedStore.isActive?.()) return;
+                    downstreamFence();
                     duckDbWorkerClient.initDuckDb(DUCKDB_INIT_TIMEOUT_MS).catch(() => {});
-                    await get().ensureDatasetSemanticSnapshot(analysisDataset, { force: true });
-                    await get().refreshDuckDbSession();
+                    await get().ensureDatasetSemanticSnapshot(analysisDataset, { force: true, assertCurrent: downstreamFence });
+                    downstreamFence();
+                    await get().refreshDuckDbSession(undefined, undefined, undefined, downstreamFence);
+                    downstreamFence();
                     const goal = get().confirmedAnalysisGoal ?? DEFAULT_AUTO_ANALYSIS_GOAL;
                     const analysisOutcome = await get().handleInitialAnalysis(analysisDataset, goal, { trigger: 'manual' });
+                    downstreamFence();
                     if (analysisOutcome.status !== 'paused' && analysisOutcome.status !== 'error') {
-                        await proposeGoalsAfterAnalysisSummaries(analysisDataset, analysisOutcome, ownedStore);
+                        await proposeGoalsAfterAnalysisSummaries(analysisDataset, analysisOutcome, ownedStore, downstreamFence);
+                        downstreamFence();
                     }
                 }
                 get().addProgress('Report structure was confirmed and canonical data is ready for analysis.');

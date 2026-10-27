@@ -152,6 +152,39 @@ describe('host-bound structural semantic confirmation and read-only resume', () 
         second.store.getState().rawIntakeIr!.rawRows[2][1] = '999';
         await expect(prepareStructureRepairReview(second.store)).rejects.toThrow();
     });
+    it.each(['swapped_digest', 'label', 'mapping', 'message', 'set_digest'] as const)('rejects modified public review evidence: %s, including direct host calls', async change => {
+        const { store } = await fixture();
+        const review = (await prepareStructureRepairReview(store))!;
+        const forged = structuredClone(review);
+        if (change === 'swapped_digest') forged.choices[0].candidateDigest = review.choices[1].candidateDigest;
+        if (change === 'label') forged.choices[0].label = 'B';
+        if (change === 'mapping') forged.choices[0].candidate.mainStartColumn++;
+        if (change === 'message') forged.message = 'Dataset approval';
+        if (change === 'set_digest') forged.candidateSetDigest = 'forged';
+        store.setState({ structureRepairReview: forged });
+        await expect(confirmStructureRepairMeaning(store, review.reviewId, forged.choices[0].candidateDigest)).rejects.toThrow('repair_projection_changed');
+        expect(store.getState().structureRepairReview?.selectedCandidateDigest).toBeNull();
+        await expect(resumeStructureRepairDraft(store, review.reviewId)).rejects.toThrow();
+    });
+    it.each(['review', 'intake'] as const)('rejects stale rendered %s even when the current public projection is valid', async change => {
+        const { store } = await fixture();
+        const review = (await prepareStructureRepairReview(store))!;
+        const rendered = { review: structuredClone(review), intakeSignature: JSON.stringify([store.getState().rawIntakeIr!.columnCount, store.getState().rawIntakeIr!.rawRows]) };
+        if (change === 'review') rendered.review.choices[0].candidateDigest = review.choices[1].candidateDigest;
+        if (change === 'intake') rendered.intakeSignature = 'stale rendered sample values';
+        await expect(confirmStructureRepairMeaning(store, review.reviewId, rendered.review.choices[0].candidateDigest, rendered)).rejects.toThrow('repair_projection_changed');
+        expect(store.getState().structureRepairReview?.status).toBe('awaiting_semantic_confirmation');
+    });
+    it.each(['projection', 'cancel'] as const)('rejects %s changes during asynchronous confirmation', async change => {
+        const { store } = await fixture();
+        const review = (await prepareStructureRepairReview(store))!;
+        const pending = confirmStructureRepairMeaning(store, review.reviewId, review.choices[0].candidateDigest);
+        if (change === 'projection') store.getState().structureRepairReview!.message = 'changed while verifying';
+        else cancelStructureRepairReview(store, review.reviewId);
+        await expect(pending).rejects.toThrow(change === 'projection' ? 'repair_projection_changed' : 'repair_review_cancelled');
+        expect(store.getState().structureRepairReview?.selectedCandidateDigest).toBeNull();
+        await expect(resumeStructureRepairDraft(store, review.reviewId)).rejects.toThrow();
+    });
     it('rejects forged choices, repeated clicks and replay without creating another draft', async () => {
         const { store } = await fixture();
         const review = (await prepareStructureRepairReview(store))!;

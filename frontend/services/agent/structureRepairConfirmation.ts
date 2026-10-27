@@ -57,14 +57,35 @@ export const isStructureRepairRequired = (store: StoreApi) => repairRequired.has
     || store.getState().rawIntakeIr?.diagnostics?.headerShapeDrift === true
     || store.getState().pipelineOutcome?.reasonCode === 'header_shape_drift';
 
+/** Pin the legacy action across imports/resolution and callbacks, not only its initial guard.
+ * Reference identity catches same-content replacement; serialized evidence catches in-place mutation.
+ * This fence is revocation only, never candidate/commit authority.
+ */
+export const captureLegacyBoundaryFence = (store: StoreApi): (() => void) => {
+    const scope = captureSessionScope(store), initial = store.getState();
+    const intake = initial.rawIntakeIr, rawCsv = initial.rawCsvData;
+    const binding = () => {
+        const state = store.getState();
+        return JSON.stringify([state.rawIntakeIr, state.rawCsvData, state.datasetBundle?.source]);
+    };
+    const expected = binding();
+    return () => {
+        assertSessionResourceActive(store, scope);
+        if (isStructureRepairRequired(store)) throw new Error('repair_requires_semantic_review_and_separate_exact_commit');
+        const state = store.getState();
+        if (state.rawIntakeIr !== intake || state.rawCsvData !== rawCsv || binding() !== expected) throw new Error('repair_source_changed');
+    };
+};
+
 /** Guard the action, not just its button. A candidate cannot take the old canonicalization route. */
 export const assertLegacyBoundaryAllowed = async (store: StoreApi): Promise<void> => {
     if (isStructureRepairRequired(store)) throw new Error('repair_requires_semantic_review_and_separate_exact_commit');
+    const fence = captureLegacyBoundaryFence(store);
     const scope = captureSessionScope(store), intake = store.getState().rawIntakeIr;
     if (!intake) return;
     const inputSignature = signature(intake);
     const result = await solveHeaderAlignment(structuredClone(intake));
-    assertSessionResourceActive(store, scope);
+    fence();
     if (!store.getState().rawIntakeIr || signature(store.getState().rawIntakeIr!) !== inputSignature) throw new Error('repair_source_changed');
     if (result.status === 'semantic_review_required') repairRequired.add(scope);
     if (isStructureRepairRequired(store) || result.status === 'unsupported') throw new Error('repair_requires_semantic_review_and_separate_exact_commit');
@@ -120,14 +141,26 @@ const recheck = async (store: StoreApi, scope: SessionScope, entry: Entry) => {
     }
 };
 
-export const confirmStructureRepairMeaning = async (store: StoreApi, reviewId: string, choice: string): Promise<StructureRepairReview> => {
+export type RenderedStructureRepairReview = { review: StructureRepairReview; intakeSignature: string };
+
+export const confirmStructureRepairMeaning = async (store: StoreApi, reviewId: string, choice: string, rendered?: RenderedStructureRepairReview): Promise<StructureRepairReview> => {
     const { scope, entry } = getReview(store, reviewId, 'awaiting_semantic_confirmation');
+    // Check the whole displayed projection, not digest membership alone: B's valid digest
+    // must not authorize B while A's label/mapping is displayed. This is not an XSS boundary.
+    const expected = JSON.stringify(entry.view);
+    const checkProjection = () => {
+        if (JSON.stringify(store.getState().structureRepairReview) !== expected
+            || rendered && (JSON.stringify(rendered.review) !== expected || rendered.intakeSignature !== entry.signature))
+            throw new Error('repair_projection_changed');
+    };
+    checkProjection();
     if (choice !== 'neither' && !entry.view.choices.some(c => c.candidateDigest === choice)) throw new Error('repair_choice_invalid');
     // Claim synchronously before any await: double clicks cannot authorize two interpretations.
     entry.view.status = 'resuming';
     const bound = await recheck(store, scope, entry);
     if (entry.view.status !== 'resuming') throw new Error('repair_review_cancelled');
     current(store, scope, bound.inputSignature, bound.sha);
+    checkProjection();
     entry.view.status = choice === 'neither' ? 'neither' : 'confirmed';
     entry.view.selectedCandidateDigest = choice === 'neither' ? null : choice;
     entry.view.message = choice === 'neither'

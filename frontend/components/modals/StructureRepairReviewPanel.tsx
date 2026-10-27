@@ -54,11 +54,11 @@ export const StructureRepairReviewPanel: React.FC = () => {
                             {c.mappings.map(m => <tr key={m.targetColumn}><td>{m.targetColumn + 1}</td><td>{m.headerPath.map(ref => `${intake?.rawRows[ref.rowIndex]?.[ref.columnIndex] ?? ''} [${ref.rowIndex + 1}:${ref.columnIndex + 1}]`).join(' → ')}</td><td>{intake?.rawRows.slice(c.bodySourceRows.start, Math.min(c.bodySourceRows.endExclusive, c.bodySourceRows.start + 3)).map(row => row[m.targetColumn]).join(' | ')}</td></tr>)}
                         </tbody></table></div>
                     </details>
-                    <button disabled={!waiting || pending} onClick={() => void act(() => confirm(review.reviewId, choice.candidateDigest))} className="mt-2 rounded bg-blue-600 px-3 py-2 text-white disabled:opacity-50">Choose {choice.label} — confirm meaning</button>
+                    <button disabled={!waiting || pending} onClick={() => void act(() => confirm(review.reviewId, choice.candidateDigest, { review, intakeSignature: intakeKey }))} className="mt-2 rounded bg-blue-600 px-3 py-2 text-white disabled:opacity-50">Choose {choice.label} — confirm meaning</button>
                 </div>;
             })}</div>
             <div className="flex flex-wrap gap-2">
-                <button disabled={!waiting || pending} onClick={() => void act(() => confirm(review.reviewId, 'neither'))} className="rounded border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50">Neither / Correct mapping</button>
+                <button disabled={!waiting || pending} onClick={() => void act(() => confirm(review.reviewId, 'neither', { review, intakeSignature: intakeKey }))} className="rounded border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50">Neither / Correct mapping</button>
                 {review.status === 'confirmed' && <button disabled={pending} onClick={() => void act(() => resume(review.reviewId))} className="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">Resume read-only mapping draft</button>}
                 <button disabled={pending} onClick={() => cancel(review.reviewId)} className="rounded border border-slate-300 px-3 py-2 text-sm disabled:opacity-50">Cancel semantic review</button>
             </div>

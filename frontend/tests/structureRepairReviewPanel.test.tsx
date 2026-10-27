@@ -1,6 +1,6 @@
 import React from 'react';
 import { File as NodeFile } from 'node:buffer';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ReportBoundaryConfirmModal } from '../components/modals/ReportBoundaryConfirmModal';
 import { StructureRepairEntry } from '../components/analysis-panel/StructureRepairEntry';
@@ -43,6 +43,22 @@ describe('real semantic review UI and host actions', () => {
         expect(useAppStore.getState().structureRepairReview?.status).toBe('draft_uncommitted');
         expect(useAppStore.getState().csvData).toBe(data);
         expect(useAppStore.getState().datasetBundle?.acceptedCommit).toBeUndefined();
+        expect(refresh).not.toHaveBeenCalled();
+    });
+    it('rejects Choose A when only its public digest is swapped with legitimate B', async () => {
+        const { refresh, data } = await setup();
+        render(<ReportBoundaryConfirmModal />);
+        await screen.findByRole('button', { name: 'Choose A — confirm meaning' });
+        const review = structuredClone(useAppStore.getState().structureRepairReview!);
+        const candidateA = review.choices[0].candidate;
+        review.choices[0].candidateDigest = review.choices[1].candidateDigest;
+        act(() => useAppStore.setState({ structureRepairReview: review }));
+        expect(useAppStore.getState().structureRepairReview?.choices[0].candidate).toEqual(candidateA);
+        fireEvent.click(screen.getByRole('button', { name: 'Choose A — confirm meaning' }));
+        expect(await screen.findByRole('alert')).toHaveTextContent('No dataset was committed');
+        expect(useAppStore.getState().structureRepairReview?.status).not.toBe('confirmed');
+        expect(screen.queryByRole('button', { name: 'Resume read-only mapping draft' })).toBeNull();
+        expect(useAppStore.getState().csvData).toBe(data);
         expect(refresh).not.toHaveBeenCalled();
     });
     it('exposes local semantic review even without a provisional report boundary or cloud consent', async () => {
