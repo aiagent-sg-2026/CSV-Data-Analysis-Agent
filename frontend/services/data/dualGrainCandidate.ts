@@ -11,6 +11,8 @@ export interface DualGrainValue { value: string; origin: DualGrainSourceCell }
 export interface DualGrainCandidate {
     status: 'untrusted';
     source: { sourceId: string; sha256: string; alignmentFingerprint: string };
+    /** Untrusted snapshot of the complete selection validated by the builder, not an approval. */
+    selection: DualGrainRequest['selection'];
     mainFields: Array<{ name: string; sourceColumn: number; headerPath: DualGrainSourceCell[] }>;
     groupFields: DualGrainField[];
     main: Array<{ id: string; sourceRow: number; values: DualGrainValue[] }>;
@@ -97,7 +99,7 @@ export const buildDualGrainCandidate = async (request: DualGrainRequest): Promis
                 values: groupFields.map((_, position) => ({ ...value(row, start + position), headerPath: c.mappings[start + position].headerPath.map(header) })) });
         }
     }
-    return { status: 'untrusted', source: { ...source, alignmentFingerprint: c.sourceFingerprint },
+    return { status: 'untrusted', source: { ...source, alignmentFingerprint: c.sourceFingerprint }, selection,
         mainFields: mainFields.map(f => ({ ...f, headerPath: c.mappings[f.sourceColumn].headerPath.map(header) })), groupFields, main, detail,
         relationship: { from: 'detail', to: 'main', fromKey: 'mainId', toKey: 'id', cardinality: 'many_to_one' },
         excludedRows: confirmation.excludedRows };
