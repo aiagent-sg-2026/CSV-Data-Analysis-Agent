@@ -506,6 +506,8 @@ const run = async (
             };
             if (headerAlignmentDiagnostic.blocked) {
                 headerGateBlocked = true;
+                try { await awaitOwned(import('../../structureRepairConfirmation').then(m => m.prepareStructureRepairReview(store)), store, lease); }
+                catch { /* Missing/unverified bytes cannot authorize semantic review or resume. */ }
                 throw new Error(`initial_header_alignment_blocked: ${headerAlignmentDiagnostic.summary}`);
             }
         }

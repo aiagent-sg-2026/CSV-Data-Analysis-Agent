@@ -10,6 +10,7 @@ import {
 } from '../../services/agent/reportStructureNormalization';
 import { suggestColumnRoles } from '../../services/data/columnRoleSuggestion';
 import { formatSetAsideRowCounts } from '../../utils/setAsideTables';
+import { StructureRepairReviewPanel } from './StructureRepairReviewPanel';
 
 type BusinessRole = 'dimension' | 'metric' | 'identifier' | 'helper';
 const ROLE_OPTIONS: Array<{ value: BusinessRole; labelKey: string }> = [
@@ -36,6 +37,9 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
     const setColumnAnnotation = useAppStore(s => s.setColumnAnnotation);
     const csvData = useAppStore(s => s.csvData);
     const semanticSnapshot = useAppStore(s => s.datasetSemanticSnapshot);
+    const repairReview = useAppStore(s => s.structureRepairReview);
+    const repairRequired = rawIntakeIr?.diagnostics?.headerShapeDrift === true
+        || pipelineOutcome?.reasonCode === 'header_shape_drift' || Boolean(repairReview);
 
     const [bodyStart, setBodyStart] = useState(0);
     const [summaryStart, setSummaryStart] = useState<number | null>(null);
@@ -87,7 +91,23 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
         }
     }, [isOpen, reportStructureResolution, rawIntakeIr]);
 
-    if (!isOpen || !reportStructureResolution) return null;
+    if (!isOpen) return null;
+    // Do not present positional header guesses or role suggestions as trusted repair evidence.
+    // Compacted headers may also have no provisional boundary; local review must remain reachable.
+    if (!reportStructureResolution || repairRequired) return rawIntakeIr ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={handleClose}>
+            <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="repair-review-title" tabIndex={-1}
+                onClick={event => event.stopPropagation()} className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-auto p-6 space-y-4">
+                <h2 id="repair-review-title" className="text-base font-semibold">{reportStructureResolution ? t('guided_repair_title') : 'Review structural interpretations'}</h2>
+                <StructureRepairReviewPanel />
+                <p className="text-sm text-amber-950">Boundary confirmation cannot approve structural repair. Full validation and separate exact Dataset Commit approval remain required.</p>
+                <div className="flex justify-end gap-3">
+                    <button onClick={handleClose} className="rounded border px-4 py-2 text-sm">Cancel</button>
+                    <button disabled className="rounded bg-blue-600 px-4 py-2 text-sm text-white opacity-50">{t('boundary_confirm_button')}</button>
+                </div>
+            </div>
+        </div>
+    ) : null;
 
     const rows = rawIntakeIr?.normalizedRows ?? [];
     const totalRows = rows.length;
@@ -234,6 +254,7 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
                 {/* Body: one scroll area, so no list is clipped inside another */}
                 <div className="relative flex min-h-0 flex-1 flex-col">
                     <div ref={scrollRef} onScroll={updateScrollCue} className="px-6 py-4 overflow-y-auto flex-1 space-y-4">
+                        <StructureRepairReviewPanel />
                         <section className="rounded-lg border border-amber-200 bg-amber-50 p-4" aria-label={t('guided_repair_safety_summary')}>
                             <h3 className="text-sm font-semibold text-amber-950">{t('guided_repair_safety_summary')}</h3>
                             <p className="mt-2 text-sm text-slate-700">{summaryReason}</p>
@@ -506,7 +527,7 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
                         </button>
                         <button
                             onClick={() => void triggerConfirm()}
-                            disabled={confirming || isBusy}
+                            disabled={confirming || isBusy || repairRequired}
                             className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-2"
                         >
                             {confirming ? (
@@ -517,7 +538,7 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
                             ) : t('boundary_confirm_button')}
                         </button>
                     </div>
-                    <p className="text-xs text-slate-500">{t('review_confirm_reassurance')}</p>
+                    <p className="text-xs text-slate-500">{repairRequired ? 'Boundary confirmation cannot approve structural repair. Use the bound semantic review above; dataset commit is separate.' : t('review_confirm_reassurance')}</p>
                 </div>
             </div>
         </div>

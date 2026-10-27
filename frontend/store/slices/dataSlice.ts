@@ -42,6 +42,7 @@ import { buildColumnRegistry, buildEffectiveColumnRegistryFromState, getAllowedC
 import { captureHistoryAnalysisSnapshot, getRestoredHistoryAnalysisState } from '../../services/agent/orchestration/historyAnalysisRestore';
 import { hasPiInitialCheckpoint } from '../../services/agent/runtime/pi/piInitialCheckpoint';
 import { formatCount, pluralizeCount } from '../../utils/displayText';
+import { cancelStructureRepairReview } from '../../services/agent/structureRepairConfirmation';
 
 export interface IDataSlice {
     addProgress: (message: string, type?: 'system' | 'warning' | 'error', model?: string) => void;
@@ -58,6 +59,10 @@ export interface IDataSlice {
     refreshDuckDbSession: (datasetOverride?: CsvData | null, sessionScope?: SessionScope, runLease?: RunLease) => Promise<DuckDbSessionStatus>;
     promoteToCanonicalDataset: (options: { reason: string; reshapeProvenance: CanonicalReshapeProvenance }) => void;
     runWorkspaceDataQuery: (payload: WorkspaceDataQueryRequest) => Promise<WorkspaceQueryRunOutcome>;
+    prepareStructureRepairReview: () => Promise<import('../../types/structureRepair').StructureRepairReview | null>;
+    confirmStructureRepairMeaning: (reviewId: string, choice: string) => Promise<void>;
+    resumeStructureRepairDraft: (reviewId: string) => Promise<void>;
+    cancelStructureRepairReview: (reviewId?: string) => void;
     saveReportStructureBoundaryOverride: (boundary: ReportBoundary) => Promise<void>;
     setColumnAnnotation: (annotation: UserColumnAnnotation) => void;
     removeColumnAnnotation: (columnName: string) => void;
@@ -992,9 +997,28 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
             }
         },
 
+        prepareStructureRepairReview: async () => {
+            const owner = scopeCurrentExecution(storeApi);
+            const { prepareStructureRepairReview } = await import('../../services/agent/structureRepairConfirmation');
+            return prepareStructureRepairReview(owner);
+        },
+        confirmStructureRepairMeaning: async (reviewId, choice) => {
+            const owner = scopeCurrentExecution(storeApi);
+            const { confirmStructureRepairMeaning } = await import('../../services/agent/structureRepairConfirmation');
+            await confirmStructureRepairMeaning(owner, reviewId, choice);
+        },
+        resumeStructureRepairDraft: async (reviewId) => {
+            const owner = scopeCurrentExecution(storeApi);
+            const { resumeStructureRepairDraft } = await import('../../services/agent/structureRepairConfirmation');
+            await resumeStructureRepairDraft(owner, reviewId);
+        },
+        cancelStructureRepairReview: (reviewId) => cancelStructureRepairReview(storeApi, reviewId),
         saveReportStructureBoundaryOverride: async (boundary) => {
             const ownedStore = scopeCurrentExecution(storeApi);
             const { getState: get, setState: set } = ownedStore;
+            const { assertLegacyBoundaryAllowed } = await import('../../services/agent/structureRepairConfirmation');
+            if (!ownedStore.isActive?.()) return;
+            await assertLegacyBoundaryAllowed(ownedStore);
             const [
                 { getPreferredAnalysisDataset },
                 { resolveAnalysisDatasetProfiles },
@@ -1006,6 +1030,7 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
             ]);
             if (!ownedStore.isActive?.()) return;
 
+            await assertLegacyBoundaryAllowed(ownedStore);
             await rebuildStructureArtifacts(boundary, ownedStore);
             if (ownedStore.isActive?.() === false) return;
             // Close the modal immediately after rebuilding — analysis runs in the background.

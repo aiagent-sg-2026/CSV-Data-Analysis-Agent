@@ -6,6 +6,7 @@ import { useAppStore, AppStore } from '../store/useAppStore';
 import { DataQualityWarnings } from './DataQualityWarnings';
 import { AnalysisCardGrid } from './analysis-panel/AnalysisCardGrid';
 import { AnalysisStatusSection } from './analysis-panel/AnalysisStatusSection';
+import { StructureRepairEntry } from './analysis-panel/StructureRepairEntry';
 import { AnalysisResultsSkeleton } from './analysis-panel/AnalysisResultsSkeleton';
 import { ResearchRunSummary } from './analysis-panel/ResearchRunSummary';
 import { LargeDatasetNotice } from './analysis-panel/LargeDatasetNotice';
@@ -325,6 +326,7 @@ const AnalysisPanelComponent: React.FC = () => {
                         />
                     )}
                     {largeDatasetNotice}
+                    <StructureRepairEntry />
                     {analystReportAction}
                     <div className="flex items-center justify-center h-full">
                         <div className="text-center p-4">
@@ -362,6 +364,7 @@ const AnalysisPanelComponent: React.FC = () => {
 
                     {/* 2. AI task progress — PERF-303: isolated subscription */}
                     <AnalysisStatusSection />
+                    <StructureRepairEntry />
                     {analysisRunning && <AnalysisResultsSkeleton language={language} />}
                     {resultsViewMode === 'explore' && latestAnalysisSession?.researchBrief && (
                         <ResearchRunSummary session={latestAnalysisSession} />

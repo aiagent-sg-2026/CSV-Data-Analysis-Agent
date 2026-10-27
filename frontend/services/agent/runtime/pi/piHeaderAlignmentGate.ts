@@ -30,7 +30,7 @@ export interface InitialHeaderAlignmentDiagnostic {
 export const inspectInitialHeaderAlignment = async (intake: ReportIntakeIr | null | undefined, associatedSha: string | undefined): Promise<InitialHeaderAlignmentDiagnostic> => {
     const sha = associatedSha && /^[a-f0-9]{64}$/i.test(associatedSha) ? associatedSha : null;
     const identity = `Associated source byte SHA-256 (not verified against these rows): ${sha ?? 'unavailable'}.`;
-    const unavailable = `${identity} Header alignment diagnostics are unavailable. Analysis is blocked awaiting semantic state; no selection or resume is supported, and no candidate can be committed.`;
+    const unavailable = `${identity} Header alignment diagnostics are unavailable. Analysis is blocked awaiting semantic state; diagnostics alone cannot authorize selection or resume, and no candidate can be committed.`;
     if (!intake) return {status:'unsupported', blocked:true, summary:unavailable, associatedSourceSha256:sha,
         rawRowsFingerprintSha256:null, reasons:['intake_unavailable'], possibleChoices:[]};
     const result = await solveHeaderAlignment(intake);
@@ -40,7 +40,7 @@ export const inspectInitialHeaderAlignment = async (intake: ReportIntakeIr | nul
         const blocked = Boolean(intake.diagnostics?.headerShapeDrift);
         return {status:result.status, blocked, associatedSourceSha256:sha, rawRowsFingerprintSha256:null,
             reasons:[...result.ambiguities, ...(blocked ? ['header_shape_drift'] : [])], possibleChoices:[],
-            summary:blocked ? `${identity} Header/body shape drift was detected, but no reliable alignment was found. Analysis is blocked awaiting semantic state; no selection or resume is supported, and no candidate can be committed.` : ''};
+            summary:blocked ? `${identity} Header/body shape drift was detected, but no reliable alignment was found. Analysis is blocked awaiting semantic state; diagnostics alone cannot authorize selection or resume, and no candidate can be committed.` : ''};
     }
     const fingerprint = result.candidates[0]?.sourceFingerprint ?? null;
     const possibleChoices = result.candidates.map((candidate, index) => ({
@@ -54,5 +54,5 @@ export const inspectInitialHeaderAlignment = async (intake: ReportIntakeIr | nul
         `${index + 1}: header rows ${candidate.headerSourceRows.map(row => row + 1).join(', ')}, repeated data columns ${candidate.mainStartColumn + 1}–${candidate.mainEndColumn}`).join('; ');
     return {status:result.status, blocked:true, associatedSourceSha256:sha, rawRowsFingerprintSha256:fingerprint,
         reasons:result.ambiguities, possibleChoices,
-        summary:`${identity} Canonical rawRows fingerprint (SHA-256 of declared width and parsed rows, not source bytes): ${fingerprint ?? 'unavailable'}. Structural alternatives: ${positions}. These are not semantic choices or approval. Analysis is blocked awaiting semantic state; no selection or resume is supported, and no candidate can be committed.`};
+        summary:`${identity} Canonical rawRows fingerprint (SHA-256 of declared width and parsed rows, not source bytes): ${fingerprint ?? 'unavailable'}. Structural alternatives: ${positions}. These are not semantic choices or approval. Analysis is blocked awaiting semantic state; diagnostics alone cannot authorize selection or resume. Use current source-bound review for read-only mapping drafts; no candidate can be committed.`};
 };

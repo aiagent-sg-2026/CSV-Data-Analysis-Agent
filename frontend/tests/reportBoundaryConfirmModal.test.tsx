@@ -135,7 +135,7 @@ describe('ReportBoundaryConfirmModal guided repair', () => {
         expect(within(getSummaryCard()).getByText('1')).toBeInTheDocument();
     });
 
-    it('explains the block, allows field-role correction, and waits for explicit confirmation', async () => {
+    it('does not offer unproven field-role guesses or the old boundary approval during shape repair', async () => {
         const saveBoundary = vi.fn(async () => undefined);
         const setColumnAnnotation = vi.fn();
         const store = {
@@ -186,24 +186,15 @@ describe('ReportBoundaryConfirmModal guided repair', () => {
         render(<ReportBoundaryConfirmModal />);
 
         expect(screen.getByRole('dialog', { name: 'Review and repair data structure' })).toBeInTheDocument();
-        expect(screen.getByText('Why continuing is unsafe')).toBeInTheDocument();
+        expect(screen.getByText(/Boundary confirmation cannot approve structural repair/)).toBeInTheDocument();
         expect(screen.queryByText(/Auto-confirm/i)).not.toBeInTheDocument();
 
-        fireEvent.change(screen.getByRole('combobox', { name: 'Business role for Project' }), {
-            target: { value: 'dimension' },
-        });
-        expect(setColumnAnnotation).toHaveBeenCalledWith({
-            columnName: 'Project',
-            businessLabel: 'Project',
-            description: '',
-            businessRole: 'dimension',
-        });
+        expect(screen.queryByRole('combobox', { name: 'Business role for Project' })).toBeNull();
+        expect(setColumnAnnotation).not.toHaveBeenCalled();
 
+        expect(screen.getByRole('button', { name: 'Confirm & Start Analysis' })).toBeDisabled();
         fireEvent.click(screen.getByRole('button', { name: 'Confirm & Start Analysis' }));
-        await waitFor(() => expect(saveBoundary).toHaveBeenCalledWith(expect.objectContaining({
-            bodyStartIndex: 1,
-            summaryStartIndex: null,
-        })));
+        expect(saveBoundary).not.toHaveBeenCalled();
     });
 
     it('shows no summary rows when the boundary only covers the trailing blank line', async () => {

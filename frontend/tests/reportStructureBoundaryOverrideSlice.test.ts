@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDataSlice } from '../store/slices/dataSlice';
 import { createTestSettings } from './testSettings';
 import { createMultiHeaderIntakeIr } from './reportShapeFixtures/cases';
-import { buildCsvDataFromIntakeIr, rebuildIntakeIrWithBoundary } from '../services/data/reportCsvIntake';
+import { buildCsvDataFromIntakeIr, buildReportIntakeIr, rebuildIntakeIrWithBoundary } from '../services/data/reportCsvIntake';
 import { DEFAULT_AUTO_ANALYSIS_GOAL } from '../services/agent/analysisDefaults';
 
 const { primeDuckDbDatasetMock } = vi.hoisted(() => ({
@@ -83,7 +83,7 @@ const createSliceHarness = () => {
     state.proposeAnalysisGoals = vi.fn().mockResolvedValue(undefined);
 
     return {
-        getState,
+        getState, setState,
         boundary: {
             headerRowIndex: intakeIr.provisionalTable!.headerRowIndex,
             headerLayerRowIndexes: [...intakeIr.provisionalTable!.headerLayerRowIndexes],
@@ -127,6 +127,30 @@ describe('report structure boundary override slice integration', () => {
                 lifecycle: 'completed',
             }),
         }));
+    });
+
+    it.each(['drift', 'candidate'] as const)('blocks the unsafe old boundary path for %s before rebuilding or downstream writes', async kind => {
+        const { getState, setState, boundary } = createSliceHarness();
+        if (kind === 'drift') {
+            getState().rawIntakeIr.diagnostics.headerShapeDrift = true;
+        } else {
+            const intake = buildReportIntakeIr('synthetic.csv', [
+                ['Entity', 'N', 'S', 'N', 'S'], ['Count', 'Rate', 'Count', 'Rate'],
+                ['a', '1', '2', '3', '4', 'x', 'y'], ['b', '5', '6', '7', '8', 'x', 'y'],
+            ]);
+            intake.diagnostics.headerShapeDrift = false; // The solver still detects a repair-required candidate set.
+            setState({ rawIntakeIr: intake });
+        }
+        setState({ pipelineOutcome: { status: 'ready' } });
+        const before = getState();
+        await expect(getState().saveReportStructureBoundaryOverride(boundary)).rejects.toThrow('repair_requires_semantic_review_and_separate_exact_commit');
+        expect(getState().csvData).toBe(before.csvData);
+        expect(getState().canonicalCsvData).toBe(before.canonicalCsvData);
+        expect(getState().rawIntakeIr).toBe(before.rawIntakeIr);
+        expect(getState().ensureDatasetSemanticSnapshot).not.toHaveBeenCalled();
+        expect(getState().handleInitialAnalysis).not.toHaveBeenCalled();
+        expect(getState().proposeAnalysisGoals).not.toHaveBeenCalled();
+        expect(primeDuckDbDatasetMock).not.toHaveBeenCalled();
     });
 
     it('waits for analysis summaries before proposing follow-up goals after a boundary override', async () => {

@@ -1,0 +1,75 @@
+import React, { useEffect, useState } from 'react';
+import { useAppStore } from '../../store/useAppStore';
+
+/** This panel dispatches human actions; a copied/persisted UI projection grants no authority. */
+export const StructureRepairReviewPanel: React.FC = () => {
+    const review = useAppStore(s => s.structureRepairReview);
+    const intake = useAppStore(s => s.rawIntakeIr);
+    const sessionId = useAppStore(s => s.sessionId);
+    const sourceSha = useAppStore(s => s.datasetBundle?.source.inspection?.sha256);
+    const intakeKey = JSON.stringify([intake?.columnCount, intake?.rawRows]);
+    const prepare = useAppStore(s => s.prepareStructureRepairReview);
+    const confirm = useAppStore(s => s.confirmStructureRepairMeaning);
+    const resume = useAppStore(s => s.resumeStructureRepairDraft);
+    const cancel = useAppStore(s => s.cancelStructureRepairReview);
+    const [error, setError] = useState('');
+    const [pending, setPending] = useState(false);
+    useEffect(() => {
+        let active = true;
+        let id: string | undefined;
+        setError('');
+        void prepare?.().then(result => {
+            id = result?.reviewId;
+            if (!active && id) cancel?.(id);
+        }).catch(() => { if (active) setError('Bound source review unavailable. Re-upload the original or corrected source; analysis remains blocked.'); });
+        return () => { active = false; if (id) cancel?.(id); };
+    }, [prepare, cancel, intakeKey, sessionId, sourceSha]);
+    const act = async (action: () => Promise<void>) => {
+        if (pending) return;
+        setPending(true); setError('');
+        try { await action(); }
+        catch { setError('Review is stale, cancelled or already used. Re-open review from the current source. No dataset was committed.'); }
+        finally { setPending(false); }
+    };
+    if (!review && !error) return null;
+    const current = review?.sessionId === sessionId && review?.sourceSha256 === sourceSha;
+    const waiting = current && review?.status === 'awaiting_semantic_confirmation';
+    return <section aria-label="Structural semantic confirmation" className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
+        <h3 className="text-sm font-semibold text-blue-950">Confirm business meaning — not Dataset Commit approval</h3>
+        <p className="text-sm text-slate-700">{current ? review?.message : 'Source/session changed. Re-open review to inspect the current source.'}</p>
+        {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
+        {current && review && <>
+            <details className="text-xs break-all"><summary>Source binding</summary>
+                <p>Raw bytes SHA-256 / source version: {review.sourceSha256}</p>
+                <p>Session: {review.sessionId} / epoch {review.sessionEpoch}</p>
+                <p>Candidate set: {review.candidateSetDigest}</p>
+            </details>
+            <div className="space-y-3">{review.choices.map(choice => {
+                const c = choice.candidate;
+                return <div key={choice.candidateDigest} className="rounded border border-blue-200 bg-white p-3 text-sm">
+                    <p className="font-medium">Candidate {choice.label}: categories belong to header group at source columns {c.mainStartColumn + 1}–{c.mainStartColumn + c.groupCount}</p>
+                    <p>Expanded data columns {c.mainStartColumn + 1}–{c.mainEndColumn}; {c.groupCount} groups × {c.groupWidth} categories. Header source rows {c.headerSourceRows.map(r => r + 1).join(', ')}.</p>
+                    <details><summary className="cursor-pointer">Inspect mapping and source sample values ({choice.label})</summary>
+                        <div className="overflow-auto max-h-56"><table className="text-xs w-full"><thead><tr><th>Data column</th><th>Header evidence (row:column)</th><th>Source samples (not validated)</th></tr></thead><tbody>
+                            {c.mappings.map(m => <tr key={m.targetColumn}><td>{m.targetColumn + 1}</td><td>{m.headerPath.map(ref => `${intake?.rawRows[ref.rowIndex]?.[ref.columnIndex] ?? ''} [${ref.rowIndex + 1}:${ref.columnIndex + 1}]`).join(' → ')}</td><td>{intake?.rawRows.slice(c.bodySourceRows.start, Math.min(c.bodySourceRows.endExclusive, c.bodySourceRows.start + 3)).map(row => row[m.targetColumn]).join(' | ')}</td></tr>)}
+                        </tbody></table></div>
+                    </details>
+                    <button disabled={!waiting || pending} onClick={() => void act(() => confirm(review.reviewId, choice.candidateDigest))} className="mt-2 rounded bg-blue-600 px-3 py-2 text-white disabled:opacity-50">Choose {choice.label} — confirm meaning</button>
+                </div>;
+            })}</div>
+            <div className="flex flex-wrap gap-2">
+                <button disabled={!waiting || pending} onClick={() => void act(() => confirm(review.reviewId, 'neither'))} className="rounded border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50">Neither / Correct mapping</button>
+                {review.status === 'confirmed' && <button disabled={pending} onClick={() => void act(() => resume(review.reviewId))} className="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">Resume read-only mapping draft</button>}
+                <button disabled={pending} onClick={() => cancel(review.reviewId)} className="rounded border border-slate-300 px-3 py-2 text-sm disabled:opacity-50">Cancel semantic review</button>
+            </div>
+            {review.draft && <div aria-label="Read-only mapping draft" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm">
+                <h4 className="font-semibold">Draft / Uncommitted — not validated</h4>
+                <p>{review.draft.totalSourceRows} structurally proposed source rows; showing {review.draft.rows.length}. No totals or business grain are asserted.</p>
+                <div className="overflow-auto max-h-56"><table className="text-xs"><thead><tr><th>Source row</th>{review.draft.columns.map(c => <th key={c.targetColumn}>{c.headerPath.map(p => p.value).join(' → ')} [{c.targetColumn + 1}]</th>)}</tr></thead><tbody>
+                    {review.draft.rows.map(row => <tr key={row.sourceRow}><td>{row.sourceRow + 1}</td>{row.cells.map((value, i) => <td key={i}>{value}</td>)}</tr>)}
+                </tbody></table></div>
+            </div>}
+        </>}
+        <p className="text-xs font-medium text-slate-700">Read-only inspection only. Independent validation and separate exact commit approval are required. Accepted data and DuckDB are unchanged.</p>
+    </section>;
+};

@@ -6,6 +6,8 @@ import { buildReportIntakeIr } from '../services/data/reportCsvIntake';
 import { inspectInitialHeaderAlignment } from '../services/agent/runtime/pi/piHeaderAlignmentGate';
 import { runPiInitialAnalysis } from '../services/agent/runtime/pi/piInitialAnalysisRuntimeService';
 import { beginSessionTransition } from '../services/session/sessionOwnership';
+import { captureCsvSource } from '../services/data/immutableCsvSource';
+import { confirmStructureRepairMeaning, resumeStructureRepairDraft } from '../services/agent/structureRepairConfirmation';
 
 const intake = (rows: string[][]) => buildReportIntakeIr('synthetic.csv', rows,
     parseCsvTextWithDetection(rows.map(row => row.join(',')).join('\n')).detection);
@@ -29,7 +31,7 @@ describe('qualified initial header diagnostic gate', () => {
         expect(message).toMatch(/Canonical rawRows fingerprint \(SHA-256 of declared width and parsed rows, not source bytes\): [a-f0-9]{64}/);
         expect(message).toContain('Structural alternatives: 1:');
         expect(message).toContain('; 2:');
-        expect(message).toContain('no selection or resume is supported');
+        expect(message).toContain('diagnostics alone cannot authorize selection or resume');
         expect(JSON.stringify(diagnostic)).not.toContain('<img');
         expect(diagnostic.associatedSourceSha256).toBe(sha);
         expect(diagnostic.rawRowsFingerprintSha256).toMatch(/^[a-f0-9]{64}$/);
@@ -47,6 +49,33 @@ describe('qualified initial header diagnostic gate', () => {
         const drift = intake([['A','B','C','D'], ['1','2','3','4'], ['5','6','7','8']]);
         drift.diagnostics.headerShapeDrift = true;
         expect((await inspectInitialHeaderAlignment(drift, undefined)).summary).toContain('no reliable alignment');
+    });
+    it('prepares a bound human review on the real runtime block and permits only local draft resume', async () => {
+        const rows = repeated();
+        const data = {fileName:'synthetic.csv',data:[{A:1}]};
+        let state = {sessionId:crypto.randomUUID(), rawIntakeIr:rows, csvData:data, rawCsvData:data, canonicalCsvData:null,
+            settings:{provider:'default',simpleModel:'mock',complexModel:'mock',language:'English'}, analysisCards:[], columnProfiles:[],
+            chatHistory:[], dataQualityIssues:[], agentEvents:[], agentToolLogs:[], runtimeEvents:[], progressMessages:[], telemetryEvents:[],
+            workspaceFiles:{}, addProgress:vi.fn(), logAgentToolUsage(){}} as unknown as ReturnType<StoreApi['getState']>;
+        const store:StoreApi = {getState:()=>state,setState:patch=>{state={...state,...(typeof patch==='function'?patch(state):patch)};}};
+        const source = await captureCsvSource(store, new File([rows.rawRows.map(row => row.join(',')).join('\n')], 'synthetic.csv'));
+        store.setState({datasetBundle:{source:{inspection:source}} as never});
+        const stream = vi.fn();
+        try {
+            const result = await runPiInitialAnalysis({appSessionId:state.sessionId,datasetId:'synthetic',datasetVersion:'v1',researchGoal:'Analyze',
+                provider:{provider:'default',modelId:'mock'}}, store, stream as never, {codingPreparation:{enabled:true,qualified:true}});
+            expect(result.status).toBe('blocked');
+            const review = store.getState().structureRepairReview!;
+            expect(review.status).toBe('awaiting_semantic_confirmation');
+            expect(review.sourceSha256).toBe(source.sha256);
+            await confirmStructureRepairMeaning(store, review.reviewId, review.choices[1].candidateDigest);
+            await resumeStructureRepairDraft(store, review.reviewId);
+            expect(store.getState().structureRepairReview?.status).toBe('draft_uncommitted');
+            expect(store.getState().csvData).toBe(data);
+            expect(store.getState().canonicalCsvData).toBeNull();
+            expect(store.getState().datasetBundle?.acceptedCommit).toBeUndefined();
+            expect(stream).not.toHaveBeenCalled();
+        } finally { beginSessionTransition(store); }
     });
     it('blocks the actual qualified runtime before provider, preparation, or any dataset mutation', async () => {
         const rows = repeated();
