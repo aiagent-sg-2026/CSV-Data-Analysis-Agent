@@ -1,6 +1,7 @@
 ## Current Work Context
 
 - **Goal**: Maintain the React browser app and its checked-in GitHub Pages build. The main assistant and initial analysis run through Pi Harness and the governed app tools.
+- **Header alignment PR-2 (2026-10-27)**: Adds a standalone, versioned structural candidate and host validator over original unpadded intake rows. Repeated compacted bands and exact dense cycles can yield multiple full-coverage coordinate mappings; physical consistency does not establish semantic ownership. Candidates remain review-only, with no changes to parser, normalized headers, accepted datasets, canonicalization, or the `header_shape_drift` guard. Arbitrary ragged layouts remain unresolved. PR-3 must validate the exact candidate and arrange semantic review before considering integration.
 - **Worker change (2026-10-23, P0 missing markers counted as 0; root not republished)**:
   - Live symptom: on `sg-graduate-employment.csv` the card "Median Gross Mthly 25 Percentile by School" ranked School of Law (only `na`/`N.A.`) at 0 and Yong Siew Toh at 1,500 (real median of reported values: 2,999).
   - Root cause: `compileAggregateExpression` in `frontend/services/duckdb/queryCompiler.ts` wrapped every single-column numeric aggregate in `COALESCE(<numeric>, 0)` (the old comment said it was for `'-` zero markers). Period-sum and unpivot aggregates did the same. The in-process executor already skipped these cells, so DuckDB and the fallback disagreed.
