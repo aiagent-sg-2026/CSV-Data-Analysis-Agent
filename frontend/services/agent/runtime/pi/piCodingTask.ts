@@ -296,7 +296,10 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
                 const request = args;
                 // Grant paths are constrained by task workspace and central governance; model lineage is never accepted.
                 const grant = await port.issueGrant({ readPaths: [...new Set([request.program.path, ...request.inputs.map(input => input.path)])],
-                    writePaths: [request.output.path], sources: (request.sources ?? []).map(source => ({ sourceId: source.sourceId, sha256: source.sha256 })),
+                    writePaths: [request.output.path], sources: request.sourceRecords
+                        ? [{ sourceId: request.sourceRecords.sourceId, sha256: request.sourceRecords.sha256 }]
+                        : (request.sources ?? []).map(source => ({ sourceId: source.sourceId, sha256: source.sha256 })),
+                    ...(request.sourceRecords ? { limits: { inputBytes: 256 * 1024, outputBytes: 256 * 1024, heapBytes: 32 * 1024 * 1024 } } : {}),
                     tableIds: (request.tables ?? []).map(table => table.tableId),
                     expiresAt: Date.now() + Math.max(1, record.task.budget.limits.activeMs - record.task.budget.used.activeMs) });
                 current();

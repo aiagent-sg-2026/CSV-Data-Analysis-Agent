@@ -15,6 +15,7 @@ import {runPiFollowUpTurn} from './piFollowUpRuntimeService';
 import type {PiLoopCheck} from './piCodingLoopQualification';
 import {queueSessionWrite} from '../../../persistence/currentSessionPersistence';
 
+export {qualifySourceStream} from '../../execution/codeSourceStreamQualification';
 export {preparePiInitialCodingUiSmoke} from './piInitialCodingQualification';
 export {preparePiStructureRepairSmoke,queryPiStructureRepairSmoke} from './piStructureRepairQualification';
 export {executeEvaluationCase,executeEvaluationInitialProbe} from './piEvaluationRuntime';

@@ -41,6 +41,20 @@ const writeTextFile = async (
     }
 };
 
+/** Candidate scratch shares the app's session cleanup root, never the accepted dataset namespace. */
+export const openCandidateSpillDirectory = async (sessionId: string, generation: string, current: () => void) => {
+    if (!/^[a-zA-Z0-9-]{1,80}$/.test(generation)) throw new Error('spill_generation_invalid');
+    current(); const root = await getOpfsRoot(); current();
+    if (!root) throw new Error('spill_storage_unavailable');
+    const app = await root.getDirectoryHandle(ROOT_DIRECTORY, { create: true }); current();
+    const session = await app.getDirectoryHandle(sanitizeSegment(sessionId), { create: true }); current();
+    await writeTextFile(session, SESSION_METADATA_FILE, JSON.stringify({ sessionId, createdAt: new Date().toISOString() }), current);
+    current();
+    const name = `candidate-${generation}`;
+    const directory = await session.getDirectoryHandle(name, { create: true }); current();
+    return { directory, remove: () => session.removeEntry(name, { recursive: true }) };
+};
+
 export const isOpfsAvailable = (): boolean =>
     typeof navigator !== 'undefined' && typeof navigator.storage?.getDirectory === 'function';
 

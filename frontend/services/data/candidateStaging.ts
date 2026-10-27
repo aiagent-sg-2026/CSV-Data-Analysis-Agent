@@ -84,6 +84,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             if(now.goal!==scope.goal||now.scope.digest!==scope.scopeDigest||now.scope.intentDigest!==scope.intentDigest)throw new Error('candidate_scope_changed');
             if(JSON.stringify(source?{sourceId:source.sourceId,sha256:source.sha256}:null)!==JSON.stringify(sourceIdentity))throw new Error('input_version_changed');
         };
+        if(receipt.mode==='source_records')throw new Error('candidate_stream_semantic_contract_required');
         const output=workspace.read(receipt.output!.path);
         let materialization=output.content;
         if(receipt.mode==='stateful_stream'){

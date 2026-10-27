@@ -211,8 +211,9 @@ export const readSourceRecordsBounded = async (store: StoreApi, id: string, star
             spans.push({ row, start: anchor.start + span.start, end: anchor.start + span.end,
                 startLine: anchor.startLine + span.startLine - 1, endLine: anchor.startLine + span.endLine - 1 });
         } });
-        await scanner.run(progress => { if (spans.length >= count || progress.rows + anchor.row > startRow + count) scanner.cancel(); }, assertCurrent);
+        const scan = await scanner.run(progress => { if (spans.length >= count || progress.rows + anchor.row > startRow + count) scanner.cancel(); }, assertCurrent);
         assertCurrent();
+        if (scan.status === 'failed' && !spans.length) throw new Error('source_record_scan_failed', { cause: scan.reason });
     }
     const records: ReturnType<typeof readSourceRecords>['records'] = [];
     let outputBytes = 0;

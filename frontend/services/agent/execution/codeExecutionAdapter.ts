@@ -12,6 +12,8 @@ import { normalizeRuntimeAccessControlSettings } from '../../runtimeAccessContro
 import { validateCodeRunRequest, type CodeArtifactRef, type CodeExecutionReceipt, type CodeGrantOptions, type CodeRunRequest, type CodePolicyContext } from './codeExecutionContract';
 import { captureCodeTables, CODE_TABLE_LIMITS } from './codeTableInputs';
 import { executeCodeStream, planCodeStream } from './codeStatefulStream';
+import { createSourceRecordStream, SOURCE_STREAM_LIMITS, type SourceRecordStream } from './codeSourceRecordStream';
+import type { CandidateSpillFactory } from '../../data/candidateSpill';
 import { consumeEvaluationFault, recordEvaluationExecution } from '../../sandbox/evaluationFaults';
 
 const encode = (text: string) => new TextEncoder().encode(text);
@@ -26,7 +28,7 @@ type Guest = Pick<ReturnType<typeof createJavaScriptGuest>, 'run' | 'cancel' | '
 
 /** Host-only factory and grant issuer. No executable authority is read from model arguments or checkpoints. */
 export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorkspace, getTask: () => AgentTaskContract,
-    guest: Guest = createJavaScriptGuest(store)) => {
+    guest: Guest = createJavaScriptGuest(store), spillFactory?: CandidateSpillFactory) => {
     const context = store.executionContext;
     if (!context) { guest.dispose(); throw new Error('scope_revoked'); }
     const lease = context.lease, taskId = getTask().taskId;
@@ -40,6 +42,7 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
         tableIds: string[]; operations: string[]; egress: 'denied'; retention: 'session'; revocationRevision: number;
     } }>();
     const jobs = new Map<string, { receipt: Readonly<CodeExecutionReceipt>; controller: AbortController; grantId?: string }>();
+    const sourceStreams = new Map<string, SourceRecordStream>();
     let disposed = false, suspended = false, active: string | undefined;
     const own = (execution = context) => {
         if (disposed || suspended || execution.lease !== lease || !execution.toolCallId || (lease.kind === 'initial_analysis' ? !execution.stepId : !lease.turnId)) throw new Error('scope_revoked');
@@ -76,7 +79,9 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
         }
         if (request) {
             policy('code.run', policyContext);
-            if (request.sources?.length) pathAllowed('/dataset/source.bytes');
+            if (request.sources?.length || request.sourceRecords) pathAllowed('/dataset/source.bytes');
+            if (request.sourceRecords && !payload.sources.some(source => source.sourceId === request.sourceRecords!.sourceId
+                && source.sha256 === request.sourceRecords!.sha256)) throw new Error('approval_invalid');
             if (request.tables?.length) pathAllowed('/dataset/cleaned.csv');
             if (request.tables?.some(table => !payload.tableIds.includes(table.tableId))) throw new Error('approval_invalid');
             for (const item of [request.program, ...request.inputs]) {
@@ -92,7 +97,8 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
         }
         return issued;
     };
-    const dispose = () => { disposed = true; jobs.forEach(job => job.controller.abort()); guest.dispose(); grants.clear(); };
+    const dispose = () => { disposed = true; jobs.forEach(job => job.controller.abort()); guest.dispose(); grants.clear();
+        sourceStreams.forEach(stream => { void stream.dispose().catch(() => {}); }); sourceStreams.clear(); };
     const unregister = registerSessionResource(lease.scope, dispose);
     return {
         workspace, executorGeneration,
@@ -161,7 +167,7 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
                 if (!request.program.path.endsWith('.js')) throw new Error('capability_unavailable');
                 jobs.set(jobId, { receipt, controller, grantId: issued.reference.id }); active = jobId;
                 const workspaceRevision = await digest({ program: request.program, inputs: request.inputs, sources: request.sources,
-                    tables: request.tables, mode: request.mode, stream: request.stream, output: request.output });
+                    tables: request.tables, mode: request.mode, stream: request.stream, sourceRecords: request.sourceRecords, output: request.output });
                 check(issued.reference.id, execution, request, capturedPolicy);
                 const envelope = createTaskExecutionEnvelope(store, getTask(), execution, { executorId: 'browser-quickjs', executorGeneration, workspaceRevision, grantRef: issued.reference.id });
                 const inputs: Record<string, unknown> = Object.create(null);
@@ -203,7 +209,7 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
                     limits: issued.payload.limits, mode, coverage: tableSnapshot.coverage, checkpoints: [], workerGenerations: [],
                     inputDigest, environmentDigest, environment, requestDigest, inputBindings: envelope.inputBindings, grant: issued.reference });
                 current();
-                const deadline = Date.now() + issued.payload.limits.timeoutMs;
+                const deadline = Date.now() + (mode === 'source_records' ? SOURCE_STREAM_LIMITS.activeMs : issued.payload.limits.timeoutMs);
                 executionDeadline = deadline;
                 const runGuest = async (json: string): Promise<GuestOutcome> => {
                     current();
@@ -232,11 +238,24 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
                         return {text:bounded,truncated:true};
                     };
                     const stdout=appendLog(receipt.stdout,result.stdout??''), stderr=appendLog(receipt.stderr,result.stderr??'');
-                    publish({ workerGeneration: result.generation, workerGenerations: [...(receipt.workerGenerations??[]),result.generation],
+                    publish({ workerGeneration: result.generation, workerGenerations: [...(receipt.workerGenerations??[]),result.generation].slice(mode === 'source_records' ? -20 : 0),
                         stdout:stdout.text, stderr:stderr.text, logsTruncated:receipt.logsTruncated||Boolean(result.logsTruncated)||stdout.truncated||stderr.truncated,error:result.error });
                     return result;
                 };
-                const result = request.stream && streamSteps ? await executeCodeStream(request.stream,streamSteps,inputs,issued.payload.limits,
+                let result: GuestOutcome;
+                if (request.sourceRecords) {
+                    const streamKey = await digest({ taskId, revision: envelope.taskRevision, workspaceRevision, source: request.sourceRecords }); current();
+                    let stream = sourceStreams.get(streamKey);
+                    if (!stream) {
+                        if (sourceStreams.size >= 3) throw new Error('resource_limit');
+                        stream = await createSourceRecordStream(store, request.sourceRecords,
+                            { taskId, revision: envelope.taskRevision, program: request.program, workspaceRevision }, current, spillFactory);
+                        current(); sourceStreams.set(streamKey, stream);
+                    }
+                    const manifest = await stream.execute(runGuest, current); current();
+                    publish({ sourceStream: { manifest, metrics: stream.metrics } });
+                    result = { generation: receipt.workerGeneration ?? 1, status: 'completed', code: 'guest_completed', outputJson: JSON.stringify(manifest) };
+                } else result = request.stream && streamSteps ? await executeCodeStream(request.stream,streamSteps,inputs,issued.payload.limits,
                     runGuest,current,checkpoint=>publish({checkpoints:[...(receipt.checkpoints??[]),checkpoint]}),{requestDigest,jobId}) : await runGuest(inputJson);
                 current();
                 if (result.code === 'guest_busy') return finish('blocked', 'executor_busy', 'wait');
@@ -259,7 +278,8 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
                 return finish('succeeded', 'execution_completed', 'none');
             } catch (error) {
                 const message = error instanceof Error ? error.message : '';
-                const reason = ['scope_revoked','input_version_changed','workspace_conflict','capability_unavailable','approval_invalid','validation_failed','resource_limit','protocol_incompatible',
+                const reason = raw?.mode === 'source_records' && error instanceof DOMException && error.name === 'QuotaExceededError' ? 'spill_storage_quota'
+                    : message.startsWith('source_stream_') || message.startsWith('source_record_') || message.startsWith('spill_') ? message : ['scope_revoked','input_version_changed','workspace_conflict','capability_unavailable','approval_invalid','validation_failed','resource_limit','protocol_incompatible',
                     'complete_input_unavailable','execution_mode_unavailable','partition_not_contiguous','execution_deadline'].includes(message) ? message : 'execution_failed';
                 return finish(controller.signal.aborted || lease.signal.aborted || reason === 'scope_revoked' ? 'cancelled' : 'blocked', reason,
                     reason === 'scope_revoked' || reason === 'input_version_changed' ? 'new_scope' : 'repair');
@@ -268,13 +288,13 @@ export const createCodeExecutionAdapter = (store: StoreApi, workspace: TaskWorks
         assertCommitEligible(jobId: string, execution: ExecutionContext, policyContext?: CodePolicyContext) {
             policy('code.run', policyContext);
             const job = jobs.get(jobId);
-            if (!job?.grantId || job.receipt.status !== 'succeeded') throw new Error('approval_invalid');
+            if (!job?.grantId || job.receipt.status !== 'succeeded' || job.receipt.mode === 'source_records') throw new Error('approval_invalid');
             check(job.grantId, execution, undefined, policyContext);
         },
         captureCommitCheck(jobId: string, execution: ExecutionContext, policyContext?: CodePolicyContext) {
             policy('code.run', policyContext);
             const job = jobs.get(jobId);
-            if (!job?.grantId || job.receipt.status !== 'succeeded') throw new Error('approval_invalid');
+            if (!job?.grantId || job.receipt.status !== 'succeeded' || job.receipt.mode === 'source_records') throw new Error('approval_invalid');
             const issued = check(job.grantId, execution, undefined, policyContext), capturedTask = getTask();
             // Retained grant data permits exact commit checks only. The guest and old execution API stay retired.
             return (target: StoreApi, fresh: ExecutionContext) => {
