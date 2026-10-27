@@ -30,6 +30,7 @@ import {createChatMessage} from '../../../../utils/messageState';
 import {getStorageDatabase} from '../../../storageService';
 import {readCurrentCommit} from '../../../data/datasetRecoveryActions';
 import {verifyInitialCodingCommit,reconcileInitialCodingCheckpoint} from './piInitialCodingCheckpoint';
+import { inspectInitialHeaderAlignment } from './piHeaderAlignmentGate';
 
 const STAGES = createInitialAnalysisStageToolManifests();
 import { INITIAL_CHECKPOINT_PREFIX as CHECKPOINT_PREFIX, initialCheckpointKey as checkpointKey, hasPiInitialCheckpoint, readPiInitialCheckpoint as readCheckpoint, writePiInitialCheckpoint as writeCheckpoint, discardPiInitialCheckpoint as discardCheckpoint, captureCheckpointSource, captureCheckpointSourceBoundary, checkpointLineageSignature, validateCheckpointState, type PiInitialCheckpoint, type InitialStageReceipt } from './piInitialCheckpoint';
@@ -150,6 +151,8 @@ const run = async (
     const qualified=options.codingPreparation?.qualified===true;
     let pendingApproval:ClarificationRequest|undefined;
     let approvalSealed=false;
+    let headerGateBlocked = false;
+    let headerAlignmentDiagnostic: InitialAnalysisRunOutcome['headerAlignmentDiagnostic'];
     let recoveryEnabled = Boolean(checkpointSource) && !store.getState().csvData?.backing?.ephemeral;
     let providerTurns = 0;
     let invalidStageRequests = 0;
@@ -342,7 +345,7 @@ const run = async (
             if (executorPreparation && options.codingPreparation?.prepareStage) {
                 await awaitOwned(options.codingPreparation.prepareStage(stageStore,stageContext),store,lease);
             }
-            const result = await executeInitialAnalysisStageTool({
+            let result = await executeInitialAnalysisStageTool({
                 toolName: stage.name,
                 phase: stage.initialAnalysis.phase,
                 args: {
@@ -360,6 +363,19 @@ const run = async (
                 executors,
             });
             assertRunActive(store, lease);
+            const profiled = store.getState();
+            if (qualified && stage.name === 'dataset.profileStructure'
+                && (!profiled.canonicalCsvData || profiled.pipelineOutcome?.reasonCode === 'header_shape_drift')
+                && (!profiled.rawIntakeIr || headerAlignmentDiagnostic?.status === 'no_candidates')) {
+                const diagnostic = headerAlignmentDiagnostic ?? await awaitOwned(
+                    inspectInitialHeaderAlignment(null, profiled.datasetBundle?.source.inspection?.sha256), store, lease);
+                headerGateBlocked = true;
+                headerAlignmentDiagnostic = { ...diagnostic, blocked: true,
+                    reasons: [...diagnostic.reasons, 'structure_unresolved'],
+                    summary: `${diagnostic.summary || 'No reliable header alignment was found.'} Structure is unresolved. Analysis is blocked awaiting semantic state; no selection or resume is supported, and no candidate can be committed.` };
+                result = { ...result, decision: 'fail', warningCodes: ['header_alignment_unavailable'],
+                    summary: headerAlignmentDiagnostic.summary };
+            }
             results.push(result);
             stageReceipts.push({ stageIndex, toolName: stage.name, inputVersion,
                 outputVersion: getCurrentAnalysisDatasetVersion(store.getState()) ?? inputVersion,
@@ -467,6 +483,32 @@ const run = async (
     let providerFailure = false;
     let cloudConsentDeclined = false;
     try {
+        if (qualified && (store.getState().rawIntakeIr || store.getState().pipelineOutcome?.canAutoAnalyze === false)) {
+            // Freeze the evidence before asynchronous hashing and fence against replacement or
+            // in-place mutation before accepting the result. Metadata does not prove row provenance.
+            const state = store.getState();
+            const intake = state.rawIntakeIr;
+            const inspection = state.datasetBundle?.source.inspection;
+            const associatedSha = inspection?.sha256;
+            const snapshot = intake ? structuredClone(intake) : null;
+            const signature = snapshot ? JSON.stringify([snapshot.columnCount, snapshot.rawRows]) : null;
+            const diagnostic = await awaitOwned(inspectInitialHeaderAlignment(snapshot, associatedSha), store, lease);
+            assertRunActive(store, lease);
+            const current = store.getState();
+            const unchanged = current.rawIntakeIr === intake && current.datasetBundle === state.datasetBundle
+                && current.csvData === state.csvData && current.rawCsvData === state.rawCsvData
+                && current.datasetBundle?.source.inspection === inspection && current.datasetBundle?.source.inspection?.sha256 === associatedSha
+                && (intake ? JSON.stringify([intake.columnCount, intake.rawRows]) === signature : true);
+            headerAlignmentDiagnostic = unchanged ? diagnostic : {
+                status: 'unsupported', blocked: true, associatedSourceSha256: null, rawRowsFingerprintSha256: null,
+                reasons: ['source_changed_during_diagnostics'], possibleChoices: [],
+                summary: 'Source evidence changed during header diagnostics. Analysis is blocked awaiting semantic state; no selection or resume is supported, and no candidate can be committed.',
+            };
+            if (headerAlignmentDiagnostic.blocked) {
+                headerGateBlocked = true;
+                throw new Error(`initial_header_alignment_blocked: ${headerAlignmentDiagnostic.summary}`);
+            }
+        }
         if (options.codingPreparation?.enabled === true) executorPreparation = await preparePiExecutor(store, {entryPoint:'initial_analysis',
             goal:request.researchGoal,guest:options.codingPreparation.guest,qualified,continuation:options.codingPreparation.continuation,
             recoveryBudget:options.codingPreparation.continuation?undefined:checkpoint?.coding?.budget});
@@ -542,13 +584,13 @@ const run = async (
             approvalSealed=true;
             status='blocked';
         }else if (executorPreparation && results.some(result => result.decision === 'fail')) {
-            status = 'failed';
+            status = headerGateBlocked ? 'blocked' : 'failed';
             errorMessage = results.find(result => result.decision === 'fail')!.summary;
         } else {
             status = nextStageIndex === STAGES.length && results.every(result => result.decision === 'pass')
                 && warnings.length === 0 ? 'completed' : 'degraded';
         }
-        if(qualified&&!pendingApproval&&status!=='failed'){
+        if(qualified&&!pendingApproval&&!headerGateBlocked&&status!=='failed'){
             const state=store.getState(),version=getCurrentAnalysisDatasetVersion(state);
             const emitted=new Set(stageReceipts.filter(r=>r.toolName==='analysis.executeEvidence').flatMap(r=>r.cardIds));
             const trusted=resolveAnalysisCompletionGate({cards:state.analysisCards.filter(c=>emitted.has(c.id)),currentDatasetVersion:version,columnProfiles:state.columnProfiles}).trustedBusinessCardIds;
@@ -561,7 +603,7 @@ const run = async (
         errorMessage = sanitizeError(error);
         // A declined consent prompt mentions the provider, so classify it before the provider heuristic.
         cloudConsentDeclined = (error as { code?: unknown } | null)?.code === 'cloud_ai_consent_declined';
-        providerFailure ||= !cloudConsentDeclined && isInitialAnalysisProviderFailure(error);
+        providerFailure ||= !headerGateBlocked && !cloudConsentDeclined && isInitialAnalysisProviderFailure(error);
         status = !ownsRun(store, lease) || (controller.signal.aborted && (request.signal?.aborted || activeEntry.cancelledByUser || (controller.signal.reason as Error)?.name === 'AbortError')) ? 'cancelled'
             : qualified && !providerFailure && (executorPreparation?.task.blockedReason || /^(tool_no_progress|task_budget_exhausted|initial_[a-z_]+)/.test(errorMessage)) ? 'blocked'
                 : !executorPreparation && results.length > 0 ? 'degraded' : 'failed';
@@ -571,7 +613,7 @@ const run = async (
             phase: STAGES[nextStageIndex]?.initialAnalysis.phase,
         });
     } finally {
-        if(qualified&&!pendingApproval&&ownsRun(store,lease)&&!lease.signal.aborted&&(status==='failed'||status==='blocked')){
+        if(qualified&&!headerGateBlocked&&!pendingApproval&&ownsRun(store,lease)&&!lease.signal.aborted&&(status==='failed'||status==='blocked')){
             // Retain consumed provider/tool counters without converting an uncertain stage into a stable boundary.
             try {await persistCheckpoint(readCheckpoint(request.appSessionId)?.pendingStageIndex ?? null);}
             catch { /* The original failure and last durable checkpoint remain the recovery boundary. */ }
@@ -599,7 +641,7 @@ const run = async (
     // Cancellation may finalize its own session, but ordinary cancelled writes remain fenced.
     store = originalStore;
     const finalDatasetVersion = getCurrentAnalysisDatasetVersion(store.getState()) ?? request.datasetVersion;
-    const trustedCardIds = resolveAnalysisCompletionGate({
+    const trustedCardIds = headerGateBlocked ? [] : resolveAnalysisCompletionGate({
         cards: qualified?store.getState().analysisCards.filter(c=>stageReceipts.some(r=>r.toolName==='analysis.executeEvidence'&&r.cardIds.includes(c.id))):store.getState().analysisCards,
         currentDatasetVersion: finalDatasetVersion,
         columnProfiles: store.getState().columnProfiles,
@@ -632,6 +674,7 @@ const run = async (
         && store.getState().reportStructureResolution && store.getState().rawIntakeIr) {
         store.getState().setIsReportBoundaryConfirmModalOpen?.(true);
     }
+    if (headerGateBlocked) store.getState().addProgress?.(errorMessage, 'warning');
     updateAgentTaskStatus(store, {
         status: status === 'failed' || noUsableResults ? 'error' : 'done',
         title: pendingApproval?'Dataset candidate ready for review':status==='blocked'?'Analysis blocked':noUsableResults ? 'Unable to reliably analyze'
@@ -664,10 +707,11 @@ const run = async (
         warnings,
         runtimeRunId,
         traceId,
+        ...(headerAlignmentDiagnostic ? { headerAlignmentDiagnostic } : {}),
         ...(status === 'failed'||status==='blocked'&&!pendingApproval ? { error: {
             code: 'pi_initial_analysis_failed',
             message: errorMessage || 'Pi did not complete the governed analysis.',
-            retryable: true,
+            retryable: !headerGateBlocked,
         } } : {}),
     };
 };

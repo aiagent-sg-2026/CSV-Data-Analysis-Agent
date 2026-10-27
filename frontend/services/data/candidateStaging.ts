@@ -219,6 +219,42 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
         if (verdict.decision === 'validated') recoveryInputs.set(id, freeze(structuredClone(inputs)));
         return receipt;
     };
+    // The caller's digest is only a stale-view precondition; authority remains in validations.
+    // Preview never survives the staging lease and is not an accepted dataset or answer evidence.
+    const preview=(id:string,tableName:string,receiptDigest:string,offset=0,limit=50)=>{
+        policyCheck('candidate.read');
+        if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>50)throw new Error('preview_bounds_invalid');
+        const c=current(id),receipt=validationReceipt(id);
+        if(!receipt||receipt.decision!=='validated'||receipt.receiptDigest!==receiptDigest
+            ||receipt.candidateId!==id||receipt.namespaceId!==namespaceId||receipt.changeDigest!==c.changeDigest
+            ||receipt.lineageDigest!==c.lineageDigest||receipt.outputDigest!==c.outputArtifacts[0].sha256
+            ||receipt.sessionId!==c.sessionId||receipt.sessionEpoch!==c.sessionEpoch)throw new Error('validation_failed');
+        const table=c.tables.find(t=>t.name===tableName);if(!table)throw new Error('candidate_table_unavailable');
+        if(offset>table.rowCount)throw new Error('preview_bounds_invalid');
+        const result={label:'draft_uncommitted' as const,candidateId:id,tableName:table.name,validationReceiptDigest:receipt.receiptDigest,changeDigest:c.changeDigest,
+            sessionId:c.sessionId,sessionEpoch:c.sessionEpoch,protectedSource:c.protectedSource,
+            // Immutable sources have no independent version counter: their SHA-256 is their content version.
+            sourceSha256:c.protectedSource?.sha256??null,sourceVersion:c.protectedSource?.sha256??null,inputBindings:c.inputBindings,
+            offset,totalRows:table.rowCount,rows:[] as typeof table.rows,lineageSamples:[] as typeof table.lineage,
+            truncated:false,lineageTruncated:false,answerEvidence:false as const};
+        const size=()=>new TextEncoder().encode(JSON.stringify(result)).byteLength;
+        if(size()>64*1024)throw new Error('resource_limit');
+        const end=Math.min(table.rowCount,offset+limit);
+        for(let index=offset;index<end;index++){
+            result.rows.push(table.rows[index]);
+            if(size()>64*1024){result.rows.pop();break;}
+        }
+        result.truncated=offset+result.rows.length<table.rowCount;
+        for(const lineage of table.lineage){
+            if(lineage.row<offset||lineage.row>=offset+result.rows.length)continue;
+            if(result.lineageSamples.length>=50){result.lineageTruncated=true;break;}
+            result.lineageSamples.push(lineage);
+            if(size()>64*1024){result.lineageSamples.pop();result.lineageTruncated=true;break;}
+        }
+        // Changing false to true shortens JSON; nevertheless enforce the bound on the exact response.
+        if(size()>64*1024)throw new Error('resource_limit');
+        return freeze(result);
+    };
     const diff=(id:string,againstId?:string)=>{
         policyCheck('candidate.diff');
         const c=current(id),before=againstId?current(againstId):undefined;
@@ -259,7 +295,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
         if (!validationBinding || receipt?.decision!=='validated' || !inputs) throw new Error('recovery_metadata_unavailable');
         return { binding:structuredClone(validationBinding), inputs:structuredClone(inputs), execution:c.execution };
     };
-    return Object.freeze({namespaceId,stage,read,diff,validate,validationReceipt,validationRequirements,bindInferredMeaning,captureCommitCheck,captureRecovery,
+    return Object.freeze({namespaceId,stage,read,diff,validate,validationReceipt,validationRequirements,bindInferredMeaning,captureCommitCheck,captureRecovery,preview,
         suspend:()=>{own();suspended=true;},list:()=>{own();return [...candidates.keys()].map(current);},
         abandon:(id:string)=>{policyCheck('candidate.abandon');const c=candidates.get(id);if(!c)throw new Error('candidate_unavailable');candidates.delete(id);differences.delete(id);validations.delete(id);validationChecks.delete(id);validationAttempts.delete(id);recoveryInputs.delete(id);
             bytes-=new TextEncoder().encode(workspace.read(c.outputArtifacts[0].path,c.outputArtifacts[0].revision).content).byteLength;

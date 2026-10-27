@@ -18,8 +18,8 @@ const guest={run:(code,inputJson,options)=>executeQuickJsGuest({generation:1,cod
 const output=()=>({schemaVersion:1,complete:true,tables:[{name:'facts',role:'fact',schema:[{name:'Name',dataType:'string',nullable:false},{name:'Amount',dataType:'number',nullable:false}],rowCount:2,
     rows:[{Name:'Total Solutions',Amount:0},{Name:'Detail',Amount:-5}],lineage:[0,1].flatMap(row=>['Name','Amount'].map(column=>({row,column,origins:[{kind:'table',name:'input',row,column}]})))}],relationships:[],
     excludedRows:[{origin:{kind:'table',name:'input',row:2},reason:'declared subtotal'}]});
-const setup=async(value:unknown=output(),raw?:{text:string;length?:number},stream=false,contract?:CandidateValidationContract,initial=false)=>{
-    const data={fileName:'synthetic.csv',data:[{Name:'Total Solutions',Amount:0},{Name:'Detail',Amount:-5},{Name:'Subtotal',Amount:-5}]};
+const setup=async(value:unknown=output(),raw?:{text:string;length?:number},stream=false,contract?:CandidateValidationContract,initial=false,firstName='Total Solutions',tableWithSource=false)=>{
+    const data={fileName:'synthetic.csv',data:[{Name:firstName,Amount:0},{Name:'Detail',Amount:-5},{Name:'Subtotal',Amount:-5}]};
     const bundle=createSingleTableDatasetBundle({datasetId:'synthetic',sourceFingerprint:'synthetic',file:{name:data.fileName,size:0,lastModified:0},data});
     let state={sessionId:'synthetic',csvData:data,canonicalCsvData:data,datasetBundle:bundle,columnProfiles:[],analysisCards:[],activeDataQuery:null,workspaceFiles:{},settings:{runtimeAccessControl:{permissionMode:'open',toolOverrides:{},workspaceRules:{deniedPathPrefixes:[]}}}} as unknown as ReturnType<StoreApi['getState']>;
     const root:StoreApi={getState:()=>state,setState:p=>{state={...state,...(typeof p==='function'?p(state):p)};}};
@@ -31,7 +31,7 @@ const setup=async(value:unknown=output(),raw?:{text:string;length?:number},strea
     const workspace=store.codeExecution!.workspace;
     const program=await workspace.write('/workspace/program.js',stream?`return {state:null,rows:input.stream.phase==='finish'?[${JSON.stringify(value)}]:[]};`:`return ${JSON.stringify(value)};`,0);
     const request={program:{path:program.path,revision:program.revision,sha256:program.sha256},inputs:[],
-        ...(source?{sources:[{name:'raw',sourceId:source.sourceId,sha256:source.sha256,offset:0,length:raw!.length??source.byteSize}]}:{tables:[{name:'input',tableId:bundle.primaryTableId}]}),
+        ...(source&&!tableWithSource?{sources:[{name:'raw',sourceId:source.sourceId,sha256:source.sha256,offset:0,length:raw!.length??source.byteSize}]}:{tables:[{name:'input',tableId:bundle.primaryTableId}]}),
         output:{path:'/workspace/output.json',expectedRevision:0,format:'json' as const},...(stream?{mode:'stateful_stream' as const,stream:{table:'input',batchRows:2,partitionBy:[],initialState:null}}:{})};
     const context={lease,toolCallId:'actual-code-call',stepId:'code-step'};
     await prep.task.beforeTool('code.run',request,'actual-code-call');
@@ -43,6 +43,68 @@ const setup=async(value:unknown=output(),raw?:{text:string;length?:number},strea
 };
 describe('immutable candidate staging',()=>{
     const meaning=():CandidateValidationContract=>({version:1,ambiguities:[],tables:[{name:'facts',role:'fact',schema:output().tables[0].schema as never,grain:['Name'],groupBy:[],metrics:[{column:'Amount',scale:2,toleranceMinor:0,unit:'SGD'}],mutableColumns:[],rows:[0,1].map(row=>({cells:['Name','Amount'].map(column=>({column,origin:{kind:'table',name:'input',row,column},conversion:'identity'}))}))}],relationships:[],exclusions:[{origin:{kind:'table',name:'input',row:2},role:'subtotal',checks:[{column:'Amount',table:'facts',detailRows:[0,1],metric:'Amount'}]}]});
+    it('exposes only a bounded isolated preview backed by the current host receipt',async()=>{
+        const s=await setup(output(),undefined,false,meaning()),before=JSON.stringify(s.root.getState());
+        try{const c=await s.stage();
+            expect(()=>s.port.preview(c.candidateId,'facts','forged')).toThrow('validation_failed');
+            const v=await s.port.validate(c.candidateId,{lease:s.lease,toolCallId:'v',stepId:'v'});
+            expect(()=>s.port.preview(c.candidateId,'facts','forged')).toThrow('validation_failed');
+            const p=s.port.preview(c.candidateId,'facts',v.receiptDigest,0,1);
+            expect(p).toMatchObject({label:'draft_uncommitted',candidateId:c.candidateId,validationReceiptDigest:v.receiptDigest,sourceSha256:null,sourceVersion:null,inputBindings:c.inputBindings,rows:[output().tables[0].rows[0]],totalRows:2,truncated:true,lineageTruncated:false,answerEvidence:false});
+            expect(p.lineageSamples).toEqual(output().tables[0].lineage.filter(l=>l.row===0));
+            expect(Object.isFrozen(p.rows)).toBe(true);
+            const second=s.port.preview(c.candidateId,'facts',v.receiptDigest,1,1);
+            expect(second.rows).toEqual([output().tables[0].rows[1]]);
+            expect(second.lineageSamples).toEqual(output().tables[0].lineage.filter(l=>l.row===1));
+            expect(()=>s.port.preview(c.candidateId,'facts',v.receiptDigest,0,51)).toThrow('preview_bounds_invalid');
+            expect(()=>s.port.preview(c.candidateId,'facts',v.receiptDigest,-1)).toThrow('preview_bounds_invalid');
+            expect(()=>s.port.preview(c.candidateId,'missing',v.receiptDigest)).toThrow('candidate_table_unavailable');
+            const next=await s.port.validate(c.candidateId,{lease:s.lease,toolCallId:'v2',stepId:'v2'});
+            expect(()=>s.port.preview(c.candidateId,'facts',v.receiptDigest)).toThrow('validation_failed');
+            expect(s.port.preview(c.candidateId,'facts',next.receiptDigest).rows).toHaveLength(2);
+            expect(JSON.stringify(s.root.getState())).toBe(before);
+            s.port.abandon(c.candidateId);expect(()=>s.port.preview(c.candidateId,'facts',next.receiptDigest)).toThrow('candidate_unavailable');
+        }finally{s.cleanup();}
+    });
+    it('caps serialized preview bytes even for a single oversized multibyte row',async()=>{
+        const name='界'.repeat(30000),value=output();value.tables[0].rows[0].Name=name;
+        const s=await setup(value,undefined,false,meaning(),false,name);
+        try{const c=await s.stage(),v=await s.port.validate(c.candidateId,{lease:s.lease,toolCallId:'v',stepId:'v'});
+            expect(v.decision).toBe('validated');const p=s.port.preview(c.candidateId,'facts',v.receiptDigest);
+            expect(p.rows).toEqual([]);expect(p.truncated).toBe(true);
+            expect(new TextEncoder().encode(JSON.stringify(p)).byteLength).toBeLessThanOrEqual(64*1024);
+        }finally{s.cleanup();}
+    });
+    it('fails closed for blocked and clarification verdicts, drift, denied access and suspended leases',async()=>{
+        const bad=output();bad.tables[0].rows[0].Amount=999;
+        for(const [value,contract] of [[bad,meaning()],[output(),undefined]] as const){
+            const s=await setup(value,undefined,false,contract);try{const c=await s.stage(),v=await s.port.validate(c.candidateId,{lease:s.lease,toolCallId:'v',stepId:'v'});
+                expect(v.decision).not.toBe('validated');expect(()=>s.port.preview(c.candidateId,'facts',v.receiptDigest)).toThrow('validation_failed');
+            }finally{s.cleanup();}
+        }
+        const s=await setup(output(),undefined,false,meaning());try{const c=await s.stage(),v=await s.port.validate(c.candidateId,{lease:s.lease,toolCallId:'v',stepId:'v'});
+            const settings=s.root.getState().settings;
+            s.root.setState({settings:{...settings,runtimeAccessControl:{...settings.runtimeAccessControl,toolOverrides:{'candidate.read':'deny'}}} as never});
+            expect(()=>s.port.preview(c.candidateId,'facts',v.receiptDigest)).toThrow('capability_unavailable');
+            s.root.setState({settings});s.root.getState().csvData!.data[0].Amount=123;
+            expect(()=>s.port.preview(c.candidateId,'facts',v.receiptDigest)).toThrow('input_version_changed');
+        }finally{s.cleanup();}
+        const t=await setup(output(),undefined,false,meaning());try{const c=await t.stage(),v=await t.port.validate(c.candidateId,{lease:t.lease,toolCallId:'v',stepId:'v'});
+            t.port.suspend();expect(()=>t.port.preview(c.candidateId,'facts',v.receiptDigest)).toThrow('scope_revoked');
+        }finally{t.cleanup();}
+    });
+    it('rejects preview after source hash, dataset version or session epoch changes',async()=>{
+        const s=await setup(output(),{text:'Name,Amount\nTotal Solutions,0\nDetail,-5\nSubtotal,-5\n'},false,meaning(),false,'Total Solutions',true);
+        try{const c=await s.stage(),v=await s.port.validate(c.candidateId,{lease:s.lease,toolCallId:'v',stepId:'v'}),bundle=s.root.getState().datasetBundle!;
+            expect(s.port.preview(c.candidateId,'facts',v.receiptDigest)).toMatchObject({sourceSha256:s.source!.sha256,sourceVersion:s.source!.sha256});
+            s.root.setState({datasetBundle:{...bundle,source:{...bundle.source,inspection:{...bundle.source.inspection!,sha256:'0'.repeat(64)}}}});
+            expect(()=>s.port.preview(c.candidateId,'facts',v.receiptDigest)).toThrow('input_version_changed');
+            s.root.setState({datasetBundle:{...bundle,tables:bundle.tables.map(t=>({...t,datasetVersion:`${t.datasetVersion}-changed`}))}});
+            expect(()=>s.port.preview(c.candidateId,'facts',v.receiptDigest)).toThrow('input_version_changed');
+            s.root.setState({datasetBundle:bundle});beginSessionTransition(s.root);
+            expect(()=>s.port.preview(c.candidateId,'facts',v.receiptDigest)).toThrow();
+        }finally{s.cleanup();}
+    });
     it('issues an independently bound immutable validation receipt with no accepted-state writer',async()=>{
         const contract=meaning(),s=await setup(output(),undefined,false,contract),before=JSON.stringify(s.root.getState());
         try{contract.tables[0].rows=[];const c=await s.stage();const v=await s.port.validate(c.candidateId,{lease:s.lease,toolCallId:'actual-validation',stepId:'validation-step'});
