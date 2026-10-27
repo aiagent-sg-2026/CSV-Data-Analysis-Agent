@@ -1,4 +1,5 @@
 import { captureCsvSource } from '../data/immutableCsvSource';
+import { bindCsvSourceScan, captureCsvSourceScanFence, scannedCsvSourceMetadata, scanCsvSourceForImport } from '../data/csvSourceScan';
 import {
     CanonicalizationStatus,
     ColumnProfile,
@@ -38,7 +39,7 @@ import { profileDataLightweight } from '../data/dataProfiler';
 import { resolveReportStructureArtifacts } from './reportStructureState';
 import { resolveReportStructureArtifactsWithProposal } from './orchestration/reportStructureOrchestrator';
 import { buildColumnRegistry } from '../data/columnRegistry';
-import { buildDuckDbFileIdentity, createCsvPreviewFile } from '../data/duckDbFileIntake';
+import { createCsvPreviewFile } from '../data/duckDbFileIntake';
 import { primeDuckDbFileDataset } from '../duckdb/queryEngine';
 import { createSingleTableDatasetBundle } from '../data/datasetBundle';
 import { cleanupStaleOpfsSessions, stageDatasetFileInOpfs } from '../data/opfsDatasetStorage';
@@ -47,6 +48,7 @@ const LOG_PREFIX = '[FileProcessor]';
 const SAMPLE_SIZE = 20;
 
 type ProcessResult = {
+    assertSourceCurrent: () => void;
     dataForAnalysis: CsvData;
     rawData: CsvData;
     rawIntakeIr: ReportIntakeIr;
@@ -154,7 +156,17 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
         detail: { fileName: file.name, size: file.size },
     });
 
-    const sourceInspection = await captureCsvSource(store, file);
+    const sourceScan = await scanCsvSourceForImport(store, file);
+    if (sourceScan.status !== 'completed_clean' && sourceScan.status !== 'completed_anomalies') {
+        throw new Error(`Full-source structural scan is unverified: ${sourceScan.reason ?? sourceScan.status}. Re-select the original source after resolving this recoverable limit.`);
+    }
+    // Large-file mode retains the File, not a full byte copy and per-record index.
+    // Legacy source-record/QuickJS tools remain explicitly unavailable for this backing.
+    const sourceInspection = useDuckDbFileIntake
+        ? scannedCsvSourceMetadata(store, file)
+        : await captureCsvSource(store, file);
+    bindCsvSourceScan(store, file, sourceInspection);
+    const assertSourceCurrent = captureCsvSourceScanFence(store, file);
     const sourceSessionId = store.getState().sessionId;
     let sourceDatasetId: string | null = null;
     let parsedData: CsvData;
@@ -164,7 +176,9 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
             type: 'progress',
             message: 'Large-file mode: loading the original CSV directly into the local query engine...',
         };
-        const identity = await buildDuckDbFileIdentity(file);
+        // Head/tail sampling cannot distinguish a same-size middle edit. The complete
+        // scan digest owns the backing identity before the worker may cache a binding.
+        const identity = { loadVersion: `dataset-file-${sourceInspection.sha256}`, datasetVersion: `version-file-${sourceInspection.sha256}` };
         const sessionId = sourceSessionId;
         let opfsPath: string | null = null;
         try {
@@ -225,6 +239,12 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
         );
         parsedData = parsed.csvData;
         intakeIr = parsed.intakeIr;
+    }
+    assertSourceCurrent();
+    if (!useDuckDbFileIntake && intakeIr.detection
+        && ((intakeIr.detection.delimiter ?? ',') !== sourceInspection.dialect.delimiter
+            || (intakeIr.detection.quoteChar ?? '"') !== sourceInspection.dialect.quoteChar)) {
+        throw new Error('scan_intake_dialect_changed_rescan_required');
     }
     if (!parsedData.data || !Array.isArray(parsedData.data)) {
         throw new Error('CSV parsing failed.');
@@ -477,6 +497,19 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
         },
     });
 
+    assertSourceCurrent();
+    if (sourceScan.status === 'completed_anomalies') {
+        // Full-source evidence outranks a clean preview. Raw staging is retained, never
+        // published as canonical or as an independently validated repaired candidate.
+        reportStructureArtifacts.canonicalCsvData = null;
+        reportStructureArtifacts.canonicalBuildMeta = null;
+        reportStructureArtifacts.canonicalizationStatus = 'needs_review';
+        reportStructureArtifacts.pipelineOutcome = {
+            status: 'needs_structure_review', severity: 'warning', canAutoAnalyze: false,
+            reasonCode: 'source_scan_anomalies',
+            message: 'Full-source scan completed with structural anomalies. Automatic repair continuation is required; source size alone does not require human review. No repaired dataset has been validated or committed.',
+        };
+    }
     const materialDataset = reportStructureArtifacts.canonicalCsvData ?? dataForAnalysis;
     const datasetBundle = createSingleTableDatasetBundle({
         datasetId,
@@ -503,7 +536,9 @@ export async function* processAndCleanFile(file: File, store: StoreApi): AsyncGe
     workspaceFiles['/intake/source-records.json'] = JSON.stringify({ source: sourceInspection, readWith: 'workspace.read', startRow: 0, rowCount: 50, note: 'Read positional ranges from the live source handle; metadata-only History requires source reattachment.' }, null, 2);
     console.log(`${LOG_PREFIX} AI-first intake complete for ${file.name}.`);
 
+    assertSourceCurrent();
     return {
+        assertSourceCurrent,
         dataForAnalysis,
         rawData,
         rawIntakeIr,

@@ -5,6 +5,7 @@ import { captureRecoverySource } from '../data/immutableCsvSource';
 import { parseCsvTextWithDetection } from '../data/csvDialectDetector';
 import { sha256Bytes } from '../data/sourceDigest';
 import { solveHeaderAlignment } from './headerAlignment';
+import { assertCsvScanPublicationAllowed, requireCurrentCsvSourceScan } from '../data/csvSourceScan';
 import { assertSessionResourceActive, captureSessionScope, ownsSessionScope, registerSessionResource, type SessionScope } from '../session/sessionOwnership';
 
 type Entry = { view: StructureRepairReview; signature: string };
@@ -71,6 +72,7 @@ export const captureLegacyBoundaryFence = (store: StoreApi): (() => void) => {
     const expected = binding();
     return () => {
         assertSessionResourceActive(store, scope);
+        assertCsvScanPublicationAllowed(store);
         if (isStructureRepairRequired(store)) throw new Error('repair_requires_semantic_review_and_separate_exact_commit');
         const state = store.getState();
         if (state.rawIntakeIr !== intake || state.rawCsvData !== rawCsv || binding() !== expected) throw new Error('repair_source_changed');
@@ -79,6 +81,7 @@ export const captureLegacyBoundaryFence = (store: StoreApi): (() => void) => {
 
 /** Guard the action, not just its button. A candidate cannot take the old canonicalization route. */
 export const assertLegacyBoundaryAllowed = async (store: StoreApi): Promise<void> => {
+    assertCsvScanPublicationAllowed(store);
     if (isStructureRepairRequired(store)) throw new Error('repair_requires_semantic_review_and_separate_exact_commit');
     const fence = captureLegacyBoundaryFence(store);
     const scope = captureSessionScope(store), intake = store.getState().rawIntakeIr;
@@ -87,6 +90,12 @@ export const assertLegacyBoundaryAllowed = async (store: StoreApi): Promise<void
     const result = await solveHeaderAlignment(structuredClone(intake));
     fence();
     if (!store.getState().rawIntakeIr || signature(store.getState().rawIntakeIr!) !== inputSignature) throw new Error('repair_source_changed');
+    if (result.status === 'no_candidates' && (result.ambiguities.includes('header_scan_limited')
+        || store.getState().csvData?.backing?.mode === 'duckdb_file')) {
+        const scanned = await requireCurrentCsvSourceScan(store);
+        fence();
+        if (scanned.status !== 'completed_clean') throw new Error('source_scan_requires_automatic_repair_or_resume');
+    }
     if (result.status === 'semantic_review_required') repairRequired.add(scope);
     if (isStructureRepairRequired(store) || result.status === 'unsupported') throw new Error('repair_requires_semantic_review_and_separate_exact_commit');
 };

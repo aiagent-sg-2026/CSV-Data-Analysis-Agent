@@ -7,7 +7,7 @@ import { inspectInitialHeaderAlignment } from '../services/agent/runtime/pi/piHe
 import { runPiInitialAnalysis } from '../services/agent/runtime/pi/piInitialAnalysisRuntimeService';
 import { beginSessionTransition } from '../services/session/sessionOwnership';
 import { captureCsvSource } from '../services/data/immutableCsvSource';
-import { confirmStructureRepairMeaning, resumeStructureRepairDraft } from '../services/agent/structureRepairConfirmation';
+import { assertLegacyBoundaryAllowed, confirmStructureRepairMeaning, resumeStructureRepairDraft } from '../services/agent/structureRepairConfirmation';
 
 const intake = (rows: string[][]) => buildReportIntakeIr('synthetic.csv', rows,
     parseCsvTextWithDetection(rows.map(row => row.join(',')).join('\n')).detection);
@@ -49,6 +49,17 @@ describe('qualified initial header diagnostic gate', () => {
         const drift = intake([['A','B','C','D'], ['1','2','3','4'], ['5','6','7','8']]);
         drift.diagnostics.headerShapeDrift = true;
         expect((await inspectInitialHeaderAlignment(drift, undefined)).summary).toContain('no reliable alignment');
+    });
+    it('does not accept a limited negative with a late compact header and no original source', async () => {
+        const rows = intake([...Array.from({ length: 128 }, () => ['preamble']),
+            ['ID','G1','G2','G1','G2'], ['X','Y','X','Y'],
+            ['1','2','3','4','5','6','7'], ['2','3','4','5','6','7','8']]);
+        rows.diagnostics.headerShapeDrift = false;
+        expect(await inspectInitialHeaderAlignment(rows, undefined)).toMatchObject({ blocked: true });
+        let state = { sessionId: crypto.randomUUID(), rawIntakeIr: rows } as ReturnType<StoreApi['getState']>;
+        const store: StoreApi = { getState: () => state, setState: patch => { state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) }; } };
+        try { await expect(assertLegacyBoundaryAllowed(store)).rejects.toThrow(); }
+        finally { beginSessionTransition(store); }
     });
     it('prepares a bound human review on the real runtime block and permits only local draft resume', async () => {
         const rows = repeated();

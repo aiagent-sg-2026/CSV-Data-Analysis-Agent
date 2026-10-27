@@ -11,6 +11,8 @@ import { resolveReportStructureArtifactsWithProposal } from '../services/agent/o
 import { createInitialAnalysisStageExecutors } from '../services/agent/runtime/pi/initialAnalysisStageExecutors';
 import { HUMAN_CONFIRMABLE_VERIFICATION_SIGNALS, resolvePipelineOutcome } from '../services/agent/pipelineOutcomeResolver';
 import { createCleaningRun, updateCleaningRun } from '../services/agent/cleaningRunState';
+import { captureCsvSource } from '../services/data/immutableCsvSource';
+import { beginSessionTransition } from '../services/session/sessionOwnership';
 import { describeInitialAnalysisFailure } from '../services/agent/runtime/pi/initialAnalysisFailure';
 import { getPipelineOutcomeUserText, getTranslation } from '../utils/localization';
 import { createTestSettings } from './testSettings';
@@ -38,6 +40,7 @@ const plan = {
 let intake: Awaited<ReturnType<typeof processCsvWithIntakeIr>>;
 let rawCsvData: CsvData;
 let blocked: Awaited<ReturnType<typeof resolveReportStructureArtifactsWithProposal>>;
+let ordinary: { intake: typeof intake; rawCsvData: CsvData; blocked: typeof blocked };
 
 const toBoundary = (resolution: ReportStructureResolution) => ({
     headerRowIndex: resolution.headerRowIndex,
@@ -69,7 +72,8 @@ const realCleaningFailure = () => ({
     shouldAutoResume: false,
 });
 
-const createStore = (initialCleaningRun: Record<string, unknown> = analysisStopMarker()) => {
+const createStore = (initialCleaningRun: Record<string, unknown> = analysisStopMarker(), fixture = ordinary) => {
+    const { intake, rawCsvData, blocked } = fixture;
     let state: Record<string, any> = {
         sessionId: 'session-test',
         currentDatasetId: 'dataset-test',
@@ -127,25 +131,34 @@ beforeAll(async () => {
         columnProfiles: profileData(intake.csvData.data).profiles,
         settings: createTestSettings(),
     });
+    // Legacy boundary/cleaning-marker behavior still applies to ordinary unchanged CSVs.
+    // ERP raw anomalies now require the automatic scan/repair path, tested separately below.
+    const cleanFile = new File(['Entity,Category,Quantity,Amount\n' + Array.from({ length: 40 }, (_, i) => `Item ${i},Group ${i % 3},${i + 1},${(i + 1) * 10}\n`).join('')], 'ordinary.csv');
+    const cleanIntake = await processCsvWithIntakeIr(cleanFile);
+    const cleanRaw = buildCsvDataFromIntakeIr(cleanIntake.intakeIr);
+    const cleanArtifacts = await resolveReportStructureArtifactsWithProposal({
+        rawCsvData: cleanRaw, csvData: cleanIntake.csvData, rawIntakeIr: cleanIntake.intakeIr,
+        cleaningRun: null, dataPreparationPlan: plan, columnProfiles: profileData(cleanIntake.csvData.data).profiles, settings: createTestSettings(),
+    });
+    ordinary = { intake: cleanIntake, rawCsvData: cleanRaw, blocked: cleanArtifacts };
 });
 
-describe('human structure confirmation on the ERP outstanding-orders report', () => {
+describe('human structure confirmation and full-source ERP scan safety', () => {
     it('needs no review on the first pass once body noise and folded header layers are handled, and shows no raw code', () => {
-        // Before the intake fixes this report stopped at structure review (page-break rows, subtotals and a
-        // two-row header). The confirm tests below still start from this resolution's own boundary, so they
-        // cover the stale-failed-cleaning-run path whether or not a review was needed.
+        // Intake still recognizes the ERP report. Full-source scan authorization is tested
+        // independently below; ordinary boundary tests retain the cleaning-marker regression.
         expect(blocked.pipelineOutcome).toMatchObject({ status: 'ready', canAutoAnalyze: true });
         expect(blocked.pipelineOutcome?.message ?? '').not.toMatch(SNAKE_CASE_CODE);
     });
 
-    it('starts the analysis after the user confirms, even though the blocked attempt left the cleaning run failed', async () => {
+    it('starts ordinary analysis after confirmation even though a blocked attempt left the cleaning run failed', async () => {
         const { getState, setState, progress } = createStore();
-        const boundary = toBoundary(blocked.reportStructureResolution!);
+        const boundary = toBoundary(getState().reportStructureResolution!);
 
         await getState().saveReportStructureBoundaryOverride(boundary);
 
         expect(getState().reportStructureResolution.source).toBe('human_confirmed');
-        expect(getState().pipelineOutcome).toMatchObject({ status: 'ready', canAutoAnalyze: true });
+        expect(getState().pipelineOutcome, JSON.stringify(getState().pipelineOutcome)).toMatchObject({ status: 'ready', canAutoAnalyze: true });
         expect(getState().handleInitialAnalysis).toHaveBeenCalledTimes(1);
         // Continue cleaning must keep working: the earlier failure and its text are not rewritten.
         expect(getState().cleaningRun).toMatchObject({ status: 'failed', lastError: analysisStopMarker().lastError });
@@ -162,6 +175,20 @@ describe('human structure confirmation on the ERP outstanding-orders report', ()
         const gate = await executors['dataset.validatePreparedData'](context, {});
         expect(gate.decision).toBe('pass');
         expect(gate.warningCodes).toEqual([]);
+    });
+
+    it('does not let legacy confirmation publish ERP data when the original full scan finds anomalies', async () => {
+        const store = createStore(analysisStopMarker(), { intake, rawCsvData, blocked });
+        try {
+            const metadata = await captureCsvSource(store as never, new File([fs.readFileSync(FIXTURE)], 'w1_erp_outstanding.csv'));
+            store.setState({ datasetBundle: { source: { inspection: metadata } } });
+            const canonicalBefore = store.getState().canonicalCsvData;
+            await expect(store.getState().saveReportStructureBoundaryOverride(toBoundary(blocked.reportStructureResolution!))).rejects.toThrow('source_scan_requires_automatic_repair_or_resume');
+            expect(store.getState().handleInitialAnalysis).not.toHaveBeenCalled();
+            expect(store.getState().canonicalCsvData).toBe(canonicalBefore);
+            expect(store.getState().csvSourceScan.status).toBe('completed_anomalies');
+            expect(store.getState().csvSourceScan.bytesRead).toBe(metadata.byteSize);
+        } finally { beginSessionTransition(store as never); }
     });
 
     it('explains a block that confirmation cannot clear in plain words and keeps the code out of the text', () => {
@@ -245,7 +272,7 @@ describe('a real cleaning failure is not mistaken for the analysis-stop marker',
     it('keeps blocking a confirmation, starts nothing and leaves the failure text and detail alone', async () => {
         const { getState } = createStore(realCleaningFailure());
         const before = structuredClone(realCleaningFailure());
-        await getState().saveReportStructureBoundaryOverride(toBoundary(blocked.reportStructureResolution!));
+        await getState().saveReportStructureBoundaryOverride(toBoundary(getState().reportStructureResolution!));
 
         expect(getState().pipelineOutcome).toMatchObject({ status: 'cleaning_failed', canAutoAnalyze: false });
         expect(getState().handleInitialAnalysis).not.toHaveBeenCalled();

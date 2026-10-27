@@ -93,7 +93,7 @@ export const beginSessionTransition = (store: StoreApi): number => {
     current.scope = { sessionId: current.scope.sessionId, epoch: current.scope.epoch + 1 };
     current.transition += 1;
     retireResources(outgoing);
-    current.store.setState({ structureRepairReview: null, activeExecution: null, activeAgentTask: null, taskInspection: null, streamingMessage: null,
+    current.store.setState({ csvSourceScan: null, structureRepairReview: null, activeExecution: null, activeAgentTask: null, taskInspection: null, streamingMessage: null,
         activeTurn: null, isBusy: true, isGeneratingReport: false, aiTaskStatus: null,
         initialAnalysisStatus: current.store.getState().initialAnalysisStatus === 'running' ? 'paused' : current.store.getState().initialAnalysisStatus });
     return current.transition;

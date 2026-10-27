@@ -28,7 +28,7 @@ import { orchestrateAutonomousAiCleaning } from './autonomousCleaningPipeline';
 // Define the update types the orchestrator can produce
 export type FileOrchestrationUpdate = 
   | { type: 'progress'; message: string; messageType?: 'system' | 'warning' | 'error'; model?: string }
-  | { type: 'state'; payload: Partial<AppStore> };
+  | { type: 'state'; payload: Partial<AppStore>; assertCurrent?: () => void };
 
 const LOG_PREFIX = '[FileOrchestrator]';
 
@@ -340,6 +340,7 @@ export async function* orchestrateFileUpload(
     const processorResult = yield* processor;
 
     let {
+        assertSourceCurrent,
         dataForAnalysis,
         rawData,
         rawIntakeIr,
@@ -467,7 +468,8 @@ export async function* orchestrateFileUpload(
     // Step 3: Process the result and continue orchestration.
     // Unlock the UI as soon as data is ready.
     if (!ownsSessionScope(store, scope)) return;
-    yield { type: 'state', payload: { 
+    assertSourceCurrent?.();
+    yield { type: 'state', assertCurrent: assertSourceCurrent, payload: {
         csvData: dataForAnalysis,
         rawCsvData: rawData,
         rawIntakeIr,
@@ -519,6 +521,7 @@ export async function* orchestrateFileUpload(
     // one browser task to paint it before the Pi lifecycle starts its own
     // CPU- and promise-heavy stage chain.
     await yieldToBrowser();
+    assertSourceCurrent?.();
 
     void memoryHistoryPromise.then(memoryHistory => {
         const activeScope = getState().reportMemoryScope;

@@ -67,7 +67,7 @@ const buildStore = () => {
     return {
         store: {
             getState: () => state,
-            setState: vi.fn(),
+            setState: vi.fn((patch: any) => Object.assign(state, typeof patch === 'function' ? patch(state) : patch)),
         },
         agentEvents,
     };
@@ -504,13 +504,16 @@ describe('processAndCleanFile', () => {
         });
         profileDataWithWorkerMock.mockResolvedValue({ profiles: [], issues: [] });
         extractAiReportContextMock.mockResolvedValue(null);
-        const file = new File(['month,town,resale_price\n1990-01,ANG MO KIO,9000'], 'large.csv');
-        Object.defineProperty(file, 'size', { value: 26 * 1024 * 1024 });
+        // Real retained bytes: a forged size is not valid streaming/source evidence.
+        const file = new File(['month,town,resale_price\n' + `1990-01,${'A'.repeat(1000)},9000\n`.repeat(27000)], 'large.csv');
+        file.arrayBuffer = () => { throw new Error('Large source must not be buffered in full'); };
 
         const { store } = buildStore();
         const { result, updates } = await consumeGeneratorWithUpdates(processAndCleanFile(file, store as any));
 
         expect(primeDuckDbFileDatasetMock).toHaveBeenCalledOnce();
+        expect(store.getState().csvSourceScan).toMatchObject({ status: 'completed_clean', rows: 27001, bytesRead: file.size });
+        expect(primeDuckDbFileDatasetMock.mock.calls[0][1]).toBe(`dataset-file-${result.datasetBundle.source.inspection?.sha256}`);
         expect(result.dataForAnalysis.data).toHaveLength(2);
         expect(result.dataForAnalysis.backing).toMatchObject({
             mode: 'duckdb_file',
@@ -522,6 +525,46 @@ describe('processAndCleanFile', () => {
         });
         expect(result.dataQualityIssues.join(' ')).toContain('982,589 source rows');
         expect(updates.some(update => String(update.message).includes('Loaded all 982,589'))).toBe(true);
+    });
+
+    it('does not publish a clean canonical preview when the full source has a late repeated header', async () => {
+        const csv = 'key,value\n' + 'x,1\n'.repeat(9000) + 'key,value\n';
+        const { parseCsvTextWithDetection } = await import('../services/data/csvDialectDetector');
+        const { buildReportIntakeIr } = await import('../services/data/reportCsvIntake');
+        const parsed = parseCsvTextWithDetection('key,value\nx,1\n');
+        const preview = { fileName: 'late.csv', data: [{ key: 'x', value: '1' }] };
+        processCsvWithIntakeIrMock.mockResolvedValue({ csvData: preview, intakeIr: buildReportIntakeIr('late.csv', parsed.rawRows, parsed.detection) });
+        profileDataWithWorkerMock.mockResolvedValue({ profiles: [], issues: [] });
+        extractAiReportContextMock.mockResolvedValue(null);
+        resolveReportStructureArtifactsWithProposalMock.mockResolvedValue({ canonicalCsvData: preview, canonicalBuildMeta: {}, canonicalizationStatus: 'ready', pipelineOutcome: { status: 'ready', canAutoAnalyze: true } });
+        const { store } = buildStore();
+        const result = await consumeGenerator(processAndCleanFile(new File([csv], 'late.csv'), store as any));
+        expect(result.canonicalCsvData).toBeNull();
+        expect(result.canonicalBuildMeta).toBeNull();
+        expect(result.pipelineOutcome).toMatchObject({ canAutoAnalyze: false, reasonCode: 'source_scan_anomalies' });
+        expect(result.datasetBundle.acceptedCommit).toBeUndefined();
+        expect(store.getState().csvSourceScan).toMatchObject({ status: 'completed_anomalies', rows: 9002, counts: { repeated_header: 1 } });
+    });
+
+    it('rejects an old completed scan when the source is replaced during asynchronous structure resolution', async () => {
+        const { parseCsvTextWithDetection } = await import('../services/data/csvDialectDetector');
+        const { buildReportIntakeIr } = await import('../services/data/reportCsvIntake');
+        const { scanCsvSourceForImport } = await import('../services/data/csvSourceScan');
+        const parsed = parseCsvTextWithDetection('key,value\nx,1\n');
+        const preview = { fileName: 'old.csv', data: [{ key: 'x', value: '1' }] };
+        processCsvWithIntakeIrMock.mockResolvedValue({ csvData: preview, intakeIr: buildReportIntakeIr('old.csv', parsed.rawRows, parsed.detection) });
+        profileDataWithWorkerMock.mockResolvedValue({ profiles: [], issues: [] });
+        extractAiReportContextMock.mockResolvedValue(null);
+        let release!: (value: unknown) => void;
+        resolveReportStructureArtifactsWithProposalMock.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+        const { store } = buildStore();
+        const pending = consumeGenerator(processAndCleanFile(new File(['key,value\nx,1\n'], 'old.csv'), store as any));
+        for (let i = 0; i < 200 && !release; i += 1) await new Promise(resolve => setTimeout(resolve, 1));
+        expect(release).toBeTypeOf('function');
+        await scanCsvSourceForImport(store as any, new File(['key,value\nx,2\n'], 'old.csv'));
+        release({ canonicalCsvData: preview, canonicalBuildMeta: {}, canonicalizationStatus: 'ready', pipelineOutcome: { status: 'ready', canAutoAnalyze: true } });
+        await expect(pending).rejects.toThrow('scan_source_replaced');
+        expect(store.getState().canonicalCsvData).toBeUndefined();
     });
 
     it('rejects parsed datasets that exceed the desktop row limit before profiling', async () => {

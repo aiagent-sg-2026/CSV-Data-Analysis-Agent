@@ -11,6 +11,7 @@ import {
 import { suggestColumnRoles } from '../../services/data/columnRoleSuggestion';
 import { formatSetAsideRowCounts } from '../../utils/setAsideTables';
 import { StructureRepairReviewPanel } from './StructureRepairReviewPanel';
+import { CsvSourceScanPanel } from '../CsvSourceScanPanel';
 
 type BusinessRole = 'dimension' | 'metric' | 'identifier' | 'helper';
 const ROLE_OPTIONS: Array<{ value: BusinessRole; labelKey: string }> = [
@@ -38,8 +39,9 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
     const csvData = useAppStore(s => s.csvData);
     const semanticSnapshot = useAppStore(s => s.datasetSemanticSnapshot);
     const repairReview = useAppStore(s => s.structureRepairReview);
-    const repairRequired = rawIntakeIr?.diagnostics?.headerShapeDrift === true
+    const semanticReviewRequired = rawIntakeIr?.diagnostics?.headerShapeDrift === true
         || pipelineOutcome?.reasonCode === 'header_shape_drift' || Boolean(repairReview);
+    const repairRequired = semanticReviewRequired || pipelineOutcome?.reasonCode === 'source_scan_anomalies';
 
     const [bodyStart, setBodyStart] = useState(0);
     const [summaryStart, setSummaryStart] = useState<number | null>(null);
@@ -99,7 +101,8 @@ export const ReportBoundaryConfirmModal: React.FC = () => {
             <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="repair-review-title" tabIndex={-1}
                 onClick={event => event.stopPropagation()} className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-auto p-6 space-y-4">
                 <h2 id="repair-review-title" className="text-base font-semibold">{reportStructureResolution ? t('guided_repair_title') : 'Review structural interpretations'}</h2>
-                <StructureRepairReviewPanel />
+                <CsvSourceScanPanel />
+                {semanticReviewRequired && <StructureRepairReviewPanel />}
                 <p className="text-sm text-amber-950">Boundary confirmation cannot approve structural repair. Full validation and separate exact Dataset Commit approval remain required.</p>
                 <div className="flex justify-end gap-3">
                     <button onClick={handleClose} className="rounded border px-4 py-2 text-sm">Cancel</button>

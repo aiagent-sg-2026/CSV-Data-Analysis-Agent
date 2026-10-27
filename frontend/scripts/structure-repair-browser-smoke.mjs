@@ -92,6 +92,44 @@ try {
     assert.equal(await page.getByRole('heading', { name: 'Draft / Uncommitted — not validated' }).count(), 0);
     await page.screenshot({ path: `${artifacts}/new-simple-file.png` });
     evidence.scenarios.push('New file: old draft absent; simple four-column local import does not require semantic review');
+    await page.getByRole('button', { name: 'New', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Start a new analysis?' }).getByRole('button', { name: 'Start new analysis', exact: true }).click();
+    await page.getByText('Select a file', { exact: true }).waitFor();
+    const streamText = 'Key,Description,Quantity,Amount\r\n' + Array.from({ length: 16000 }, (_, i) => `item-${i},${'x'.repeat(1024)},1,2\r\n`).join('');
+    const streamSha = createHash('sha256').update(streamText).digest('hex');
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+    await page.locator('input[type=file]').first().setInputFiles({ name: 'synthetic-stream.csv', mimeType: 'text/csv', buffer: Buffer.from(streamText) });
+    const scan = page.getByRole('region', { name: 'Full-source CSV scan' });
+    await scan.getByRole('button', { name: 'Cancel structural scan' }).waitFor();
+    await page.waitForFunction(() => {
+        const progress = document.querySelector('progress[aria-label="Source bytes scanned"]');
+        return progress && progress.value > 0 && progress.value < progress.max;
+    });
+    await scan.getByRole('button', { name: 'Cancel structural scan' }).click();
+    await scan.getByText('Structural scan cancelled — incomplete, not verified', { exact: true }).waitFor();
+    await scan.getByRole('button', { name: 'Show scan details' }).click();
+    await scan.getByText('SHA-256: unverified', { exact: true }).waitFor();
+    const cancelledEvidence = await scan.innerText();
+    await page.screenshot({ path: `${artifacts}/stream-cancelled.png` });
+    await scan.getByRole('button', { name: 'Hide scan details' }).click();
+    await scan.getByRole('button', { name: 'Show scan details' }).click();
+    assert.equal(await scan.getByText('SHA-256: unverified', { exact: true }).count(), 1);
+    await scan.getByRole('button', { name: 'Resume structural scan' }).click();
+    await scan.getByText('Full-source structural scan completed clean', { exact: true }).waitFor({ timeout: 120000 });
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+    await Promise.race([
+        page.getByRole('button', { name: 'Use local processing only' }).waitFor({ timeout: 120000 }),
+        page.getByText('Local import ready (1/1)', { exact: true }).waitFor({ timeout: 120000 }),
+    ]);
+    if (await page.getByRole('button', { name: 'Use local processing only' }).isVisible()) await page.getByRole('button', { name: 'Use local processing only' }).click();
+    await page.getByText('Local import ready (1/1)', { exact: true }).waitFor({ timeout: 120000 });
+    // The panel remounts on the dashboard; its host result and original version survive reopening.
+    await scan.getByRole('button', { name: 'Show scan details' }).click();
+    assert.match(await scan.innerText(), new RegExp(streamSha));
+    assert.match(await scan.innerText(), /16,001 logical records scanned/);
+    await page.screenshot({ path: `${artifacts}/stream-resumed-clean.png` });
+    evidence.scenarios.push({ scenario: 'Actual streamed upload: nonzero byte progress -> cancel/incomplete -> details close/reopen -> resume -> complete exact SHA -> ordinary local import', sourceBytes: Buffer.byteLength(streamText), sourceSha: streamSha, cancelledEvidence });
     assert.deepEqual(evidence.pageErrors, []);
 } finally {
     await context?.close();

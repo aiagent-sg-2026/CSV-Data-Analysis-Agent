@@ -492,7 +492,7 @@ const run = async (
             const associatedSha = inspection?.sha256;
             const snapshot = intake ? structuredClone(intake) : null;
             const signature = snapshot ? JSON.stringify([snapshot.columnCount, snapshot.rawRows]) : null;
-            const diagnostic = await awaitOwned(inspectInitialHeaderAlignment(snapshot, associatedSha), store, lease);
+            const diagnostic = await awaitOwned(inspectInitialHeaderAlignment(snapshot, associatedSha, store), store, lease);
             assertRunActive(store, lease);
             const current = store.getState();
             const unchanged = current.rawIntakeIr === intake && current.datasetBundle === state.datasetBundle

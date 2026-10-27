@@ -8,7 +8,7 @@ import type { CsvSourceMetadata } from '../../types/intake';
 export type { CsvSourceMetadata } from '../../types/intake';
 
 interface Source {
-    metadata: CsvSourceMetadata; bytes: Uint8Array;
+    metadata: CsvSourceMetadata; bytes: Uint8Array; blob: File;
     records: Array<{ start: number; end: number; startLine: number; endLine: number }>;
 }
 const sources = new WeakMap<SessionScope, Map<string, Source>>();
@@ -83,7 +83,7 @@ export const captureCsvSource = async (store: StoreApi, file: File): Promise<Csv
     // Another capture can finish during hashing/indexing. Recheck quotas at publication.
     const current = sources.get(scope) ?? existing;
     if ([...current.values()].reduce((sum, source) => sum + source.bytes.length, 0) + bytes.length > MAX_SESSION_BYTES) throw new Error('source_resource_limit');
-    current.set(metadata.sourceId, { metadata, bytes, records }); sources.set(scope, current);
+    current.set(metadata.sourceId, { metadata, bytes, records, blob: file }); sources.set(scope, current);
     registerSessionResource(scope, () => { current.clear(); sources.delete(scope); });
     return metadata;
 };
@@ -93,6 +93,8 @@ export const readSourceBytes = (store: StoreApi, id: string, offset: number, len
     const end = Math.min(source.bytes.length, offset + length);
     return { source: source.metadata, offset, end, bytes: Array.from(source.bytes.subarray(offset, end)), complete: end === source.bytes.length };
 };
+/** Host-only immutable source handle for bounded streaming; never exposed as a model capability. */
+export const getRetainedCsvSourceBlob = (store: StoreApi, id: string): File => sourceFor(store, id).blob;
 /** Host recovery/retention capture only; no model tool exposes complete source bytes. */
 export const captureRecoverySource = (store: StoreApi, id: string): { metadata: CsvSourceMetadata; bytes: Uint8Array } => {
     const source = sourceFor(store, id);

@@ -43,6 +43,7 @@ import { captureHistoryAnalysisSnapshot, getRestoredHistoryAnalysisState } from 
 import { hasPiInitialCheckpoint } from '../../services/agent/runtime/pi/piInitialCheckpoint';
 import { formatCount, pluralizeCount } from '../../utils/displayText';
 import { cancelStructureRepairReview } from '../../services/agent/structureRepairConfirmation';
+import { discardCsvSourceScan } from '../../services/data/csvSourceScan';
 
 export interface IDataSlice {
     addProgress: (message: string, type?: 'system' | 'warning' | 'error', model?: string) => void;
@@ -74,6 +75,7 @@ export const resolvePendingDatasetBundleRestore = (
 
 export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set, get) => {
     const storeApi = { getState: get, setState: set };
+    let uploadGeneration = 0;
     let inFlightSemanticSnapshot: Promise<DatasetSemanticSnapshot | null> | null = null;
     let inFlightSemanticScope: SessionScope | null = null;
     let inFlightSemanticOwner: typeof storeApi | null = null;
@@ -370,6 +372,8 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
     };
 
     const runFilePipeline = async (file: File) => {
+        const generation = ++uploadGeneration;
+        discardCsvSourceScan(storeApi);
         const scope = captureSessionScope(storeApi);
         const owned = scopeStore(storeApi, scope);
         const { getState: get, setState: set } = owned;
@@ -382,9 +386,9 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
             set({ isBusy: true });
             try {
                 const { reattachPiInitialCheckpointSource } = await import('../../services/agent/runtime/pi/piInitialCheckpointRecovery');
-                if (ownsSessionScope(storeApi, scope)) await reattachPiInitialCheckpointSource(file, owned);
+                if (generation === uploadGeneration && ownsSessionScope(storeApi, scope)) await reattachPiInitialCheckpointSource(file, owned);
             } finally {
-                if (ownsSessionScope(storeApi, scope) && !get().activeExecution) set({ isBusy: false });
+                if (generation === uploadGeneration && ownsSessionScope(storeApi, scope) && !get().activeExecution) set({ isBusy: false });
             }
             return;
         }
@@ -400,8 +404,9 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
         }));
         const { orchestrateFileUpload } = await import('../../services/agent/orchestration/fileOrchestrator');
         try {
+            if (generation !== uploadGeneration || !ownsSessionScope(storeApi, scope)) return;
             for await (const update of orchestrateFileUpload(file, owned, { restoreBundle, restoreSnapshot })) {
-                if (!ownsSessionScope(storeApi, scope)) return;
+                if (generation !== uploadGeneration || !ownsSessionScope(storeApi, scope)) return;
                 switch (update.type) {
                     case 'progress':
                         get().addProgress(update.message, update.messageType, update.model);
@@ -413,14 +418,16 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
                             // that one critical commit before Pi starts so
                             // WebKit cannot retain the stale upload screen while
                             // the analysis microtask chain is running.
-                            flushSync(() => set(update.payload));
+                            flushSync(() => { update.assertCurrent?.(); set(update.payload); });
                         } else {
+                            update.assertCurrent?.();
                             set(update.payload);
                         }
                         break;
                 }
             }
         } catch (error) {
+            if (generation !== uploadGeneration || !ownsSessionScope(storeApi, scope)) return;
             const errorMessage = error instanceof Error ? error.message : String(error);
             console.error(`[FileProcessor] File processing failed:`, error);
             get().addProgress(`File Processing Error: ${errorMessage}`, 'error');
