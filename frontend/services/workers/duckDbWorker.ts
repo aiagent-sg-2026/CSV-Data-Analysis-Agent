@@ -256,7 +256,7 @@ const handleLoadFileDataset = async (payload: {
     loadVersion: string;
     tableName: string;
     previewRows: number;
-    exactColumns?: Array<{name:string; type:string}>;
+    exactColumns?: Array<{name:string; type:string; nullable?: boolean}>;
 }) => {
     if (security && (currentLoadVersion !== payload.loadVersion || currentTableName !== payload.tableName)) await handleDispose();
     await ensureConnection();
@@ -292,7 +292,7 @@ const handleLoadFileDataset = async (payload: {
             if(!columns.length||columns.length>256||new Set(columns.map(c=>c.name)).size!==columns.length
                 ||columns.some(c=>!c.name||! /^(VARCHAR|DECIMAL\(24,[0-6]\))$/.test(c.type)))throw new Error('accepted_schema_invalid');
             const literal=(s:string)=>`'${s.replace(/'/g,"''")}'`;
-            reader=`read_csv('${escapedFileName}', header=true, auto_detect=false, delim=',', quote='"', escape='"', columns={${columns.map(c=>`${literal(c.name)}:${literal(c.type)}`).join(',')}}, force_not_null=[${columns.map(c=>literal(c.name)).join(',')}])`;
+            reader=`read_csv('${escapedFileName}', header=true, auto_detect=false, delim=',', quote='"', escape='"', columns={${columns.map(c=>`${literal(c.name)}:${literal(c.type)}`).join(',')}}, force_not_null=[${columns.filter(c=>!c.nullable).map(c=>literal(c.name)).join(',')}]${columns.some(c=>c.nullable)?', allow_quoted_nulls=false':''})`;
         }
         await conn!.query(`CREATE TABLE ${quotedTable} AS SELECT * FROM ${reader}`);
     } finally {

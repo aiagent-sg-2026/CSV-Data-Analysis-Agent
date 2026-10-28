@@ -14,7 +14,8 @@ import { commitDatasetTransaction, readCommitIntent } from '../persistence/datas
 import { datasetCommitBindings } from '../persistence/datasetCommitProjection';
 import { queueSessionWrite } from '../persistence/currentSessionPersistence';
 import { buildPersistedReportRecord } from '../persistence/persistedAppState';
-import { primeDuckDbDataset, prepareAcceptedSpillBinding } from '../duckdb/queryEngine';
+import { primeDuckDbDataset, prepareAcceptedSpillBinding, prepareAcceptedTablesBinding } from '../duckdb/queryEngine';
+import { planAcceptedDual, writeAcceptedDual } from './acceptedDualGrain';
 import { planAcceptedSpill, writeAcceptedSpill, acceptedSpillCsv, acceptedPublicationSnapshot, type AcceptedSpillManifest, type AcceptedSpillStorage, type SpillReadCustody } from './acceptedSpill';
 import { detachCandidateDraft } from './detachedCandidateDraft';
 import { compensateSpillCommit } from '../persistence/datasetCommitStorage';
@@ -42,6 +43,9 @@ export interface CandidateCommitReview {
     scopeDigest: string; grantDigest: string; policyDigest: string;
     tables: Array<{name: string; rowCount: number; columns: string[]}>;
     rowStorage: 'transient' | 'durable_spill';
+    acceptedDualGrain?: import('./acceptedDualGrain').AcceptedDualGrain;
+    relationships?: StagedDatasetCandidate['relationships'];
+    grains?: Array<{ table: string; grain: string[]; metrics: import('./candidateValidation').CandidateValidationContract['tables'][number]['metrics'] }>;
     spill?: AcceptedSpillManifest;
 }
 export interface CandidateCommitApproval { approvalId: string; reviewDigest: string; approvedAt: number; expiresAt: number }
@@ -64,6 +68,7 @@ export const createCandidateCommitService = (store: StoreApi, options: {
     onAdmitted?: () => void;
     acceptedStorage?: AcceptedSpillStorage;
     prepareSpillBinding?: typeof prepareAcceptedSpillBinding;
+    prepareTablesBinding?: typeof prepareAcceptedTablesBinding;
 } = {}) => {
     let lease = store.executionContext?.lease;
     const originalLease = lease, originalRoot = rootStore(store), port = store.candidateStaging, execution = store.codeExecution;
@@ -90,8 +95,8 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         if (!validCommitKey(input.idempotencyKey)) throw new Error('idempotency_key_invalid');
         const candidate = port.read(candidateId), validation = port.validationReceipt(candidateId);
         if (!validation || validation.decision !== 'validated') throw new Error('validation_failed');
-        // Only newly inferred dual-grain drafts lack qualified atomic promotion.
-        // The staging closure owns this provenance; table count/serialized flags do not.
+        // Private inference custody and complete independent receipts select the bounded lane.
+        // Unsupported dual candidates retain the draft-only gate.
         const restriction = port.commitRestriction(candidateId);
         if (restriction) throw new Error(restriction);
         if(candidate.spill&&(candidate.tables.length!==1||candidate.execution.inputs?.length||candidate.execution.coverage?.length||candidate.execution.sources?.length))throw new Error('candidate_spill_inputs_unsupported');
@@ -112,6 +117,7 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         check();
         const primary = candidate.tables.find(t=>t.name===input.primaryTable);
         if (!primary) throw new Error('candidate_primary_table_required');
+        if (port.boundedDualCommit(candidateId) && primary.name !== candidate.relationships[0].toTable) throw new Error('candidate_primary_grain_required');
         const artifact = execution.workspace.read(candidate.execution.program!.path,candidate.execution.program!.revision);
         const environment = candidate.execution.environment;
         if (!environment || await codeDigest(environment) !== validation.environmentDigest
@@ -147,12 +153,14 @@ export const createCandidateCommitService = (store: StoreApi, options: {
             candidateId,primaryTable:primary.name,inputBindings:candidate.inputBindings,changeDigest:candidate.changeDigest,
             validationDigest:validation.receiptDigest,programDigest:validation.programDigest,environmentDigest:validation.environmentDigest,
             outputDigest:validation.outputDigest,scopeDigest:validation.scopeDigest,grantDigest:candidate.execution.grant!.digest,policyDigest:await codeDigest(capturedPolicy),
-            recoveryDigest:spill?.digest??recovery!.manifest.digest,...(spill?{spill}: {})};
+            recoveryDigest:spill?.digest??recovery!.manifest.digest,...(spill?{spill}: {}),
+            ...(port.boundedDualCommit(candidateId) ? { namespaceId: candidate.namespaceId, targetCommit: bundle.acceptedCommit,
+                targetBundleDigest: await codeDigest(bundle), contractDigest: validation.contractDigest } : {})};
         check();
         const payloadDigest=await codeDigest(payload);
         const body={...payload,reviewId:`review-${crypto.randomUUID()}`,idempotencyKey:input.idempotencyKey,payloadDigest,expiresAt,
             tables:tables.map(t=>({name:t.name,rowCount:t.rowCount,columns:t.schema.map(c=>c.name)})),rowStorage:spill?'durable_spill' as const:'transient' as const};
-        const result=immutable({...body,reviewDigest:await codeDigest(body)});check();
+        let result=immutable({...body,reviewDigest:await codeDigest(body)});check();
         const marker: DatasetCommitMarker = {kind:'commit',recordId:commitIntentKey(lease.scope.sessionId,input.idempotencyKey),
             intentKey:commitIntentKey(lease.scope.sessionId,input.idempotencyKey),approvalKey:'',sessionId:lease.scope.sessionId,commitId,revision,
             parentCommitId:parent?.sessionId===lease.scope.sessionId?parent.commitId:null,idempotencyKey:input.idempotencyKey,payloadDigest,
@@ -164,6 +172,14 @@ export const createCandidateCommitService = (store: StoreApi, options: {
             audit:{sessionEpoch:lease.scope.epoch,taskId:candidate.taskId,taskRevision:candidate.taskRevision,runId:lease.runId,turnId:lease.turnId,
                 toolCallId:context.toolCallId,stepId:context.stepId,grantDigest:payload.grantDigest,committedAt:now},rowStorage:spill?'durable_spill':'transient',...(spill?{acceptedSpill:spill,spillRunRequest:structuredClone(candidate.execution.runRequest!)}:{replayManifest:recovery!.manifest}),
             previousCommit:sourceBundle.acceptedCommit};
+        if (port.boundedDualCommit(candidateId)) {
+            marker.acceptedDualGrain = await planAcceptedDual(marker, recovery!.material); check();
+            const exactBody = { ...body, acceptedDualGrain: marker.acceptedDualGrain, relationships: candidate.relationships,
+                grains: recovery!.manifest.validationBinding.contract.tables.map(t => ({ table: t.name, grain: t.grain, metrics: t.metrics })),
+                source: sourceBundle.source.inspection, targetCommit: bundle.acceptedCommit };
+            result = immutable({ ...exactBody, reviewDigest: await codeDigest(exactBody) }); check();
+            marker.approval.reviewDigest = result.reviewDigest;
+        }
         reviews.set(result,{review:result,candidate,validation,marker,csv,output,check,recovery:recovery?.material,...(spill?{spill:{manifest:spill,custody:custody!}}:{}),bindingStatus:store.getState().datasetCommitBindingStatus});
         return result;
     };
@@ -287,9 +303,78 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         }
     };
 
+    const dualAttempts = new WeakSet<Prepared>();
+    const commitDual = async (approval: CandidateCommitApproval, prepared: Prepared): Promise<CandidateCommitOutcome> => {
+        if (dualAttempts.has(prepared)) return { status: 'not_committed', admitted: false, replay: false, reason: 'approval_consumed' };
+        dualAttempts.add(prepared);
+        const previous = store.getState();
+        let binding: Awaited<ReturnType<typeof prepareAcceptedTablesBinding>> | undefined;
+        let directory: Awaited<ReturnType<typeof writeAcceptedDual>> | undefined;
+        let durable = false, admitted = false;
+        try {
+            prepared.check(); const db = await database(); prepared.check();
+            if (await readCommitIntent(db, lease!.scope.sessionId, prepared.review.idempotencyKey)) throw new Error('approval_consumed');
+            prepared.check();
+            directory = await writeAcceptedDual(prepared.marker, prepared.recovery!, prepared.check, options.acceptedStorage); prepared.check();
+            binding = await (options.prepareTablesBinding ?? prepareAcceptedTablesBinding)(prepared.marker, prepared.candidate, prepared.check, lease!.signal); prepared.check();
+            const marker = immutable({ ...prepared.marker, approvalKey: commitApprovalKey(lease!.scope.sessionId, approval.approvalId),
+                approval: { ...approval, consumedAt: Date.now() } });
+            return await queueSessionWrite(async () => {
+                prepared.check();
+                const baseline = buildPersistedReportRecord(previous, { id: lease!.scope.sessionId, filename: prepared.csv.fileName });
+                const saved = await db.get('reports', marker.sessionId), head = await db.get(DATASET_COMMITS_STORE, commitHeadKey(marker.sessionId)); prepared.check();
+                try {
+                    await commitDatasetTransaction(db, marker, baseline, prepared.check, () => { admitted = true;
+                        store.setState({ datasetCommitBindingStatus: 'commit_unknown', activeDataQuery: null }); options.onAdmitted?.(); });
+                    durable = true;
+                } catch (e) {
+                    if (admitted) {
+                        try { durable = (await readCommitIntent(db, marker.sessionId, marker.idempotencyKey))?.payloadDigest === marker.payloadDigest; }
+                        catch { throw new Error('commit_outcome_unknown'); }
+                    }
+                    if (!durable) throw e;
+                }
+                try {
+                    prepared.check();
+                    const latest = await db.get(DATASET_COMMITS_STORE, commitHeadKey(marker.sessionId)); prepared.check();
+                    if (latest?.kind !== 'head' || latest.commitId !== marker.commitId) throw new Error('commit_activation_superseded');
+                    binding!.activate();
+                    store.setState({ datasetBundle: structuredClone(marker.bundle), csvData: prepared.csv, canonicalCsvData: prepared.csv, rawCsvData: null,
+                        candidateRecovery: null, datasetCommitBindingStatus: 'ready', activeDataQuery: null, datasetSemanticSnapshot: null,
+                        semanticDatasetVersion: null, semanticStatus: 'idle', columnRegistry: null, columnProfiles: [], canonicalBuildMeta: null,
+                        activeMetricMappingValidation: null, activeSpreadsheetFilter: null, spreadsheetFilterFunction: null,
+                        vectorStoreDocuments: [], pendingVectorMemoryDocs: [], vectorMemoryState: 'cold', reportMemoryScope: null,
+                        duckDbSessionStatus: { ...binding!.binding, status: 'ready', fallbackReason: null, lastSyncedAt: new Date() } });
+                    registerSandboxTableRows(marker.bundle.bundleId, prepared.output, marker.bundle.datasetVersion);
+                    rememberRecoveryMaterial(store, marker.commitId, prepared.recovery!);
+                    registerSessionResource(lease!.scope, () => clearSandboxTableRows(marker.bundle.bundleId));
+                    binding!.finish();
+                    const installedBinding = binding!;
+                    registerSessionResource(lease!.scope, () => installedBinding.dispose());
+                    return { status: 'committed' as const, admitted, replay: false, marker, acknowledgement: 'installed' as const };
+                } catch (e) {
+                    binding!.rollback();
+                    if (!canCommitRun(store, lease)) return { status: 'committed' as const, admitted, replay: false, marker, acknowledgement: 'revoked' as const };
+                    await compensateSpillCommit(db, marker, saved ?? baseline, head?.kind === 'head' ? head : undefined);
+                    durable = false;
+                    store.setState({ ...acceptedPublicationSnapshot(previous), activeDataQuery: null });
+                    throw e;
+                }
+            });
+        } catch (e) {
+            binding?.rollback();
+            // An unreadable acknowledgement is not proof of abort. Preserve backing for journal recovery.
+            if (!durable && reason(e) !== 'commit_outcome_unknown') await directory?.remove().catch(() => {});
+            if (canCommitRun(store, lease)) store.setState(durable || reason(e) === 'commit_outcome_unknown'
+                ? { datasetCommitBindingStatus: 'commit_unknown', activeDataQuery: null }
+                : { ...acceptedPublicationSnapshot(previous), activeDataQuery: null });
+            return { status: durable || reason(e) === 'commit_outcome_unknown' ? 'unknown' : 'not_committed', admitted, replay: false, reason: reason(e) };
+        }
+    };
     const commit = async (approval: CandidateCommitApproval): Promise<CandidateCommitOutcome> => {
         const prepared=approvals.get(approval);
         if (!prepared||approval.reviewDigest!==prepared.review.reviewDigest) return {status:'not_committed',admitted:false,replay:false,reason:'approval_invalid'};
+        if (prepared.marker.acceptedDualGrain) return commitDual(approval, prepared);
         if(prepared.spill)return commitSpill(approval,prepared);
         let commitDb: StorageDatabase | undefined;
         const durable = await queueSessionWrite(async(): Promise<CandidateCommitOutcome>=>{

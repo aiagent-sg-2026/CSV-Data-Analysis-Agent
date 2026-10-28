@@ -126,6 +126,10 @@ export const TaskInspectionView: React.FC<{ onReturnToChat?: () => void; onOpenR
                         {candidate.validation.truncated && <p>Validation preview truncated.</p>}</> : <p>Independent validation is pending; staging cannot change accepted data.</p>}
                 </> : <p>No current candidate snapshot. Historical metadata cannot be approved here.</p>}
                 {review.review && <><p>Primary table: {review.review.primaryTable}</p><p>Expires: {new Date(review.review.expiresAt).toISOString()}</p>
+                    {review.review.acceptedDualGrain && <div role="note"><p>Exact approval publishes both tables together and retains their verified source and lineage locally. Meaning selection is not commit approval.</p>
+                        {review.review.tables.map(t => <p key={t.name}>{t.name}: {t.rowCount} rows · key/grain: {review.review!.grains?.find(g => g.table === t.name)?.grain.join(', ')}</p>)}
+                        {review.review.relationships?.map((r, i) => <p key={i}>{r.fromTable} ({r.fromKeys.join(', ')}) → {r.toTable} ({r.toKeys.join(', ')}): {r.cardinality}</p>)}
+                        <p>Summary/excluded rows are evidence only, not additional facts. Joins are unsupported; query each grain separately.</p></div>}
                     {review.review.spill && <p>Approval retains {review.review.spill.rowCount} projected rows in immutable local storage ({review.review.spill.bytes} bytes). Host-declared source-record grain and units remain explicit assumptions. Draft reads never grant commit.</p>}
                     <details><summary className="cursor-pointer py-2">Exact approval identity</summary><pre className={pre}>{JSON.stringify(review.review, null, 2)}</pre></details></>}
                 <p role="status">{review.reason}</p>

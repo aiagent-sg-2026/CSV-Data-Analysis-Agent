@@ -88,7 +88,7 @@ export const preparePiDualGrainSmoke = async (root: StoreApi, options: {
 } = {}) => {
     const fixture = options.layout === 'document_rows' ? syntheticDocumentGrainSource(options.width) : syntheticDualGrainSource(options.width), file = new File([fixture.text], 'fictional-dual-grain.csv');
     const parsed = parseCsvTextWithDetection(fixture.text), ir = buildReportIntakeIr(file.name, parsed.rawRows, parsed.detection), data = buildCsvDataFromIntakeIr(ir);
-    const datasetId = crypto.randomUUID(), goal = 'Repair both source-backed grains without fanout; independently validate both tables as read-only drafts. Do not commit either table.';
+    const datasetId = crypto.randomUUID(), goal = 'Repair both source-backed grains without fanout; independently validate both tables and request separate exact human approval. Never commit without that approval.';
     const bundle = createSingleTableDatasetBundle({ datasetId, sourceFingerprint: 'pending', file, data });
     root.setState({ sessionId: crypto.randomUUID(), sessionCreatedAt: new Date(), confirmedAnalysisGoal: goal, csvData: data, rawCsvData: structuredClone(data), canonicalCsvData: null,
         rawIntakeIr: ir, datasetBundle: bundle, currentDatasetId: datasetId, currentView: 'analysis_dashboard', pipelineOutcome: { canAutoAnalyze: false, reasonCode: 'header_shape_drift' } as never,
@@ -121,7 +121,7 @@ export const preparePiDualGrainSmoke = async (root: StoreApi, options: {
         else if (step === 6) { step++; candidateId = v.taskPlan?.candidateId ?? v.payload?.candidate?.candidateId ?? ''; content = call('candidate_validate', { candidateId }); }
         else if (step === 7 || step === 8) { content = call('candidate_read', { candidateId, table: step++ === 7 ? 'entities' : 'metrics', offset: 0, limit: 3 }); }
         else if (step === 9) { step++; content = call('candidate_request_approval', { candidateId, primaryTable: 'entities' }); }
-        else content = [{ type: 'text', text: 'Both drafts remain uncommitted; atomic multi-table acceptance is not available.' }];
+        else content = [{ type: 'text', text: 'Both drafts remain uncommitted until exact all-table human approval.' }];
         const message: AssistantMessage = { role: 'assistant', content, api: model.api, provider: model.provider, model: model.id,
             usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: content[0].type === 'toolCall' ? 'toolUse' : 'stop', timestamp: Date.now() };
         const events = createAssistantMessageEventStream(); events.push({ type: 'start', partial: message }); events.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message }); return events;

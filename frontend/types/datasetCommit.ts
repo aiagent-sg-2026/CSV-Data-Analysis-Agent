@@ -25,6 +25,7 @@ export interface DatasetCommitMarker {
     audit: { sessionEpoch: number; taskId: string; taskRevision: number; runId: string; turnId?: string; toolCallId: string; stepId: string; grantDigest: string; committedAt: string };
     rowStorage: 'transient' | 'durable_spill';
     acceptedSpill?: import('../services/data/acceptedSpill').AcceptedSpillManifest;
+    acceptedDualGrain?: import('../services/data/acceptedDualGrain').AcceptedDualGrain;
     spillRunRequest?: import('../services/agent/execution/codeExecutionContract').CodeRunRequest;
     /** Compensated failed publication; consumes approval but is not an accepted head. */
     activationFailed?: true;

@@ -34,7 +34,7 @@ const read = (root: StoreApi, table: string, offset = 0) => {
 };
 const unchanged = (root: StoreApi, data: unknown) => {
     const state = root.getState(); expect(state.csvData).toBe(data); expect(state.canonicalCsvData).toBeNull(); expect(state.datasetBundle?.acceptedCommit).toBeUndefined();
-    expect(state.analysisCards).toEqual([]); expect(state.queryHistory).toEqual([]); expect(state.pendingClarification?.resumeContext?.piCandidateApproval).toBeFalsy();
+    expect(state.analysisCards).toEqual([]); expect(state.queryHistory).toEqual([]); if (state.activeAgentTask && state.pendingClarification?.resumeContext?.piCandidateApproval) expect(state.activeAgentTask.status).toBe('awaiting_approval');
 };
 describe('normal Pi bounded dual-grain runtime (deterministic provider; actual QuickJS)', () => {
     it.each([42, 60, 90])('connects source width %i through exact A choice to both independent draft tables', async width => {
@@ -47,7 +47,7 @@ describe('normal Pi bounded dual-grain runtime (deterministic provider; actual Q
         const candidate = root.getState().taskInspection?.candidate;
         expect(candidate?.validation?.decision, f.trace.join('\n') + JSON.stringify(root.getState().taskInspection)).toBe('validated');
         expect(candidate?.tables.map(t => t.rows)).toEqual([3, 3 * f.fixture.measures]);
-        expect(JSON.parse(root.getState().workspaceFiles['/intake/repair-task.json'])).toMatchObject({ state: 'validated_draft', reason: 'candidate_multi_table_atomic_promotion_unavailable' });
+        expect(JSON.parse(root.getState().workspaceFiles['/intake/repair-task.json'])).toMatchObject({ state: 'awaiting_commit_approval' });
         expect(root.getState().activeAgentTask!.budget.used.providerTurns).toBeLessThan(root.getState().activeAgentTask!.budget.limits.providerTurns);
         const entities = await read(root, 'entities'), metrics = await read(root, 'metrics');
         expect(entities.rows.map(r => [r.Id, r['Cost [USD]'], r['Net [USD]']])).toEqual([['E1', 250, -250], ['E2', 30, -30], ['E3', 120, -120]]);

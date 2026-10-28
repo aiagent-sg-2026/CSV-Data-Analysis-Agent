@@ -392,9 +392,18 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             inputCoverage:c.execution.coverage??[],excludedRows:c.excludedRows,relationships:c.relationships,valueDiff,
             note:'Structural comparison only. The separate host validation receipt provides the independent semantic decision.'};
     };
+    const boundedDualCommit = (id: string) => {
+        const c = current(id);
+        return draftOnlyMeaning && !c.spill && c.tables.length === 2 && c.relationships.length === 1
+            && validationContract?.completeSourceCells === true && validationContract.ambiguities.length === 0
+            && validationContract.tables.length === 2 && validationContract.relationships.length === 1
+            && Boolean(validationBinding?.inference && meaningCheck && recoveryInputs.has(id))
+            && validations.get(id)?.decision === 'validated'
+            && Boolean(sourceAtPreparation && sourceAtPreparation.byteSize <= 65536 && sourceAtPreparation.recordCount <= 2000);
+    };
     const commitRestriction=(id:string)=>{
         current(id);
-        return draftOnlyMeaning ? 'candidate_multi_table_atomic_promotion_unavailable' : null;
+        return draftOnlyMeaning && !boundedDualCommit(id) ? 'candidate_multi_table_atomic_promotion_unavailable' : null;
     };
     const assertCommitSupported=(id:string)=>{const restriction=commitRestriction(id);if(restriction)throw new Error(restriction);};
     const captureCommitCheck=(id:string)=>{
@@ -402,7 +411,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
         const candidate=current(id),validation=validationReceipt(id),bindingCheck=validationBindingChecks.get(id);
         if(!validation||validation.decision!=='validated'||!candidate.spill&&!bindingCheck)throw new Error('validation_failed');
         return (target:StoreApi,context:ExecutionContext)=>{
-            assertRunActive(target,context.lease);
+            assertRunActive(target,context.lease); meaningCheck?.();
             const task=target.piTask?.snapshot;
             if(disposed||context.lease.scope.sessionId!==lease.scope.sessionId||context.lease.scope.epoch!==lease.scope.epoch
                 ||candidates.get(id)!==candidate||validations.get(id)!==validation||!task||task.taskId!==taskId
@@ -470,7 +479,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
         if (!validationBinding || receipt?.decision!=='validated' || !inputs) throw new Error('recovery_metadata_unavailable');
         return { binding:structuredClone(validationBinding), inputs:structuredClone(inputs), execution:c.execution };
     };
-    return Object.freeze({namespaceId,stage,read,diff,validate,validationReceipt,validationRequirements,bindInferredMeaning,commitRestriction,captureCommitCheck,captureSpillRead,captureDraftRead,captureRecovery,preview,previewAsync,validationError:(id:string)=>{own();return validationErrors.get(id);},
+    return Object.freeze({namespaceId,stage,read,diff,validate,validationReceipt,validationRequirements,bindInferredMeaning,commitRestriction,boundedDualCommit,captureCommitCheck,captureSpillRead,captureDraftRead,captureRecovery,preview,previewAsync,validationError:(id:string)=>{own();return validationErrors.get(id);},
         suspend:()=>{own();suspended=true;},list:()=>{
             own();const live:StagedDatasetCandidate[]=[];
             for(const id of candidates.keys()){

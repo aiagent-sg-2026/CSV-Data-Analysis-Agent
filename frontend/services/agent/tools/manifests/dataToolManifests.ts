@@ -54,6 +54,7 @@ export const createDataToolManifests = (): ToolManifest[] => [
         promptHints: [
             'Prefer this over data mutation when the user only wants to inspect data.',
             'Only use data.query when you can express a structured plan with select, where, orderBy, limit, groupBy, or aggregates.',
+            'For accepted dual-grain data, plan.tableId selects one exact accepted table ID. Omitted means primary entities, not metric cells. Query each grain separately; joins and raw SQL are unsupported. Never sum entity summaries after joining detail rows.',
             'Do not pass a naked free-text search string to data.query.',
             "Row-level example: args.plan = { select: ['Description', 'Address', 'Amount'], where: { predicates: [{ column: 'Address', operator: 'contains', value: '36 TUAS ROAD' }] }, limit: 25 }.",
             "OR example: args.plan = { select: ['Description', 'Amount'], where: { groups: [{ predicates: [{ column: 'Description', operator: 'contains', value: 'revenue' }] }, { predicates: [{ column: 'Description', operator: 'contains', value: 'cost' }] }] }, limit: 25 }.",

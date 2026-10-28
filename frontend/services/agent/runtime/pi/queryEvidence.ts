@@ -10,6 +10,7 @@ import { captureSessionScope, ownsSessionScope, assertRunActive, canCommitRun, t
 import { normalizeAbortError } from '../runtimeAbort';
 import { getPreferredAnalysisDataset } from '../../reportStructureState';
 import { requiresCompleteAggregateEvidence } from '../../derivedMetricIntent';
+import { acceptedQueryTable } from '../../../duckdb/queryEngine';
 
 export interface RequestedQueryScope { role: string; plan: QueryPlan }
 export interface QueryCalculation { operation: 'ratio' | 'percentage' | 'difference' | 'percent_change'; leftRole: string; rightRole: string }
@@ -172,8 +173,11 @@ const validateTimeScope = (artifact: QueryUnderstandingArtifact, grounding: Grou
 
 export const canonicalPlan = (plan: QueryPlan, store: StoreApi): QueryPlan | null => {
     if (!plan || typeof plan !== 'object' || Array.isArray(plan) || (plan.limit !== undefined && (typeof plan.limit !== 'number' || !Number.isInteger(plan.limit) || plan.limit <= 0)) || plan.rawSql || validateDataQueryPayload({ explanation: 'Requested answer scope', plan }).length) return null;
-    const registry = buildEffectiveColumnRegistryFromState(store.getState());
-    const allowed = new Set(getAllowedColumns(registry, 'select'));
+    const dataset = getPreferredAnalysisDataset(store.getState());
+    let accepted: ReturnType<typeof acceptedQueryTable> = null;
+    try { if (dataset && store.getState().datasetBundle?.acceptedCommit) accepted = acceptedQueryTable(dataset, plan.tableId); } catch { return null; }
+    const registry = accepted ? null : buildEffectiveColumnRegistryFromState(store.getState());
+    const allowed = new Set(accepted ? accepted.columns : getAllowedColumns(registry, 'select'));
     if (!allowed.size) store.getState().columnProfiles?.forEach(profile => allowed.add(profile.name));
     const column = (name: string) => resolveColumnReference(name, registry) ?? name;
     const normalized = normalizeDataQueryPlanLike(plan);
@@ -191,7 +195,7 @@ export const canonicalPlan = (plan: QueryPlan, store: StoreApi): QueryPlan | nul
     } : undefined;
     if (predicateColumns(normalized.postAggregateFilter).some(name => !aliases.has(name) && !(normalized.groupBy ?? []).includes(name))) return null;
     const where = normalizeWhere(normalized.where);
-    return { ...normalized, where, select: normalized.select?.map(name => aliases.has(name) ? name : column(name)),
+    return { ...normalized, ...(accepted ? { tableId: accepted.tableId } : {}), where, select: normalized.select?.map(name => aliases.has(name) ? name : column(name)),
         groupBy: normalized.groupBy?.map(column),
         aggregates: normalized.aggregates?.map(aggregate => ({ ...aggregate, column: aggregate.column ? column(aggregate.column) : undefined, where: normalizeWhere(aggregate.where) })),
         orderBy: normalized.orderBy?.map(order => ({ ...order, column: aliases.has(order.column) ? order.column : column(order.column) })) };
@@ -261,7 +265,7 @@ export const resolveAnswerScope = (message: string, artifact: QueryUnderstanding
 
 const planMatches = (expected: QueryPlan, actual: QueryPlan): boolean => {
     const aggregates = (plan: QueryPlan) => (plan.aggregates ?? []).map(canonicalValue);
-    return !actual.rawSql && same(expected.groupBy ?? [], actual.groupBy ?? [])
+    return !actual.rawSql && expected.tableId === actual.tableId && same(expected.groupBy ?? [], actual.groupBy ?? [])
         && same(aggregates(expected), aggregates(actual))
         && same(canonicalWhere(expected.where), canonicalWhere(actual.where))
         && same(canonicalWhere(expected.postAggregateFilter), canonicalWhere(actual.postAggregateFilter))
@@ -287,7 +291,8 @@ export const admitQueryEvidence = (store: StoreApi, lease: RunLease, scope: Reso
             && candidate.query.sessionId === lease.scope.sessionId && candidate.query.sessionEpoch === lease.scope.epoch
             && candidate.query.datasetId === (store.getState().currentDatasetId ?? null)
             && candidate.query.datasetVersion === getCurrentAnalysisDatasetVersion(store.getState())
-            && candidate.query.tableId === binding.tableId && candidate.query.relationshipSetId === binding.relationshipSetId
+            && candidate.query.tableId === (required.plan.tableId ?? binding.tableId) && candidate.query.relationshipSetId === binding.relationshipSetId
+            && (!required.plan.tableId || store.getState().datasetBundle?.tables.some(t => t.tableId === required.plan.tableId && t.datasetVersion === binding.datasetVersion))
             && planMatches(required.plan, candidate.query.plan)
             && same(candidate.query.plan.orderBy ?? [], candidate.query.result.appliedOrderBy)
             && ((candidate.query.plan.limit ?? 500) === candidate.query.result.appliedLimit)

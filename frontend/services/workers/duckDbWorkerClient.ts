@@ -422,7 +422,7 @@ export class DuckDbWorkerClient {
             loadVersion: string;
             tableName: string;
             previewRows: number;
-            exactColumns?: Array<{name:string; type:string}>;
+            exactColumns?: Array<{name:string; type:string; nullable?: boolean}>;
         },
         timeoutMs = 180_000,
         abortSignal?: AbortSignal,

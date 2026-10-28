@@ -142,6 +142,7 @@ export const queryAggregateSchema = {
 export const queryPlanSchema = {
     type: 'object',
     properties: {
+        tableId: { type: 'string', minLength: 1, description: 'Exact accepted table ID/grain. Omitted selects primary entities. Joins are unsupported.' },
         select: {
             type: 'array',
             description: 'Optional whitelist of columns to return.',

@@ -183,6 +183,7 @@ export const normalizeDataQueryPlanLike = (value: unknown): QueryPlan | null => 
     const select = requestedSelect && !rawSql && selectsAllColumns(requestedSelect) ? undefined : requestedSelect;
 
     return {
+        ...(typeof value.tableId === 'string' && value.tableId.trim() ? { tableId: value.tableId.trim() } : {}),
         ...(select ? { select } : {}),
         ...(where ? { where } : {}),
         ...(groupBy ? { groupBy } : {}),

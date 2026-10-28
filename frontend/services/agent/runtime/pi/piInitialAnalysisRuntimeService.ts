@@ -589,12 +589,12 @@ const run = async (
                     }
                     if (t.name === 'candidate_validate') {
                         const receipt = executorPreparation!.task.validationState().receipt;
-                        if (receipt?.decision === 'validated' && store.candidateStaging?.commitRestriction(receipt.candidateId)) {
+                        if (receipt?.decision === 'validated' && (store.candidateStaging?.boundedDualCommit(receipt.candidateId) || store.candidateStaging?.commitRestriction(receipt.candidateId))) {
                             const { detachEnvelopeCandidateDraft } = await import('../../../data/detachedCandidateDraft');
                             detachEnvelopeCandidateDraft(store, store.candidateStaging.captureDraftRead(receipt.candidateId));
-                            // Publication is unsupported: stop successfully at the read-only draft
-                            // boundary, not a provider retry loop that spends the remaining budget.
-                            validatedMultiTableDraft = true;
+                            // Unsupported candidates still stop at the private draft-only boundary.
+                            // The bounded lane continues only to a separate exact human review.
+                            validatedMultiTableDraft = Boolean(store.candidateStaging.commitRestriction(receipt.candidateId));
                         }
                     }
                     pendingMeaning=pendingSpillMeaningChoice(store);

@@ -7,7 +7,8 @@ import { reconstructDatasetCommit, type RecoveryOptions } from './datasetRecover
 import { readRetainedRows, retainDatasetRows, collectRetainedRows, type RetentionDirectory } from '../persistence/datasetRetention';
 import { currentRecoveryMaterial, rememberRecoveryMaterial } from './datasetReplay';
 import { registerSandboxTableRows, clearSandboxTableRows } from './sandboxTableRegistry';
-import { primeDuckDbDataset, prepareAcceptedSpillBinding } from '../duckdb/queryEngine';
+import { primeDuckDbDataset, prepareAcceptedSpillBinding, prepareAcceptedTablesBinding } from '../duckdb/queryEngine';
+import { readAcceptedDual } from './acceptedDualGrain';
 import { verifyAcceptedSpillMarker, verifyAcceptedSpill, acceptedSpillCsv, acceptedPublicationSnapshot, type AcceptedSpillStorage } from './acceptedSpill';
 import { bindRecoverySource } from './immutableCsvSource';
 import { getCsvDatasetVersion } from '../../utils/datasetId';
@@ -21,7 +22,7 @@ import { buildToolAvailabilityContext } from '../agent/tools/toolGovernance';
 
 type Reconstructed = Awaited<ReturnType<typeof reconstructDatasetCommit>>;
 export interface RecoveryDependencies { database?: () => Promise<StorageDatabase>; bind?: typeof primeDuckDbDataset; directory?: () => Promise<RetentionDirectory>;
-    persist?: (store:StoreApi)=>Promise<boolean>; acceptedStorage?:AcceptedSpillStorage; prepareSpillBinding?:typeof prepareAcceptedSpillBinding; spillFactory?:import('./candidateSpill').CandidateSpillFactory }
+    persist?: (store:StoreApi)=>Promise<boolean>; prepareTablesBinding?: typeof prepareAcceptedTablesBinding; acceptedStorage?:AcceptedSpillStorage; prepareSpillBinding?:typeof prepareAcceptedSpillBinding; spillFactory?:import('./candidateSpill').CandidateSpillFactory }
 const own = (store: StoreApi) => {
     const lease = store.executionContext?.lease; if (!lease) throw new Error('scope_revoked'); assertRunActive(store, lease); return lease;
 };
@@ -48,7 +49,8 @@ const same = (a: DatasetCommitMarker, b: DatasetCommitMarker) => a.sessionId ===
 const reconstruct = async (store: StoreApi, db: StorageDatabase, marker: DatasetCommitMarker, options: RecoveryOptions, dependencies: RecoveryDependencies) => {
     const result = await reconstructDatasetCommit(store, marker, { ...options,
         material: options.material ?? currentRecoveryMaterial(store, marker.commitId),
-        readMaterial: m => readRetainedRows(db, m, dependencies.directory), readParent: ref => readExactCommit(db, ref) });
+        readMaterial: async m => m.acceptedDualGrain ? (await readAcceptedDual(m, () => { own(store); }, dependencies.acceptedStorage)).material
+            : readRetainedRows(db, m, dependencies.directory), readParent: ref => readExactCommit(db, ref) });
     own(store); return result;
 };
 export const installVerifiedDatasetCommit = async (store: StoreApi, db: StorageDatabase, marker: DatasetCommitMarker, result: Reconstructed, dependencies: RecoveryDependencies) => {
@@ -56,6 +58,29 @@ export const installVerifiedDatasetCommit = async (store: StoreApi, db: StorageD
         data: structuredClone(result.output.tables.find(t => t.name === marker.bundle.tables.find(t => t.tableId === marker.bundle.primaryTableId)?.name)!.rows) };
     if (getCsvDatasetVersion(csv) !== marker.bundle.datasetVersion) throw new Error('recovery_version_mismatch');
     if (!same(await readCurrentCommit(db, store), marker)) throw new Error('input_version_changed'); own(store);
+    if (marker.acceptedDualGrain) {
+        const previous = store.getState(), signature = JSON.stringify(previous.datasetBundle);
+        const current = () => { own(store); if (JSON.stringify(store.getState().datasetBundle) !== signature) throw new Error('input_version_changed'); };
+        // Always authenticate durable backing, even when this tab has retained replay material.
+        await readAcceptedDual(marker, current, dependencies.acceptedStorage); current();
+        const prepared = await (dependencies.prepareTablesBinding ?? prepareAcceptedTablesBinding)(marker, result.output, current, lease.signal);
+        try {
+            current(); if (!same(await readCurrentCommit(db, store), marker)) throw new Error('input_version_changed'); current();
+            prepared.activate();
+            store.setState({ datasetBundle: structuredClone(marker.bundle), csvData: csv, canonicalCsvData: csv, rawCsvData: null,
+                datasetCommitBindingStatus: 'ready', activeDataQuery: null, datasetSemanticSnapshot: null, semanticDatasetVersion: null,
+                semanticStatus: 'idle', columnRegistry: null, columnProfiles: [], canonicalBuildMeta: null, candidateRecovery: null,
+                activeMetricMappingValidation: null, activeSpreadsheetFilter: null, spreadsheetFilterFunction: null,
+                vectorStoreDocuments: [], pendingVectorMemoryDocs: [], vectorMemoryState: 'cold', reportMemoryScope: null,
+                currentView: 'analysis_dashboard', initialAnalysisStatus: 'ready',
+                duckDbSessionStatus: { ...prepared.binding, status: 'ready', fallbackReason: null, lastSyncedAt: new Date() } });
+            registerSandboxTableRows(marker.bundle.bundleId, { tables: result.output.tables.map(t => ({ ...t,
+                tableId: marker.bundle.tables.find(b => b.name === t.name)!.tableId, columns: t.schema.map(c => c.name) })), lineage: [], relationships: [] }, marker.bundle.datasetVersion);
+            rememberRecoveryMaterial(store, marker.commitId, result.material);
+            registerSessionResource(lease.scope, () => clearSandboxTableRows(marker.bundle.bundleId));
+            prepared.finish(); registerSessionResource(lease.scope, () => prepared.dispose()); return;
+        } catch (e) { prepared.rollback(); if (canCommitRun(store, lease)) store.setState(acceptedPublicationSnapshot(previous)); throw e; }
+    }
     store.setState({ datasetBundle: structuredClone(marker.bundle), csvData: csv, canonicalCsvData: structuredClone(csv), rawCsvData: null,
         datasetCommitBindingStatus: 'rebinding', activeDataQuery: null, datasetSemanticSnapshot: null, semanticDatasetVersion: null, semanticStatus: 'idle',
         columnRegistry: null, columnProfiles: [], canonicalBuildMeta: null, activeMetricMappingValidation: null,

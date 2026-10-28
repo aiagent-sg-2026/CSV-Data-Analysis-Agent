@@ -41,6 +41,8 @@ export interface QueryPostAggregateClause {
 }
 
 export interface QueryPlan {
+    /** Exact accepted table/grain. Omitted means the primary entity table, never a join. */
+    tableId?: string;
     select?: string[];
     where?: QueryWhereClause;
     groupBy?: string[];

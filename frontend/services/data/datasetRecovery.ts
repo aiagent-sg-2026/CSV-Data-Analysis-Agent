@@ -8,6 +8,7 @@ import { assertRunActive } from '../session/sessionOwnership';
 import { sha256Bytes } from './sourceDigest';
 import { parseCandidateOutput } from './candidateContract';
 import { validateCandidateSemantics } from './candidateValidation';
+import { assessDatasetRelationship } from './datasetBundle';
 import { validateCodeRunRequest } from '../agent/execution/codeExecutionContract';
 import { createJavaScriptGuest } from '../sandbox/javascriptGuestClient';
 import { JAVASCRIPT_GUEST_PIN, GUEST_LOG_BYTES, resolveGuestLimits } from '../sandbox/javascriptGuestProtocol';
@@ -111,6 +112,20 @@ export const validateRecoveryMaterial = async (marker: DatasetCommitMarker, mate
         const saved = marker.bundle.tables.find(b => b.name === t.name);
         return !saved || saved.rowCount !== t.rowCount || saved.role !== t.role || JSON.stringify(saved.schema) !== JSON.stringify(t.schema);
     })) throw new Error('recovery_output_mismatch');
+    if (m.validationBinding.contract.completeSourceCells) {
+        if (JSON.stringify(marker.lineage) !== JSON.stringify({ tables: output.tables.map(t => ({ name: t.name, cells: t.lineage })), excludedRows: output.excludedRows })
+            || marker.bundle.relationships.length !== output.relationships.length) throw new Error('recovery_relationship_mismatch');
+        for (const relation of output.relationships) {
+            const from = marker.bundle.tables.find(t => t.name === relation.fromTable)!, to = marker.bundle.tables.find(t => t.name === relation.toTable)!;
+            const saved = marker.bundle.relationships.find(r => r.fromTableId === from.tableId && r.toTableId === to.tableId);
+            if (!saved) throw new Error('recovery_relationship_mismatch');
+            const assessed = assessDatasetRelationship({ fromTable: from, toTable: to,
+                fromRows: output.tables.find(t => t.name === from.name)!.rows, toRows: output.tables.find(t => t.name === to.name)!.rows,
+                fromKeys: relation.fromKeys, toKeys: relation.toKeys }, saved.validatedAt);
+            if (assessed.decision !== 'trusted' || assessed.cardinality !== relation.cardinality
+                || JSON.stringify(assessed) !== JSON.stringify(saved)) throw new Error('recovery_relationship_mismatch');
+        }
+    }
     return { output, material, manifest: m };
 };
 
