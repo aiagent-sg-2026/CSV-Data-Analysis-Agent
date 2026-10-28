@@ -183,6 +183,7 @@ const run = async (
         return new Error(`initial_cleaning_requires_exact_candidate_approval: dataset.applyTransform cannot publish cleaning in this governed run. ${planned} ${next} A real repair needs the exact candidate flow: candidate_infer_meaning, workspace_write your JavaScript program, code_run, candidate_stage, candidate_validate, then candidate_request_approval for exact human approval.`);
     };
     let meaningRejections = 0, consecutiveMeaningRejections = 0, meaningStopReason = '';
+    let validatedMultiTableDraft = false;
     // While the skip is still permitted, the threshold first returns skip guidance and gives a bounded grace window.
     let meaningSkipGuidance = '', meaningGuidanceTurn = 0;
     // Calls the wrapper already classified; finishTurn counts only the rest (calls that never reached execute()).
@@ -478,7 +479,7 @@ const run = async (
             }
             return nextStageIndex >= STAGES.length
                 || structureRepair?.progress.state === 'exhausted'
-                || Boolean(pendingApproval || pendingMeaning)
+                || Boolean(pendingApproval || pendingMeaning || validatedMultiTableDraft)
                 || results.at(-1)?.decision === 'fail'
                 ? { action: 'end' } : { action: 'continue' };
         },
@@ -532,7 +533,10 @@ const run = async (
                 headerGateBlocked = true;
                 if (!unchanged) throw new Error('initial_repair_source_changed_during_diagnostics');
                 // Solver-backed alternatives are real semantic questions, not a blanket structural stop.
-                if (headerAlignmentDiagnostic.status === 'semantic_review_required') {
+                const source = store.getState().datasetBundle?.source.inspection;
+                const boundedProposalRepair = Boolean(store.getState().datasetBundle?.tables?.length && source
+                    && source.byteSize <= 65536 && source.recordCount <= 2000 && options.codingPreparation?.enabled);
+                if (headerAlignmentDiagnostic.status === 'semantic_review_required' && !boundedProposalRepair) {
                     try { await awaitOwned(import('../../structureRepairConfirmation').then(m => m.prepareStructureRepairReview(store)), store, lease); }
                     catch { /* Unavailable original bytes cannot authorize a semantic choice. */ }
                     assertRunActive(store, lease);
@@ -560,6 +564,7 @@ const run = async (
                 if(t.name==='candidate_infer_meaning')observedMeaningCalls.add(args[0]);
                 assertRunActive(store,lease);
                 if(pendingApproval)throw new Error('initial_approval_pending');
+                if(validatedMultiTableDraft)throw new Error('candidate_multi_table_atomic_promotion_unavailable');
                 if (structureRepair) structureRepair.beforeTool(t.name, args[1]);
                 else if(t.name!=='read_skill'&&nextStageIndex!==2&&nextStageIndex!==3)throw new Error('initial_coding_phase_unavailable');
                 if(t.name==='candidate_infer_meaning'&&meaningSkipGuidance)throw new Error(meaningSkipGuidance);
@@ -582,11 +587,21 @@ const run = async (
                             result={...result,content:[{type:'text',text:annotated}]};
                         }
                     }
+                    if (t.name === 'candidate_validate') {
+                        const receipt = executorPreparation!.task.validationState().receipt;
+                        if (receipt?.decision === 'validated' && store.candidateStaging?.commitRestriction(receipt.candidateId)) {
+                            const { detachEnvelopeCandidateDraft } = await import('../../../data/detachedCandidateDraft');
+                            detachEnvelopeCandidateDraft(store, store.candidateStaging.captureDraftRead(receipt.candidateId));
+                            // Publication is unsupported: stop successfully at the read-only draft
+                            // boundary, not a provider retry loop that spends the remaining budget.
+                            validatedMultiTableDraft = true;
+                        }
+                    }
                     pendingMeaning=pendingSpillMeaningChoice(store);
                     if (pendingMeaning) structureRepair?.awaitingMeaning();
                     pendingApproval=pendingPiCandidateApproval(store);
                     if (pendingApproval) structureRepair?.awaitingApproval();
-                    return {...result,...(pendingApproval || pendingMeaning || structureRepair?.progress.state === 'exhausted' ? {terminate:true}:{})};
+                    return {...result,...(pendingApproval || pendingMeaning || validatedMultiTableDraft || structureRepair?.progress.state === 'exhausted' ? {terminate:true}:{})};
                 }catch(error){
                     // A thrown proposal error is also a rejection unless the run or scope failed; carry new skip guidance in the same tool result.
                     const guidance=t.name==='candidate_infer_meaning'&&error instanceof Error
@@ -638,7 +653,8 @@ const run = async (
             status='blocked';
         }else if (structureRepair) {
             status = 'blocked';
-            errorMessage = structureRepair.progress.state === 'exhausted' ? 'initial_repair_exhausted' : executorPreparation?.task.blockedReason || 'initial_repair_incomplete';
+            errorMessage = structureRepair.progress.state === 'exhausted' ? 'initial_repair_exhausted' : structureRepair.progress.state === 'validated_draft'
+                ? 'candidate_multi_table_atomic_promotion_unavailable' : executorPreparation?.task.blockedReason || 'initial_repair_incomplete';
         }else if (executorPreparation && results.some(result => result.decision === 'fail')) {
             status = headerGateBlocked ? 'blocked' : 'failed';
             errorMessage = results.find(result => result.decision === 'fail')!.summary;

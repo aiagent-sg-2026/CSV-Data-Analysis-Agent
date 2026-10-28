@@ -24,6 +24,7 @@ export {createCandidateCommitService} from '../../../data/candidateCommit';
 export {preparePiInitialCodingUiSmoke} from './piInitialCodingQualification';
 export {preparePiStructureRepairSmoke,queryPiStructureRepairSmoke} from './piStructureRepairQualification';
 export {preparePiLargeCoordinatorSmoke} from './piLargeCoordinatorQualification';
+export {preparePiDualGrainSmoke} from './piDualGrainQualification';
 export {executeEvaluationCase,executeEvaluationInitialProbe} from './piEvaluationRuntime';
 export {runWeightedMedianDemoProbe} from './piWeightedMedianQualification';
 export {runRepairComputationDemoProbe} from './piRepairComputationQualification';

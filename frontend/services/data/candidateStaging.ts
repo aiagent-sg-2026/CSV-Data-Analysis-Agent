@@ -5,7 +5,7 @@ import {captureCodeTables,codeDigest} from '../agent/execution/codeTableInputs';
 import type {AgentTaskContract} from '../agent/runtime/pi/piTaskContract';
 import {assertRunActive,assertSessionResourceActive,registerSessionResource,rootStore,type ExecutionContext} from '../session/sessionOwnership';
 import {validateCandidateSemantics,type CandidateSemanticVerdict,type ValidationInputs} from './candidateValidation';
-import {readSourceBytes,readSourceRecords} from './immutableCsvSource';
+import {readSourceBytes,readSourceRecords,captureSourceRangeFence} from './immutableCsvSource';
 import {parseCandidateOutput,type CandidateRowOrigin,type CandidateCellOrigin,type StagedDatasetCandidate} from './candidateContract';
 import {buildBuiltinToolRegistry,resolveAllowedTools} from '../agent/tools/toolRegistry';
 import {buildToolAvailabilityContext} from '../agent/tools/toolGovernance';
@@ -13,6 +13,7 @@ import type {ToolName} from '../../types';
 import type {HostCandidateValidationContract} from './candidateValidationBinding';
 import {assertSpillMeaning,spillSchema,spillRow,validateSpillCandidate,type SourceSpillCapability} from './spillCandidateValidation';
 import {spillBytes} from './candidateSpill';
+import {captureInferredMeaningBinding} from './inferCandidateMeaning';
 
 const freeze=<T>(v:T):T=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
 export interface CandidateValidationReceipt extends CandidateSemanticVerdict {
@@ -44,11 +45,16 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
     const sourceBinding=sourceAtPreparation?{sourceId:sourceAtPreparation.sourceId,sha256:sourceAtPreparation.sha256}:null;
     const validContractBinding=Boolean(supplied&&supplied.sessionId===lease.scope.sessionId&&supplied.sessionEpoch===lease.scope.epoch&&supplied.goal===getTask().goal
         &&JSON.stringify(supplied.inputBindings)===JSON.stringify(getTask().inputBindings)&&JSON.stringify(supplied.protectedSource)===JSON.stringify(sourceBinding));
+    // Root contracts are a trusted general host integration, not a replay channel for
+    // inferred metadata. Inference custody is issued for this exact scratch namespace.
+    const initialCustody = supplied?.inference ? captureInferredMeaningBinding(supplied, namespaceId) : undefined;
     let validationBinding=validContractBinding?freeze(structuredClone(supplied!)):undefined;
     let validationContract=validationBinding?.contract;
+    let meaningCheck: (() => void) | undefined = initialCustody?.check;
+    let draftOnlyMeaning = initialCustody?.draftOnly ?? false;
     const differences=new Map<string,{mappedCells:number;changedCells:number|null;changes:unknown[];truncated:boolean}>();let disposed=false,suspended=false,bytes=0;
     const own=(context?:ExecutionContext)=>{
-        assertRunActive(store,lease);
+        assertRunActive(store,lease); meaningCheck?.();
         if(disposed||suspended||workspace.taskId!==taskId||getTask().taskId!==taskId
             ||context&&(context.lease!==lease||!context.toolCallId||!context.stepId))throw new Error('scope_revoked');
     };
@@ -175,10 +181,14 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             checkOrigin(o,true);const k=key(o),seen=accounted.get(k)??new Set<number>();seen.add(o.row);accounted.set(k,seen);
         }
         for(const e of value.excludedRows){checkOrigin(e.origin,false);const k=key(e.origin),seen=excluded.get(k)??new Set<number>();
-            if(seen.has(e.origin.row)||accounted.get(k)?.has(e.origin.row))throw new Error('candidate_accounting_conflict');seen.add(e.origin.row);excluded.set(k,seen);}
+            const header = validationContract?.completeSourceCells && validationContract.exclusions.find(x => x.origin.kind === e.origin.kind && x.origin.name === e.origin.name
+                && x.origin.row === e.origin.row && x.role === 'header' && e.reason === x.role);
+            // Header dimension lineage is a use of evidence, not an included additive fact.
+            // Only the already compiled host contract can permit this row overlap.
+            if(seen.has(e.origin.row)||accounted.get(k)?.has(e.origin.row)&&!header)throw new Error('candidate_accounting_conflict');seen.add(e.origin.row);excluded.set(k,seen);}
         const counts=new Map((receipt.coverage??[]).map(c=>[`table:${c.name}`,c.rowCount]));
         for(const s of sources.values())counts.set(`source:${s.sourceId}`,protectedSource!.recordCount);
-        for(const [k,count] of counts)if((accounted.get(k)?.size??0)+(excluded.get(k)?.size??0)!==count)throw new Error('candidate_lineage_incomplete');
+        for(const [k,count] of counts)if(new Set([...(accounted.get(k)??[]),...(excluded.get(k)??[])]).size!==count)throw new Error('candidate_lineage_incomplete');
         const changes:unknown[]=[];let changedCells=0,mappedCells=0;
         for(const t of value.tables)for(const l of t.lineage){
             mappedCells++;const after=t.rows[l.row][l.column];
@@ -213,13 +223,14 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
     };
     const bindInferredMeaning=(binding:HostCandidateValidationContract,context:ExecutionContext)=>{
         own(context);
+        const custody = captureInferredMeaningBinding(binding, namespaceId);
         const jobs=execution.inspect(undefined,context);
         if(supplied||candidates.size||!Array.isArray(jobs)||jobs.length)throw new Error('meaning_contract_locked');
         const source=store.getState().datasetBundle?.source.inspection;
         if(binding.inference?.kind!=='ai_inferred'||binding.sessionId!==lease.scope.sessionId||binding.sessionEpoch!==lease.scope.epoch
             ||binding.goal!==getTask().goal||JSON.stringify(binding.inputBindings)!==JSON.stringify(getTask().inputBindings)
             ||JSON.stringify(binding.protectedSource)!==JSON.stringify(source?{sourceId:source.sourceId,sha256:source.sha256}:null))throw new Error('input_version_changed');
-        supplied=freeze(structuredClone(binding));validationBinding=supplied;validationContract=supplied.contract;
+        supplied=freeze(structuredClone(binding));validationBinding=supplied;validationContract=supplied.contract;meaningCheck=custody.check;draftOnlyMeaning=custody.draftOnly;
         return validationRequirements();
     };
     const validationReceipt=(id:string)=>{current(id);validationChecks.get(id)?.();return validations.get(id);};
@@ -381,7 +392,13 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             inputCoverage:c.execution.coverage??[],excludedRows:c.excludedRows,relationships:c.relationships,valueDiff,
             note:'Structural comparison only. The separate host validation receipt provides the independent semantic decision.'};
     };
+    const commitRestriction=(id:string)=>{
+        current(id);
+        return draftOnlyMeaning ? 'candidate_multi_table_atomic_promotion_unavailable' : null;
+    };
+    const assertCommitSupported=(id:string)=>{const restriction=commitRestriction(id);if(restriction)throw new Error(restriction);};
     const captureCommitCheck=(id:string)=>{
+        assertCommitSupported(id);
         const candidate=current(id),validation=validationReceipt(id),bindingCheck=validationBindingChecks.get(id);
         if(!validation||validation.decision!=='validated'||!candidate.spill&&!bindingCheck)throw new Error('validation_failed');
         return (target:StoreApi,context:ExecutionContext)=>{
@@ -428,12 +445,32 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             const fence=()=>{check(target);current();};fence();const chunk=await reader.readChunk(sequence,fence);fence();return chunk;
         }});
     };
+    const captureDraftRead = (id: string) => {
+        const candidate = current(id), receipt = validationReceipt(id), state = authorityRoot.getState(), task = getTask();
+        if (!draftOnlyMeaning || candidate.spill || candidate.tables.length !== 2 || !validationContract?.completeSourceCells || receipt?.decision !== 'validated') throw new Error('candidate_draft_unavailable');
+        const fence = captureSourceRangeFence(authorityRoot, candidate.protectedSource!.sourceId);
+        const signature = JSON.stringify([state.datasetBundle, state.csvData, state.rawCsvData, state.canonicalCsvData, state.rawIntakeIr, state.confirmedAnalysisGoal, state.settings.runtimeAccessControl]);
+        const check = (target: StoreApi) => {
+            assertSessionResourceActive(target, lease.scope); fence();
+            const now = target.getState(), active = now.activeAgentTask;
+            if (now.datasetBundle !== state.datasetBundle || now.csvData !== state.csvData || now.rawCsvData !== state.rawCsvData || now.canonicalCsvData !== state.canonicalCsvData
+                || JSON.stringify([now.datasetBundle, now.csvData, now.rawCsvData, now.canonicalCsvData, now.rawIntakeIr, now.confirmedAnalysisGoal, now.settings.runtimeAccessControl]) !== signature
+                || !active || JSON.stringify([active.taskId, active.revision, active.goal, active.scope, active.inputBindings]) !== JSON.stringify([task.taskId, task.revision, task.goal, task.scope, task.inputBindings])) throw new Error('candidate_draft_stale');
+            for (const ref of [candidate.execution.program!, ...(candidate.execution.inputs ?? []), ...candidate.outputArtifacts]) {
+                const actual = workspace.read(ref.path);
+                if (actual.sha256 !== ref.sha256 || actual.revision !== ref.revision) throw new Error('workspace_conflict');
+            }
+        };
+        check(authorityRoot);
+        return Object.freeze({ candidate, receipt, check });
+    };
     const captureRecovery = (id:string) => {
+        assertCommitSupported(id);
         const c=current(id), receipt=validationReceipt(id), inputs=recoveryInputs.get(id);
         if (!validationBinding || receipt?.decision!=='validated' || !inputs) throw new Error('recovery_metadata_unavailable');
         return { binding:structuredClone(validationBinding), inputs:structuredClone(inputs), execution:c.execution };
     };
-    return Object.freeze({namespaceId,stage,read,diff,validate,validationReceipt,validationRequirements,bindInferredMeaning,captureCommitCheck,captureSpillRead,captureRecovery,preview,previewAsync,validationError:(id:string)=>{own();return validationErrors.get(id);},
+    return Object.freeze({namespaceId,stage,read,diff,validate,validationReceipt,validationRequirements,bindInferredMeaning,commitRestriction,captureCommitCheck,captureSpillRead,captureDraftRead,captureRecovery,preview,previewAsync,validationError:(id:string)=>{own();return validationErrors.get(id);},
         suspend:()=>{own();suspended=true;},list:()=>{
             own();const live:StagedDatasetCandidate[]=[];
             for(const id of candidates.keys()){

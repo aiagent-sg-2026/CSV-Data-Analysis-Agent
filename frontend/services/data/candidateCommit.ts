@@ -90,6 +90,10 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         if (!validCommitKey(input.idempotencyKey)) throw new Error('idempotency_key_invalid');
         const candidate = port.read(candidateId), validation = port.validationReceipt(candidateId);
         if (!validation || validation.decision !== 'validated') throw new Error('validation_failed');
+        // Only newly inferred dual-grain drafts lack qualified atomic promotion.
+        // The staging closure owns this provenance; table count/serialized flags do not.
+        const restriction = port.commitRestriction(candidateId);
+        if (restriction) throw new Error(restriction);
         if(candidate.spill&&(candidate.tables.length!==1||candidate.execution.inputs?.length||candidate.execution.coverage?.length||candidate.execution.sources?.length))throw new Error('candidate_spill_inputs_unsupported');
         const sourceBundle = store.getState().datasetBundle;
         if (!sourceBundle) throw new Error('complete_input_unavailable');

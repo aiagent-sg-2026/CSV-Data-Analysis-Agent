@@ -111,6 +111,7 @@ export const TaskInspectionView: React.FC<{ onReturnToChat?: () => void; onOpenR
                     <p className="break-all text-xs">Scope: {candidate.scopeDigest}</p><p className="break-all text-xs">Change: {candidate.changeDigest}</p>
                     <h4 className="font-medium">Host grain and scope requirements</h4><pre className={pre}>{candidate.requirements}</pre>
                     {candidate.requirementsTruncated && <p>Requirements preview truncated.</p>}
+                    {candidate.commitRestriction === 'candidate_multi_table_atomic_promotion_unavailable' && <p role="status">Multi-table Draft / Uncommitted. Atomic all-table promotion is unavailable; neither table can be accepted. Meaning selection is not exact Dataset Commit approval.</p>}
                     {candidate.tables.map(t => <p key={t.name} className="break-words">{t.name}: {t.rows} rows · {t.columns.join(', ')}</p>)}
                     <h4 className="font-medium">Structural diff</h4><p>This comparison is structural; independent validation supplies the semantic decision.</p><pre className={pre}>{candidate.diff}</pre>
                     {candidate.diffTruncated && <p>Diff preview truncated.</p>}

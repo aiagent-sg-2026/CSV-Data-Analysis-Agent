@@ -66,6 +66,13 @@ describe('task inspection UI', () => {
         expect(screen.getByText('grain: ID; group: Town')).toBeInTheDocument(); expect(screen.getByText(/row 2: subtotal/)).toBeInTheDocument();
         expect(screen.getByText(/expectedMinor: -500/)).toBeInTheDocument(); expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
     });
+    it.each([null, 'candidate_multi_table_atomic_promotion_unavailable'])('does not infer a commit restriction from table count (%s)', commitRestriction => {
+        state.taskInspection.candidate = { candidateId: 'candidate', taskRevision: 2, scopeDigest: 'scope', changeDigest: 'change',
+            requirements: '', requirementsTruncated: false, tables: [{ name: 'facts', rows: 2, columns: ['ID'] }, { name: 'names', rows: 2, columns: ['ID'] }],
+            excludedCount: 0, exclusions: [], diff: '', diffTruncated: false, commitRestriction };
+        render(<TaskInspectionView onOpenRecovery={vi.fn()} />); fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+        expect(Boolean(screen.queryByText(/Multi-table Draft \/ Uncommitted/))).toBe(Boolean(commitRestriction));
+    });
     it('rechecks live approval at click time and withholds historical or stale actions', () => {
         state.pendingClarification = { options: [{ label: 'Approve', value: 'approve' }], resumeContext: { piCandidateApproval: { reviewId: 'live', reviewDigest: 'digest' } } };
         inspectReview.mockReturnValue({ available: true, reason: 'Fresh host recheck required.' });

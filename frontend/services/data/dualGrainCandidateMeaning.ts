@@ -4,8 +4,7 @@ import type { CandidateMeaningProposal } from './inferredCandidateMeaning';
 import { convertValidationCell, validateCandidateSemantics, type CandidateValidationContract, type ValidationInputs } from './candidateValidation';
 
 /** Bounded source-coordinate proposal, not an oracle, execution receipt or commit grant.
- * This compiler is deliberately not exposed by candidate.infer_meaning yet: streaming storage,
- * source-bound semantic selection and atomic multi-table activation must land together first.
+ * Public inference requires a host-custodied exact semantic selection before resolving ambiguity.
  */
 export interface DualGrainCandidateMeaning {
     input: { kind: 'source'; name: string };
@@ -22,10 +21,16 @@ export interface DualGrainCandidateMeaning {
         projections: Array<Array<{ column: string; sourceColumn: number; sourceRow?: number }>>;
     }>;
     relationships: CandidateRelationship[];
-    exclusions: CandidateMeaningProposal['exclusions'];
+    exclusions: Array<{ row: number; role: 'header' | 'note' | 'duplicate' | 'subtotal' | 'grand_total'; duplicateOf?: number;
+        cells?: Array<{ column: number; kind: 'label' } | { column: number; kind: 'sum'; table: string; metric: string }> }>;
     assumptions: string[];
 }
-export const DUAL_GRAIN_MEANING_LIMITS = Object.freeze({ sourceRows: 50000, sourceCells: 200000, outputRows: 50000, outputCells: 80000, projections: 256 });
+export const DUAL_GRAIN_MEANING_LIMITS = Object.freeze({ sourceBytes: 65536, sourceRows: 2000, sourceCells: 200000, proposalBytes: 65536, outputBytes: 1048576, outputRows: 50000, outputCells: 80000, projections: 256 });
+export interface DualGrainMeaningAlternatives {
+    input: DualGrainCandidateMeaning['input'];
+    interpretations: Array<{ label: string; meaning: DualGrainCandidateMeaning }>;
+    assumptions: string[];
+}
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const exact = (v: unknown, required: string[], optional: string[] = []) => object(v)
     && required.every(k => Object.hasOwn(v, k)) && Object.keys(v).every(k => [...required, ...optional].includes(k));
@@ -54,10 +59,25 @@ export const isDualGrainCandidateMeaning = (value: unknown): value is DualGrainC
         && Array.isArray(p.relationships) && p.relationships.length === 1 && p.relationships.every(r => exact(r, ['fromTable', 'toTable', 'fromKeys', 'toKeys', 'cardinality'])
             && text(r.fromTable) && text(r.toTable) && names(r.fromKeys) && names(r.toKeys) && r.fromKeys.length > 0 && r.fromKeys.length === r.toKeys.length
             && r.cardinality === 'many_to_one')
-        && Array.isArray(p.exclusions) && p.exclusions.length <= 2048 && p.exclusions.every(e => exact(e, ['row', 'role'], ['duplicateOf']) && index(e.row)
-            && ['header', 'note', 'subtotal', 'grand_total', 'duplicate'].includes(e.role) && (e.duplicateOf === undefined || index(e.duplicateOf)))
+        && Array.isArray(p.exclusions) && p.exclusions.length <= 2048 && p.exclusions.every(e => exact(e, ['row', 'role'], ['duplicateOf', 'cells']) && index(e.row)
+            && ['header', 'note', 'subtotal', 'grand_total', 'duplicate'].includes(e.role) && (e.duplicateOf === undefined || index(e.duplicateOf))
+            && (e.cells === undefined || Array.isArray(e.cells) && e.cells.length <= 256 && e.cells.every(c =>
+                (c.kind === 'label' ? exact(c, ['column', 'kind']) : c.kind === 'sum' && exact(c, ['column', 'kind', 'table', 'metric']) && text(c.table) && text(c.metric)) && index(c.column))))
         && Array.isArray(p.assumptions) && p.assumptions.length <= 12 && p.assumptions.every(text);
 };
+
+export const isDualGrainMeaningAlternatives = (value: unknown): value is DualGrainMeaningAlternatives => {
+    if (!exact(value, ['input', 'interpretations', 'assumptions'])) return false;
+    const p = value as DualGrainMeaningAlternatives;
+    return Array.isArray(p.interpretations) && p.interpretations.length === 2
+        && p.interpretations.every(i => exact(i, ['label', 'meaning']) && text(i.label) && isDualGrainCandidateMeaning(i.meaning)
+            && JSON.stringify(i.meaning.input) === JSON.stringify(p.input))
+        && p.interpretations[0].label !== p.interpretations[1].label
+        && JSON.stringify(p.interpretations[0].meaning) !== JSON.stringify(p.interpretations[1].meaning)
+        && Array.isArray(p.assumptions) && p.assumptions.length <= 12 && p.assumptions.every(text)
+        && new TextEncoder().encode(JSON.stringify(p)).byteLength <= DUAL_GRAIN_MEANING_LIMITS.proposalBytes;
+};
+const numericFact = (value: string) => value.trim() !== '' && /^[-+]?\d/.test(value.trim());
 
 /** Independently builds values from complete ORIGINAL input, before any guest output exists.
  * A structurally valid result still has a semantic ambiguity gate. No caller can obtain an
@@ -126,23 +146,61 @@ export const compileDualGrainCandidateMeaning = (proposal: DualGrainCandidateMea
             lineage: table.rows.flatMap((r, row) => r.cells.map(c => ({ row, column: c.column, origins: [c.origin] }))) });
     }
     const [primary, detail] = contract.tables;
+    const [primarySpec, detailSpec] = p.tables;
+    if (primarySpec.projections.length !== 1) throw new Error('meaning_grain_scope_unsupported');
     const relationship = p.relationships[0];
     if (relationship.fromTable !== detail.name || relationship.toTable !== primary.name
         || JSON.stringify(relationship.toKeys) !== JSON.stringify(primary.grain)) throw new Error('meaning_relationship_unresolved');
+    const sameRecords = JSON.stringify(primarySpec.detailRanges) === JSON.stringify(detailSpec.detailRanges);
+    for (const projection of detailSpec.projections) for (let i = 0; i < relationship.fromKeys.length; i++) {
+        const from = projection.find(c => c.column === relationship.fromKeys[i]);
+        const to = primarySpec.projections[0].find(c => c.column === relationship.toKeys[i]);
+        if (!from || !to || from.sourceRow !== undefined || to.sourceRow !== undefined || sameRecords && from.sourceColumn !== to.sourceColumn) throw new Error('meaning_relationship_source_mismatch');
+    }
+    if (!sameRecords) {
+        // Document-header/detail source groups: no synthetic parent IDs or free lookup maps.
+        // Each detail belongs to the immediately preceding included document header.
+        const parents = primary.rows.map((r, i) => ({ row: r.cells.find(c => c.column === primary.grain[0])!.origin.row, values: reference.tables[0].rows[i] }));
+        let parentIndex = -1;
+        for (let i = 0; i < detail.rows.length; i++) {
+            const row = detail.rows[i].cells.find(c => c.column === relationship.fromKeys[0])!.origin.row;
+            while (parentIndex + 1 < parents.length && parents[parentIndex + 1].row < row) parentIndex++;
+            const parent = parents[parentIndex];
+            if (!parent || parents.some(p => p.row === row) || relationship.fromKeys.some((key, k) => reference.tables[1].rows[i][key] !== parent.values[relationship.toKeys[k]])) throw new Error('meaning_document_group_boundary_invalid');
+        }
+    }
     contract.relationships = [{ ...relationship, maxAmplification: 1, requireCoverage: true }];
+    const headerRows = new Set(p.tables.flatMap(t => [...t.columns.map(c => c.header.row), ...t.projections.flatMap(projection => projection.flatMap(c => c.sourceRow === undefined ? [] : [c.sourceRow]))]));
     for (const e of p.exclusions) {
         if (e.role === 'note' && raw[e.row].some(v => v.trim() !== '')) throw new Error('meaning_note_contains_unverified_cells');
-        // Footer roles/scopes need their own source-bound semantic decision and alignment.
-        // Never use a matching total, label heuristic, or padding to silently establish either.
-        if (e.role === 'subtotal' || e.role === 'grand_total') throw new Error('meaning_dual_grain_footer_alignment_unsupported');
-        contract.exclusions.push({ origin: { kind: 'source', name: p.input.name, row: e.row }, role: e.role, checks: [],
+        if (e.role === 'header' && (raw[e.row].some(numericFact) || !headerRows.has(e.row)
+            && ![...headerRows].some(row => JSON.stringify(raw[row]) === JSON.stringify(raw[e.row])))) throw new Error('meaning_header_role_unverified');
+        // Only an explicitly aligned grand total over ALL rows is supported. Human choice
+        // establishes role; independent exact sums establish values, never the reverse.
+        if (e.role === 'subtotal' || e.role !== 'grand_total' && e.cells !== undefined) throw new Error('meaning_dual_grain_footer_alignment_unsupported');
+        const checks: CandidateValidationContract['exclusions'][number]['checks'] = [];
+        if (e.role === 'grand_total') {
+            if (!e.cells || e.cells.length !== raw[e.row].length || new Set(e.cells.map(c => c.column)).size !== raw[e.row].length) throw new Error('meaning_footer_cell_coverage');
+            for (const cell of e.cells) {
+                const value = read(e.row, cell.column);
+                if (cell.kind === 'label') { if (numericFact(value)) throw new Error('meaning_footer_unverified_numeric'); }
+                else {
+                    const table = contract.tables.find(t => t.name === cell.table);
+                    if (!table?.metrics.some(m => m.column === cell.metric)) throw new Error('meaning_footer_mapping_invalid');
+                    checks.push({ column: cell.column, table: cell.table, metric: cell.metric, detailRows: table.rows.map((_, i) => i) });
+                }
+            }
+            if (!checks.length) throw new Error('meaning_footer_mapping_invalid');
+        }
+        contract.exclusions.push({ origin: { kind: 'source', name: p.input.name, row: e.row }, role: e.role, checks,
             ...(e.duplicateOf === undefined ? {} : { duplicateOf: { kind: 'source' as const, name: p.input.name, row: e.duplicateOf } }) });
         reference.excludedRows.push({ origin: { kind: 'source', name: p.input.name, row: e.row }, reason: e.role });
     }
+    if (new TextEncoder().encode(JSON.stringify(reference)).byteLength > DUAL_GRAIN_MEANING_LIMITS.outputBytes) throw new Error('meaning_resource_limit');
     const verdict = validateCandidateSemantics(reference, contract, inputs);
     if (verdict.decision !== 'validated') throw new Error(verdict.reasonCodes.join(',') || 'meaning_reference_invalid');
-    // This unresolved gate is intentional until normal Pi's exact A/B meaning selection can
-    // bind this entire proposal. It is distinct from later exact Dataset Commit approval.
+    // Only public inference with a private source-fenced semantic selection may resolve this.
+    // A model-provided flag can never clear it; exact Dataset Commit remains separate.
     contract.ambiguities = ['dual_grain_business_roles_require_source_bound_confirmation'];
     return { contract, reference, structuralVerdict: verdict, assumptions: p.assumptions };
 };

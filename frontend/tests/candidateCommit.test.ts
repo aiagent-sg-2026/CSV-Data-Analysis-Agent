@@ -6,6 +6,8 @@ import {executeQuickJsGuest} from '../services/sandbox/quickJsGuest';
 import {resolveGuestLimits} from '../services/sandbox/javascriptGuestProtocol';
 import {preparePiExecutor} from '../services/agent/runtime/pi/piExecutorPreparation';
 import {prepareCandidateCommitFixture} from '../services/data/candidateCommitQualificationFixture';
+import {stageRecoveryQualificationCandidate} from '../services/data/datasetRecoveryQualificationFixture';
+import {getSandboxTableRows} from '../services/data/sandboxTableRegistry';
 import {createCandidateCommitService} from '../services/data/candidateCommit';
 import {beginRun,beginSessionTransition,finishRun,scopeRunStore,cancelOwnedRun} from '../services/session/sessionOwnership';
 import {drainSessionPersistence,queueSessionWrite} from '../services/persistence/currentSessionPersistence';
@@ -60,6 +62,27 @@ describe('host exact candidate commit boundary',()=>{
             expect(f.root.getState().activeExecution?.runId).toBe(fresh.runId);
             prep.task.close('completed');finishRun(f.root,fresh);
         }finally{f.cleanup();}
+    });
+    it('preserves general multi-table exact review, commit, relationship and recovery metadata',async()=>{
+        const f=await prepareCandidateCommitFixture({guest});
+        f.prep.task.close('blocked');finishRun(f.root,f.lease);
+        const next=await stageRecoveryQualificationCandidate(f.root,'multi',guest);
+        try{
+            const service=createCandidateCommitService(next.store,{database:async()=>db,bind});
+            const review=await service.review(next.candidate.candidateId,{idempotencyKey:'legacy-multi',primaryTable:'facts'});
+            expect(review.tables.map(t=>t.name)).toEqual(['facts','names']);
+            const checkpoint=await service.recoveryCheckpoint(review);
+            expect(checkpoint.proposal.bundle.relationships[0].decision).toBe('trusted');
+            expect(typeof next.store.candidateStaging!.captureCommitCheck(next.candidate.candidateId)).toBe('function');
+            const result=await service.commit(service.approve(review));
+            expect(result).toMatchObject({status:'committed',admitted:true,acknowledgement:'installed'});
+            expect(io.attempts).toBe(1);expect(bind).toHaveBeenCalledTimes(1);
+            const bundle=f.root.getState().datasetBundle!;
+            expect(bundle.tables.map(t=>t.name)).toEqual(['facts','names']);
+            expect(bundle.relationships[0].decision).toBe('trusted');
+            for(const table of bundle.tables)expect(getSandboxTableRows(bundle.bundleId,table.tableId,bundle.datasetVersion)).toHaveLength(2);
+            expect(f.root.getState().csvData!.data).toEqual([{Name:'Total Solutions',Amount:0},{Name:'Detail',Amount:-5}]);
+        }finally{next.prep.task.close('cancelled');finishRun(f.root,next.lease);f.cleanup();}
     });
     it('requires host-issued exact review and approval objects and a valid caller key',async()=>{
         const f=await setup();try{

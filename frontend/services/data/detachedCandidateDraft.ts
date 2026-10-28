@@ -4,6 +4,15 @@ import type { SpillReadCustody } from './acceptedSpill';
 import { spillRow } from './spillCandidateValidation';
 import { spillBytes } from './candidateSpill';
 
+type EnvelopeCustody = ReturnType<import('./candidateStaging').CandidateStagingPort['captureDraftRead']>;
+const envelopes = new WeakMap<StoreApi['getState'], { custody: EnvelopeCustody; expiresAt: number }>();
+/** A bounded immutable snapshot plus revocation checks; deliberately no execution/commit handle. */
+export const detachEnvelopeCandidateDraft = (store: StoreApi, custody: EnvelopeCustody) => {
+    custody.check(store);
+    const key = rootStore(store).getState, entry = { custody, expiresAt: Date.now() + 300000 };
+    envelopes.set(key, entry);
+    registerSessionResource(store.executionContext!.lease.scope, () => { if (envelopes.get(key) === entry) envelopes.delete(key); });
+};
 const readers=new WeakMap<StoreApi['getState'],{reviewId:string;reviewDigest:string;expiresAt:number;custody:SpillReadCustody}>();
 /** Live-only, read-only custody. No saved projection or ordinary tool call can install this port. */
 export const detachCandidateDraft=(store:StoreApi,reviewId:string,reviewDigest:string,expiresAt:number,custody:SpillReadCustody)=>{
@@ -12,7 +21,31 @@ export const detachCandidateDraft=(store:StoreApi,reviewId:string,reviewDigest:s
 };
 export const revokeDetachedCandidateDraft=(key:StoreApi['getState'],reviewId:string)=>{if(readers.get(key)?.reviewId===reviewId)readers.delete(key);};
 export const readDetachedCandidateDraft=async(store:StoreApi,id:string,tableName:string,digest:string,offset=0,limit=10)=>{
-    const key=rootStore(store).getState,entry=readers.get(key),c=entry?.custody.candidate;
+    const key=rootStore(store).getState, envelope = envelopes.get(key);
+    if (envelope) {
+        const { custody, expiresAt } = envelope, c = custody.candidate;
+        custody.check(store);
+        const table = c.tables.find(t => t.name === tableName);
+        if (Date.now() >= expiresAt || c.candidateId !== id || !table || custody.receipt.receiptDigest !== digest) throw new Error('candidate_draft_unavailable');
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset > table.rowCount || !Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error('preview_bounds_invalid');
+        const result = { label: 'draft_uncommitted' as const, candidateId: id, tableName, validationReceiptDigest: digest, changeDigest: c.changeDigest,
+            sessionId: c.sessionId, sessionEpoch: c.sessionEpoch, protectedSource: c.protectedSource, sourceSha256: c.protectedSource!.sha256,
+            sourceVersion: c.protectedSource!.sha256, inputBindings: c.inputBindings, offset, totalRows: table.rowCount,
+            rows: [] as typeof table.rows, lineageSamples: [] as typeof table.lineage, truncated: false, lineageTruncated: false, answerEvidence: false as const };
+        for (let i = offset; i < Math.min(table.rowCount, offset + limit); i++) {
+            result.rows.push(table.rows[i]);
+            if (spillBytes(JSON.stringify(result)) > 60 * 1024) { result.rows.pop(); break; }
+        }
+        if (!result.rows.length && offset < table.rowCount) throw new Error('candidate_preview_row_too_large');
+        result.truncated = offset + result.rows.length < table.rowCount;
+        for (const lineage of table.lineage) {
+            if (lineage.row < offset || lineage.row >= offset + result.rows.length) continue;
+            result.lineageSamples.push(lineage);
+            if (result.lineageSamples.length > 50 || spillBytes(JSON.stringify(result)) > 63 * 1024) { result.lineageSamples.pop(); result.lineageTruncated = true; break; }
+        }
+        custody.check(store); return result;
+    }
+    const entry=readers.get(key),c=entry?.custody.candidate;
     if(!entry||!c||c.candidateId!==id||c.tables[0].name!==tableName||entry.custody.receipt.receiptDigest!==digest)throw new Error('candidate_draft_unavailable');
     if(!Number.isSafeInteger(offset)||offset<0||offset>c.tables[0].rowCount||!Number.isSafeInteger(limit)||limit<1||limit>50)throw new Error('preview_bounds_invalid');
     const check=()=>{

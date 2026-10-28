@@ -24,6 +24,8 @@ export interface TaskCandidateView {
     excludedCount: number; exclusions: string[]; diff: string; diffTruncated: boolean;
     requirements: string; requirementsTruncated: boolean;
     validationError?: string;
+    // Display-only projection. Publication authority remains in the staging closure.
+    commitRestriction?: string | null;
     validation?: { decision: string; reasons: string[]; checks: string[]; reconciliation: string; truncated: boolean; receiptDigest?: string };
 }
 export interface TaskInspectionProjection {
@@ -53,7 +55,7 @@ export const readTaskCandidateDraft = async (store: StoreApi, taskId: string, ca
     if (!reader?.candidates || !ownsSessionScope(store, reader.lease.scope) || reader.taskId !== taskId
         || state.activeAgentTask?.taskId !== taskId || state.taskInspection?.candidate?.candidateId !== candidateId
         || state.taskInspection.candidate.validation?.receiptDigest !== digest) throw new Error('candidate_draft_unavailable');
-    if(state.activeAgentTask?.status==='awaiting_approval')return readDetachedCandidateDraft(store,candidateId,table,digest,offset,10);
+    if(state.activeAgentTask?.status==='awaiting_approval' || !ownsRun(store, reader.lease) || reader.lease.closed)return readDetachedCandidateDraft(store,candidateId,table,digest,offset,10);
     return reader.candidates.previewAsync(candidateId, table, digest, offset, 10);
 };
 
@@ -121,7 +123,7 @@ export const createTaskInspection = (store: StoreApi, lease: RunLease, workspace
                         exclusions: candidate.excludedRows.slice(0, 20).map(e => bound(`${e.origin.kind} ${e.origin.name} row ${e.origin.row}: ${e.reason}`)),
                         diff: bound(diff), diffTruncated: diff.length > LIMITS.text,
                         requirements: bound(requirements), requirementsTruncated: requirements.length > LIMITS.text,
-                        validationError,
+                        validationError, commitRestriction: candidates.commitRestriction(candidate.candidateId),
                         ...(validation ? { validation: { decision: validation.decision, receiptDigest: validation.receiptDigest, reasons: validation.reasonCodes.slice(0, 30),
                             checks: validation.checks.slice(0, 30), reconciliation: bound(reconciliation),
                             truncated: reconciliation.length > LIMITS.text || validation.checks.length > 30 || validation.reasonCodes.length > 30 } } : {}) } };
