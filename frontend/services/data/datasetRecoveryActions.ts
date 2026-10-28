@@ -11,6 +11,7 @@ import { registerSandboxTableRows, clearSandboxTableRows } from './sandboxTableR
 import { primeDuckDbDataset, prepareOrdinaryDatasetBinding, prepareAcceptedSpillBinding, prepareAcceptedTablesBinding } from '../duckdb/queryEngine';
 import { acceptedQueryOwner } from '../duckdb/acceptedQueryOwner';
 import { readAcceptedDual } from './acceptedDualGrain';
+import { readAcceptedStreamedDual, acceptedStreamedDualCsv } from './acceptedStreamedDual';
 import { verifyAcceptedSpillMarker, verifyAcceptedSpill, acceptedSpillCsv, acceptedPublicationSnapshot, type AcceptedSpillStorage } from './acceptedSpill';
 import { bindRecoverySource } from './immutableCsvSource';
 import { getCsvDatasetVersion } from '../../utils/datasetId';
@@ -149,11 +150,33 @@ export const installAcceptedSpillCommit=async(store:StoreApi,db:StorageDatabase,
     }
 };
 
+export const installAcceptedStreamedDualCommit = async (store: StoreApi, db: StorageDatabase, marker: DatasetCommitMarker, options: RecoveryOptions, dependencies: RecoveryDependencies) => {
+    const lease=own(store),previous=store.getState(),signature=JSON.stringify(previous.datasetBundle);
+    const current=()=>{own(store);if(store.getState().csvData!==previous.csvData||JSON.stringify(store.getState().datasetBundle)!==signature)throw new Error('input_version_changed');};
+    let binding:Awaited<ReturnType<typeof prepareAcceptedTablesBinding>>|undefined;
+    const csv=acceptedStreamedDualCsv(marker.acceptedStreamedDual!);
+    try{
+        const files=await readAcceptedStreamedDual(marker,current,dependencies.acceptedStorage);current();
+        if(options.file){await bindRecoverySource(store,options.file,marker.acceptedStreamedDual!.source);current();}
+        const output={schemaVersion:1 as const,complete:true as const,relationships:[],excludedRows:[],tables:marker.bundle.tables.map(t=>({name:t.name,role:t.role,schema:t.schema,rowCount:t.rowCount,rows:[],lineage:[]}))};
+        binding=await (dependencies.prepareTablesBinding??prepareAcceptedTablesBinding)(marker,output,current,lease.signal,files);current();
+        if(!same(await readCurrentCommit(db,store),marker))throw new Error('input_version_changed');current();
+        binding.activate(csv,acceptedQueryOwner(store,marker,csv));
+        store.setState({datasetBundle:structuredClone(marker.bundle),csvData:csv,canonicalCsvData:csv,rawCsvData:null,candidateRecovery:null,
+            datasetCommitBindingStatus:'ready',activeDataQuery:null,datasetSemanticSnapshot:null,semanticDatasetVersion:null,semanticStatus:'idle',
+            columnRegistry:null,columnProfiles:[],canonicalBuildMeta:null,activeMetricMappingValidation:null,activeSpreadsheetFilter:null,spreadsheetFilterFunction:null,
+            vectorStoreDocuments:[],pendingVectorMemoryDocs:[],vectorMemoryState:'cold',reportMemoryScope:null,
+            currentView:'analysis_dashboard',initialAnalysisStatus:'ready',duckDbSessionStatus:{...binding.binding,status:'ready',fallbackReason:null,lastSyncedAt:new Date()}});
+        binding.finish();const installed=binding;registerSessionResource(lease.scope,()=>installed.dispose());
+    }catch(e){binding?.rollback();if(canCommitRun(store,lease)&&(store.getState().csvData===previous.csvData||store.getState().csvData===csv))store.setState(acceptedPublicationSnapshot(previous));throw e;}
+};
+
 export const restoreAcceptedDataset = async (store: StoreApi, options: RecoveryOptions = {}, dependencies: RecoveryDependencies = {}): Promise<DatasetCommitMarker> => {
     own(store); const db = await (dependencies.database ?? getStorageDatabase)(); own(store);
     let marker: DatasetCommitMarker;
     try { marker = await readCurrentCommit(db, store); own(store); }
     catch (error) { if (canCommitRun(store, store.executionContext!.lease)) store.setState({ datasetCommitBindingStatus: 'commit_unknown', activeDataQuery: null }); throw error; }
+    if(marker.acceptedStreamedDual){await installAcceptedStreamedDualCommit(store,db,marker,options,dependencies);own(store);return marker;}
     if(marker.acceptedSpill){await installAcceptedSpillCommit(store,db,marker,options,dependencies);own(store);return marker;}
     const result = await reconstruct(store, db, marker, options, dependencies); own(store);
     await installVerifiedDatasetCommit(store, db, marker, result, dependencies); own(store); return marker;

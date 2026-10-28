@@ -503,13 +503,15 @@ export const acceptedQueryTable = (data: CsvData, tableId?: string) => {
     return { tableId: table.tableId, columns: table.columns };
 };
 /** Each grain has its own native worker. No join or raw SQL crosses this boundary. */
-export const prepareAcceptedTablesBinding = async (marker: DatasetCommitMarker, output: CandidateOutput, current: () => void, signal?: AbortSignal) => {
+export const prepareAcceptedTablesBinding = async (marker: DatasetCommitMarker, output: CandidateOutput, current: () => void, signal?: AbortSignal, files?: File[]) => {
     const generation = engineGeneration, tables: AcceptedTable[] = [];
     const check = () => { assertGeneration(generation); throwIfAborted(signal); current(); };
     try {
         for (const spec of marker.bundle.tables) {
             check(); const table = output.tables.find(t => t.name === spec.name)!;
-            const metrics = marker.replayManifest!.validationBinding.contract.tables.find(t => t.name === spec.name)!.metrics;
+            const streamed = marker.acceptedStreamedDual?.binding.streamedDual?.meaning.proposal.tables.find(t => t.name === spec.name);
+            const metrics = streamed ? streamed.columns.filter(c => c.dataType === 'number').map(c => ({ column: c.name, scale: c.scale!, unit: c.unit! }))
+                : marker.replayManifest!.validationBinding.contract.tables.find(t => t.name === spec.name)!.metrics;
             const client = new DuckDbWorkerClient();
             const binding: DuckDbDatasetBinding = { engine: 'duckdb', tableName: DUCKDB_TABLE_NAME,
                 loadVersion: `${marker.commitId}-${spec.tableId}`, fallbackReason: null, fallbackStage: null };
@@ -517,8 +519,9 @@ export const prepareAcceptedTablesBinding = async (marker: DatasetCommitMarker, 
             await client.initDuckDb(DUCKDB_INIT_TIMEOUT_MS, signal); check();
             // Quote all text, preserve null separately from empty strings and never normalize locales.
             const quote = (v: unknown) => `"${String(v).replace(/"/g, '""')}"`;
-            const csv = spec.schema.map(c => quote(c.name)).join(',') + '\n' + table.rows.map(row => spec.schema.map(c => row[c.name] === null ? '' : quote(row[c.name])).join(',')).join('\n');
-            const result = await client.loadFileDataset({ file: new File([csv], 'bounded.csv'), csvFileName: 'bounded.csv',
+            const file = files?.[tables.length - 1] ?? new File([spec.schema.map(c => quote(c.name)).join(',') + '\n' + table.rows.map(row => spec.schema.map(c => row[c.name] === null ? '' : quote(row[c.name])).join(',')).join('\n')], 'bounded.csv');
+            if (streamed && !files?.[tables.length - 1]) throw new Error('accepted_dual_file_required');
+            const result = await client.loadFileDataset({ file, csvFileName: 'bounded.csv',
                 loadVersion: binding.loadVersion!, tableName: DUCKDB_TABLE_NAME, previewRows: 1,
                 exactColumns: spec.schema.map(c => ({ name: c.name, nullable: c.nullable, type: metrics.some(m => m.column === c.name)
                     ? `DECIMAL(24,${metrics.find(m => m.column === c.name)!.scale})` : 'VARCHAR' })) }, DUCKDB_FILE_LOAD_TIMEOUT_MS, signal); check();

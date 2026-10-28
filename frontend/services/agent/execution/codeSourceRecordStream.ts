@@ -39,7 +39,7 @@ export const sourceStreamBudgetFloor = (store: StoreApi): SourceStreamBudget => 
 
 /** Public-tool compilation uses the execution ledger, not a resettable per-proposal allowance. */
 export const inspectSourceMeaning = async (store: StoreApi, current: () => void,
-    inspect: (records: Awaited<ReturnType<ReturnType<typeof createSourceRecordReader>['read']>>['records']) => void) => {
+    inspect: (records: Awaited<ReturnType<ReturnType<typeof createSourceRecordReader>['read']>>['records']) => void, compact = false) => {
     current();
     const source = store.getState().datasetBundle?.source.inspection;
     if (!source || source.recordCount < 2) throw new Error('meaning_source_unavailable');
@@ -64,7 +64,7 @@ export const inspectSourceMeaning = async (store: StoreApi, current: () => void,
         check();
         if (ledger.readBytes + bytes > SOURCE_STREAM_LIMITS.cumulativeReadBytes) throw new Error('source_stream_budget_exhausted');
         ledger.readBytes += bytes;
-    });
+    }, compact);
     let next = 0;
     try {
         while (next < source.recordCount) {
@@ -126,8 +126,11 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
         if (account.readBytes + bytes > SOURCE_STREAM_LIMITS.cumulativeReadBytes) throw new Error('source_stream_budget_exhausted');
         account.readBytes += bytes; metrics.physicalReadBytes += bytes; metrics.physicalReadCalls++;
     };
-    const executionReader = createSourceRecordReader(store, source.sourceId, check, charge);
-    let validationReader = createSourceRecordReader(store, source.sourceId, check, charge);
+    // Opt in only for privately compiled dual projections. Single-spill admission and
+    // its established oversize-record rejection must remain byte-compatible.
+    const compact = Boolean(store.candidateStaging?.useCompactSourceRecords?.());
+    const executionReader = createSourceRecordReader(store, source.sourceId, check, charge, compact);
+    let validationReader = createSourceRecordReader(store, source.sourceId, check, charge, compact);
     const read = async (reader: typeof executionReader, row: number, count: number) => {
         check();
         let batch;
@@ -171,7 +174,7 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
                 check();
                 if (manifest) {
                     await spill.verifyManifest(manifest); check();
-                    validationReader = createSourceRecordReader(store, source.sourceId, check, charge); metrics.validatedRows = 0;
+                    validationReader = createSourceRecordReader(store, source.sourceId, check, charge, compact); metrics.validatedRows = 0;
                 }
                 while (nextRow < source.recordCount) {
                     check(); if (Date.now() - started + account.activeMs >= SOURCE_STREAM_LIMITS.activeMs) throw new Error('source_stream_budget_exhausted');
@@ -239,7 +242,7 @@ export const createSourceRecordStream = async (store: StoreApi, options: SourceS
             semanticAttempts++; assertInvocation = invocation; sourceFence=fence; busy = true; const started = Date.now(); activeStarted = started;
             try {
                 check(); await spill.verifyManifest(manifest); check();
-                const reader = createSourceRecordReader(store, source.sourceId, check, charge);
+                const reader = createSourceRecordReader(store, source.sourceId, check, charge, compact);
                 for await (const chunk of spill.read()) {
                     account.steps++; check();
                     const batch = await read(reader, chunk.startRow, chunk.rows.length);

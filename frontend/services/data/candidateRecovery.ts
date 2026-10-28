@@ -60,6 +60,7 @@ export const recoverCandidateReview = async (store: StoreApi, options: RecoveryO
         if(savedHigher&&liveHigher)throw new Error('recovery_checkpoint_conflict');
         if(savedHigher||!liveHigher&&canonical.repetitions>=checkpoint.repetitions){checkpoint=canonical;store.setState({candidateRecovery:canonical});}
     }
+    if(checkpoint.proposal.acceptedStreamedDual)throw new Error('recovery_streamed_dual_requires_fresh_meaning_and_execution');
     if(checkpoint.proposal.acceptedSpill)return recoverSpillCandidate(store,checkpoint,options,dependencies);
     const task = await verifyCheckpoint(checkpoint); own(store); const capturedPolicy = policy(store);
     // A successful read is required. A failed journal read must never be treated as absence.

@@ -7,10 +7,16 @@ import {compileInferredCandidateMeaning,isCandidateMeaningProposal} from './infe
 import type {ValidationInputs} from './candidateValidation';
 import { isSpillMeaningProposal, compileSpillMeaningProposal } from './spillMeaningProposal';
 import { isDualGrainCandidateMeaning, isDualGrainMeaningAlternatives, compileDualGrainCandidateMeaning, DUAL_GRAIN_MEANING_LIMITS } from './dualGrainCandidateMeaning';
+import { compileStreamedDual } from './streamedDualGrain';
+import { captureSessionScope } from '../session/sessionOwnership';
 import { spillMeaningConfirmation, requestSpillMeaningChoice } from '../agent/runtime/pi/piSpillMeaningChoice';
 
 // Only this trusted inference path can issue custody. Copied/serialized bindings and model
 // metadata cannot install a meaning contract or remove its draft-only restriction.
+// At most two bounded compiled alternatives per session scope. Reuse only behind a
+// live exact semantic selection; independent post-QuickJS validation still scans ALL
+// original records. This avoids rescanning an unchanged source just to choose A/B.
+const streamedAlternatives = new WeakMap<ReturnType<typeof captureSessionScope>, { taskId:string; source:string; proposals:string[]; compiled:Awaited<ReturnType<typeof compileStreamedDual>> }>();
 const inferredBindings = new WeakMap<HostCandidateValidationContract, { namespaceId: string; signature: string; draftOnly: boolean; check: () => void }>();
 export const captureInferredMeaningBinding = (binding: HostCandidateValidationContract, namespaceId: string) => {
     const custody = inferredBindings.get(binding);
@@ -44,6 +50,27 @@ export const inferCandidateMeaning=async(store:StoreApi,proposal:unknown)=>{
     if (isSpillMeaningProposal(p)) {
         const compiled = await awaitOwned(compileSpillMeaningProposal(store, p, check), store, lease); check();
         return bind(compiled);
+    }
+    if ((isDualGrainCandidateMeaning(p) || isDualGrainMeaningAlternatives(p)) && source
+        && (source.byteSize > DUAL_GRAIN_MEANING_LIMITS.sourceBytes || source.recordCount > DUAL_GRAIN_MEANING_LIMITS.sourceRows)) {
+        const alternatives = isDualGrainMeaningAlternatives(p), proposals = alternatives ? p.interpretations.map(i => i.meaning) : [p];
+        const confirmation = !alternatives ? spillMeaningConfirmation(store, p) : undefined;
+        if (!alternatives && !confirmation) throw new Error('meaning_dual_grain_alternatives_required');
+        const cached=streamedAlternatives.get(captureSessionScope(store));
+        const selectedIndex=!alternatives&&confirmation&&cached?.taskId===task.snapshot.taskId&&cached.source===JSON.stringify(source) ? cached.proposals.indexOf(JSON.stringify(p)) : -1;
+        const compiled = selectedIndex>=0 ? [cached!.compiled[selectedIndex]] : await awaitOwned(compileStreamedDual(store, proposals, check), store, lease); check();
+        if (alternatives) {
+            streamedAlternatives.set(captureSessionScope(store),{taskId:task.snapshot.taskId,source:JSON.stringify(source),proposals:proposals.map(p=>JSON.stringify(p)),compiled});
+            requestSpillMeaningChoice(store, p.interpretations[0].meaning, ['Exact large-source grain and alignment selection'], p.interpretations[1].meaning, p.interpretations.map(i => i.label));
+            throw new Error('meaning_semantic_confirmation_required');
+        }
+        if (spillMeaningConfirmation(store, p) !== confirmation) throw new Error('meaning_choice_stale');
+        const scope = captureSessionScope(store), proposalDigest = await codeDigest({ proposal: p, semanticSelection: confirmation }); check();
+        const host: HostCandidateValidationContract = { sessionId: scope.sessionId, sessionEpoch: scope.epoch, goal: task.snapshot.goal,
+            inputBindings: binding, tableDigests: {}, protectedSource: { sourceId: source.sourceId, sha256: source.sha256 },
+            contract: { version: 1, ambiguities: [], tables: [], relationships: [], exclusions: [], completeSourceCells: true },
+            streamedDual: compiled[0], inference: { kind: 'ai_inferred', input: p.input, assumptions: p.assumptions, proposalDigest } };
+        return bind(host, true, () => { if (spillMeaningConfirmation(store, p) !== confirmation) throw new Error('meaning_choice_stale'); });
     }
     const inputs:ValidationInputs={tables:{},sources:{}};
     let captured:Awaited<ReturnType<typeof captureCodeTables>>|undefined;

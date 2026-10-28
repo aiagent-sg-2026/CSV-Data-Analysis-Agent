@@ -5,7 +5,7 @@ import { createSingleTableDatasetBundle } from '../../../data/datasetBundle';
 import { captureCsvSource } from '../../../data/immutableCsvSource';
 import { parseCsvTextWithDetection } from '../../../data/csvDialectDetector';
 import { buildCsvDataFromIntakeIr, buildReportIntakeIr } from '../../../data/reportCsvIntake';
-import { scanCsvSourceForImport, bindCsvSourceScan } from '../../../data/csvSourceScan';
+import { scanCsvSourceForImport, bindCsvSourceScan, scannedCsvSourceMetadata } from '../../../data/csvSourceScan';
 import { runPiInitialAnalysis, type PiInitialAnalysisOptions } from './piInitialAnalysisRuntimeService';
 import type { DualGrainCandidateMeaning, DualGrainMeaningAlternatives } from '../../../data/dualGrainCandidateMeaning';
 
@@ -36,6 +36,24 @@ export const syntheticDualGrainSource = (width = 90) => {
     ], assumptions: ['Both alignments are structurally possible; business meaning requires exact human selection.'] };
     const text = raw.map(row => row.map(v => `"${v.replace(/"/g, '""')}"`).join(',')).join('\r\n');
     return { raw, text, proposal, measures };
+};
+
+/** Meaningful synthetic records, not whitespace padding. Every descriptor identifies a
+ * different source dimension and every metric cell is independently value-bearing. */
+export const syntheticStreamedDualSource = (records = 10000, width = 90) => {
+    const small = syntheticDualGrainSource(width), proposal = structuredClone(small.proposal), measures = small.measures, base = width - measures;
+    for (const interpretation of proposal.interpretations) {
+        for (const table of interpretation.meaning.tables) table.detailRanges = [{ start: 2, end: records + 1 }];
+        interpretation.meaning.exclusions = [interpretation.meaning.exclusions[0], interpretation.meaning.exclusions[1], { row: records + 2, role: 'grand_total', cells: small.proposal.interpretations[0].meaning.exclusions.at(-1)!.cells }];
+    }
+    const header = small.raw[0], inner = small.raw[1];
+    const raw = [header, inner];
+    for (let i = 0; i < records; i++) raw.push([`E${String(i).padStart(8, '0')}`, `Source record ${i}, verified fictional metric inventory\nregion ${i % 17}`,
+        '1.25', '-1.25', ...Array.from({ length: base - 4 }, (_, j) => `Dimension ${j}: entity ${i}; zone ${i % 17}; revision ${i % 11}; status ${i % 3}; catalog item ${i * 31 + j}; source attribute ${j}`),
+        ...Array.from({ length: measures }, (_, j) => j === 0 ? '' : j === 1 ? '0.00' : j === 2 ? '-1.25' : `${i % 100 + 1}.${String(j % 100).padStart(2, '0')}`)]);
+    const total = String(records * 125), amount = total.slice(0, -2) + '.' + total.slice(-2);
+    raw.push(['TOTAL', amount, '-' + amount]);
+    return { raw, text: raw.map(row => row.map(v => `"${v.replace(/"/g, '""')}"`).join(',')).join('\r\n'), proposal, measures };
 };
 
 /** Distinct document-header/detail records, with explicit preceding-document boundaries. */
@@ -83,24 +101,36 @@ return {schemaVersion:1,complete:true,tables,relationships:p.relationships,exclu
 export const preparePiDualGrainSmoke = async (root: StoreApi, options: {
     /** Qualification-only: start a fresh normal task without replacing accepted source/session. */
     keepAccepted?: boolean;
+    streamRecords?: number;
     width?: number; layout?: 'document_rows'; coding?: PiInitialAnalysisOptions['codingPreparation']; fault?: 'value' | 'program_revision';
     proposal?: (proposal: DualGrainMeaningAlternatives) => unknown;
     confirmedProposal?: (proposal: DualGrainCandidateMeaning) => unknown;
     beforeProvider?: (turn: number) => Promise<void>;
 } = {}) => {
-    const fixture = options.layout === 'document_rows' ? syntheticDocumentGrainSource(options.width) : syntheticDualGrainSource(options.width), file = new File([fixture.text], 'fictional-dual-grain.csv');
-    const parsed = parseCsvTextWithDetection(fixture.text), ir = buildReportIntakeIr(file.name, parsed.rawRows, parsed.detection), data = buildCsvDataFromIntakeIr(ir);
+    const fixture = options.streamRecords ? syntheticStreamedDualSource(options.streamRecords,options.width) : options.layout === 'document_rows' ? syntheticDocumentGrainSource(options.width) : syntheticDualGrainSource(options.width), file = new File([fixture.text], 'fictional-dual-grain.csv');
+    const parsed = parseCsvTextWithDetection(options.streamRecords ? '' : fixture.text), ir = options.streamRecords ? null : buildReportIntakeIr(file.name, parsed.rawRows, parsed.detection), data = ir ? buildCsvDataFromIntakeIr(ir) : {fileName:file.name,data:[]};
+    const reads={bytes:0,calls:0,maxBytes:0,fullReads:0};
+    if(options.streamRecords){
+        // Fixture construction is not app execution memory. Release its source-sized arrays
+        // before qualification; the production path retains only the immutable native File.
+        fixture.raw=[];fixture.text='';
+        const guard=(blob:Blob,full:boolean):Blob=>{const slice=blob.slice.bind(blob),arrayBuffer=blob.arrayBuffer.bind(blob);
+            Object.defineProperty(blob,'slice',{value:(start?:number,end?:number)=>guard(slice(start,end),false)});
+            Object.defineProperty(blob,'arrayBuffer',{value:async()=>{if(full||blob.size>65536){reads.fullReads++;throw new Error('qualification_unbounded_source_read');}
+                reads.calls++;reads.bytes+=blob.size;reads.maxBytes=Math.max(reads.maxBytes,blob.size);return arrayBuffer();}});return blob;};guard(file,true);
+    }
     const datasetId = options.keepAccepted ? root.getState().currentDatasetId! : crypto.randomUUID(), goal = 'Repair both source-backed grains without fanout; independently validate both tables and request separate exact human approval. Never commit without that approval.';
     const bundle = options.keepAccepted ? root.getState().datasetBundle! : createSingleTableDatasetBundle({ datasetId, sourceFingerprint: 'pending', file, data });
     if (!options.keepAccepted) root.setState({ sessionId: crypto.randomUUID(), sessionCreatedAt: new Date(), confirmedAnalysisGoal: goal, csvData: data, rawCsvData: structuredClone(data), canonicalCsvData: null,
         rawIntakeIr: ir, datasetBundle: bundle, currentDatasetId: datasetId, currentView: 'analysis_dashboard', pipelineOutcome: { canAutoAnalyze: false, reasonCode: 'header_shape_drift' } as never,
         pendingClarification: null, candidateRecovery: null, analysisCards: [], columnProfiles: [], queryHistory: [], workspaceFiles: {}, datasetCommitBindingStatus: undefined,
         settings: { ...root.getState().settings, provider: 'default', simpleModel: 'mock', complexModel: 'mock', language: 'English', runtimeAccessControl: { permissionMode: 'open', toolOverrides: {}, workspaceRules: { deniedPathPrefixes: [] } } } });
-    const source = options.keepAccepted ? bundle.source.inspection! : await captureCsvSource(root, file);
+    if(options.streamRecords){await scanCsvSourceForImport(root,file);}
+    const source = options.keepAccepted ? bundle.source.inspection! : options.streamRecords ? scannedCsvSourceMetadata(root,file) : await captureCsvSource(root, file);
     if (options.keepAccepted) root.setState({ workspaceFiles: {}, pendingClarification: null, activeAgentTask: null, taskInspection: null });
     else {
         root.setState({ datasetBundle: { ...bundle, source: { ...bundle.source, inspection: source } } });
-        await scanCsvSourceForImport(root, file); bindCsvSourceScan(root, file, source);
+        if(!options.streamRecords)await scanCsvSourceForImport(root, file); bindCsvSourceScan(root, file, source);
     }
     let step = 0, candidateId = '', staleJobId = '', calls = 0;
     const trace: string[] = [];
@@ -116,10 +146,10 @@ export const preparePiDualGrainSmoke = async (root: StoreApi, options: {
         const selected: DualGrainCandidateMeaning | undefined = confirmation ? JSON.parse(confirmation).proposal : undefined;
         let content: AssistantMessage['content'];
         if (step === 0) { step++; content = call('workspace_read', { path: '/intake/source-scan.json' }); }
-        else if (step === 1) { step++; content = call('workspace_read', { path: '/intake/source-records.json', startRow: 0, rowCount: fixture.raw.length }); }
+        else if (step === 1) { step++; content = call('workspace_read', { path: '/intake/source-records.json', startRow: 0, rowCount: options.streamRecords ? 2 : fixture.raw.length }); }
         else if (step === 2) { step++; content = call('candidate_infer_meaning', selected ? options.confirmedProposal?.(selected) ?? selected : options.proposal?.(fixture.proposal) ?? fixture.proposal); }
-        else if (step === 3) { step++; content = call('workspace_write', { path: '/workspace/dual-grain.js', expectedRevision: 0, content: programFor(selected ?? fixture.proposal.interpretations[0].meaning, options.fault) }); }
-        else if (step === 4) { step++; const a = v.payload?.workspace?.artifact; content = call('code_run', { program: a && { path: a.path, revision: a.revision, sha256: a.sha256 }, inputs: [], sources: [{ name: 'original', sourceId: source.sourceId, sha256: source.sha256, offset: 0, length: source.byteSize }], output: { path: '/workspace/dual-grain-output.json', expectedRevision: 0, format: 'json' } }); }
+        else if (step === 3) { step++; content = call('workspace_write', { path: '/workspace/dual-grain.js', expectedRevision: 0, content: options.streamRecords ? `return {state:{},rows:input.records.map(r=>({sourceRow:r.sourceRow,cells:Array.from({length:${options.width??90}},(_,i)=>${options.fault==='value'?"r.sourceRow===2&&i===2?'999.99':":""}(r.cells[i]??'') )}))};` : programFor(selected ?? fixture.proposal.interpretations[0].meaning, options.fault) }); }
+        else if (step === 4) { step++; const a = v.payload?.workspace?.artifact; content = call('code_run', { program: a && { path: a.path, revision: a.revision, sha256: a.sha256 }, inputs: [], ...(options.streamRecords ? {mode:'source_records',sourceRecords:{sourceId:source.sourceId,sha256:source.sha256,width:options.width??90,initialState:{}}} : {sources: [{ name: 'original', sourceId: source.sourceId, sha256: source.sha256, offset: 0, length: source.byteSize }]}), output: { path: '/workspace/dual-grain-output.json', expectedRevision: 0, format: 'json' } }); }
         else if (step === 5 && options.fault === 'program_revision') { staleJobId = v.receipt?.jobId ?? ''; step = 51; content = call('workspace_append', { path: '/workspace/dual-grain.js', expectedRevision: 1, content: '\n// changed after execution' }); }
         else if (step === 51) { step = 10; content = call('candidate_stage', { jobId: staleJobId }); }
         else if (step === 5) { step++; content = call('candidate_stage', { jobId: v.receipt?.jobId }); }
@@ -133,5 +163,5 @@ export const preparePiDualGrainSmoke = async (root: StoreApi, options: {
     };
     const result = await runPiInitialAnalysis({ appSessionId: root.getState().sessionId, datasetId, datasetVersion: bundle.datasetVersion, researchGoal: goal, provider: { provider: 'default', modelId: 'mock' } }, root, stream,
         { codingPreparation: options.coding ?? { enabled: true, qualified: true } });
-    return { result, source, trace, fixture, data, file };
+    return { result, source, trace, fixture, data, file, reads };
 };

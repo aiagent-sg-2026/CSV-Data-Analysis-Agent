@@ -5,8 +5,8 @@ import { readCsvBlobSlice } from './csvStreamScanner';
 const CHUNK_BYTES = 64 * 1024;
 const encoder = new TextEncoder();
 export interface SequentialRecord {
-    rowId: string; row: number; byteStart: number; byteEnd: number; startLine: number; endLine: number;
-    rawText: string; cells: Array<{ cellId: string; column: number; value: string }>; diagnostics: string[];
+    rowId?: string; row: number; byteStart: number; byteEnd: number; startLine: number; endLine: number;
+    rawText?: string; cells: Array<{ cellId?: string; column: number; value: string }>; diagnostics: string[];
 }
 
 /** Private forward-only parser. A batch is acknowledged only after its durable write/validation.
@@ -14,7 +14,7 @@ export interface SequentialRecord {
  * No hash pass here: the registry already verified this exact retained original at intake.
  */
 export const createCsvSequentialRecords = (blob: Blob, source: CsvSourceMetadata,
-    current: () => void, charge: (bytes: number) => void, chunkBytes = CHUNK_BYTES) => {
+    current: () => void, charge: (bytes: number) => void, chunkBytes = CHUNK_BYTES, compact = false) => {
     if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 3 || chunkBytes > CHUNK_BYTES) throw new Error('source_range_invalid');
     const delimiter = source.dialect.delimiter ?? ',', quote = source.dialect.quoteChar ?? '"';
     if (delimiter.length !== 1 || delimiter.charCodeAt(0) > 127 || /[\r\n\0]/.test(delimiter)
@@ -22,7 +22,7 @@ export const createCsvSequentialRecords = (blob: Blob, source: CsvSourceMetadata
     let buffer = new Uint8Array(0), index = 0, offset = 0, row = 0, start = 0, line = 1, startLine = 1;
     let mode: 'start' | 'plain' | 'quoted' | 'after' = 'start', lastCR = false, pendingCR = false;
     const raw = new Uint8Array(CHUNK_BYTES);
-    let rawLength = 0, pending: SequentialRecord | undefined, requested = 0, outputBytes = 0, batchRaw = 0;
+    let rawLength = 0, pending: SequentialRecord | undefined, requested = 0, outputBytes = 0, batchJsonBytes = 0, batchRaw = 0;
     let records: SequentialRecord[] = [], ready = false;
     const peek = async (): Promise<number | undefined> => {
         current();
@@ -50,9 +50,11 @@ export const createCsvSequentialRecords = (blob: Blob, source: CsvSourceMetadata
         catch { throw new Error('source_record_scan_failed'); }
         const text = rawText.replace(/(?:\r\n|\n|\r)$/, '');
         const parsed = Papa.parse<string[]>(text, { header: false, skipEmptyLines: false, delimiter, quoteChar: quote });
-        const result = { rowId: `${source.sha256}:r${row}`, row, byteStart: start, byteEnd: offset,
-            startLine, endLine: pendingCR || raw[rawLength - 1] === 10 ? line - 1 : line, rawText,
-            cells: (parsed.data[0] ?? (text === '' ? [''] : [])).map((value, column) => ({ cellId: `${source.sha256}:r${row}:c${column}`, column, value })),
+        // Continuation needs coordinates and values, not repeated SHA strings/raw text per cell.
+        // Omit those redundant fields before batching, rather than raising the bounded JSON cap.
+        const result = { ...(!compact ? { rowId: `${source.sha256}:r${row}`, rawText } : {}), row, byteStart: start, byteEnd: offset,
+            startLine, endLine: pendingCR || raw[rawLength - 1] === 10 ? line - 1 : line,
+            cells: (parsed.data[0] ?? (text === '' ? [''] : [])).map((value, column) => ({ ...(!compact ? { cellId: `${source.sha256}:r${row}:c${column}` } : {}), column, value })),
             diagnostics: parsed.errors.map(error => error.code) };
         row++; start = offset; startLine = line; rawLength = 0; mode = 'start'; pendingCR = false;
         return result;
@@ -95,11 +97,16 @@ export const createCsvSequentialRecords = (blob: Blob, source: CsvSourceMetadata
                     pending = record; current();
                     if (!record) { ready = true; break; }
                     const size = encoder.encode(JSON.stringify(record)).byteLength;
-                    if (outputBytes + size > CHUNK_BYTES || batchRaw + record.byteEnd - record.byteStart > CHUNK_BYTES) {
+                    // Private continuation's wire representation derives columns from array
+                    // position. Keep its 64 KiB wire/raw caps and the existing consumer's
+                    // 128 KiB coordinate-object cap; do not spend the wire quota twice on
+                    // redundant per-cell property names. Ordinary inspection is unchanged.
+                    const wireSize = compact ? encoder.encode(JSON.stringify({ row: record.row, byteStart: record.byteStart, byteEnd: record.byteEnd, cells: record.cells.map(c => c.value) })).byteLength : size;
+                    if (batchJsonBytes + wireSize > CHUNK_BYTES || outputBytes + size > (compact ? 128 * 1024 - 4096 : CHUNK_BYTES) || batchRaw + record.byteEnd - record.byteStart > CHUNK_BYTES) {
                         if (!records.length) throw new Error('source_stream_record_capacity');
                         break;
                     }
-                    records.push(record); outputBytes += size; batchRaw += record.byteEnd - record.byteStart; pending = undefined;
+                    records.push(record); outputBytes += size; batchJsonBytes += wireSize; batchRaw += record.byteEnd - record.byteStart; pending = undefined;
                 }
                 ready = true;
             }
@@ -109,7 +116,7 @@ export const createCsvSequentialRecords = (blob: Blob, source: CsvSourceMetadata
                 || !records.length && startRow < source.recordCount) throw new Error('source_stream_incomplete');
             return { source, startRow, nextRow, records, complete: nextRow === source.recordCount };
         },
-        commit() { if (!ready) throw new Error('source_stream_cursor_invalid'); records = []; requested = outputBytes = batchRaw = 0; ready = false; },
+        commit() { if (!ready) throw new Error('source_stream_cursor_invalid'); records = []; requested = outputBytes = batchJsonBytes = batchRaw = 0; ready = false; },
         get retainedBytes() { return raw.byteLength + buffer.byteLength + outputBytes + (pending ? encoder.encode(JSON.stringify(pending)).byteLength : 0); },
     };
 };

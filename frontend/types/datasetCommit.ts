@@ -26,6 +26,7 @@ export interface DatasetCommitMarker {
     rowStorage: 'transient' | 'durable_spill';
     acceptedSpill?: import('../services/data/acceptedSpill').AcceptedSpillManifest;
     acceptedDualGrain?: import('../services/data/acceptedDualGrain').AcceptedDualGrain;
+    acceptedStreamedDual?: import('../services/data/acceptedStreamedDual').AcceptedStreamedDual;
     spillRunRequest?: import('../services/agent/execution/codeExecutionContract').CodeRunRequest;
     /** Compensated failed publication; consumes approval but is not an accepted head. */
     activationFailed?: true;

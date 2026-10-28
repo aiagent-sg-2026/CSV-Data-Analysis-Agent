@@ -17,6 +17,8 @@ import { buildPersistedReportRecord } from '../persistence/persistedAppState';
 import { primeDuckDbDataset, prepareOrdinaryDatasetBinding, prepareAcceptedSpillBinding, prepareAcceptedTablesBinding } from '../duckdb/queryEngine';
 import { acceptedQueryOwner } from '../duckdb/acceptedQueryOwner';
 import { planAcceptedDual, writeAcceptedDual } from './acceptedDualGrain';
+import { planAcceptedStreamedDual, writeAcceptedStreamedDual, acceptedStreamedDualCsv, type AcceptedStreamedDual } from './acceptedStreamedDual';
+import { dualMetrics } from './streamedDualGrain';
 import { planAcceptedSpill, writeAcceptedSpill, acceptedSpillCsv, acceptedPublicationSnapshot, type AcceptedSpillManifest, type AcceptedSpillStorage, type SpillReadCustody } from './acceptedSpill';
 import { detachCandidateDraft } from './detachedCandidateDraft';
 import { compensateSpillCommit } from '../persistence/datasetCommitStorage';
@@ -45,6 +47,7 @@ export interface CandidateCommitReview {
     tables: Array<{name: string; rowCount: number; columns: string[]}>;
     rowStorage: 'transient' | 'durable_spill';
     acceptedDualGrain?: import('./acceptedDualGrain').AcceptedDualGrain;
+    acceptedStreamedDual?: AcceptedStreamedDual;
     relationships?: StagedDatasetCandidate['relationships'];
     grains?: Array<{ table: string; grain: string[]; metrics: import('./candidateValidation').CandidateValidationContract['tables'][number]['metrics'] }>;
     spill?: AcceptedSpillManifest;
@@ -58,6 +61,7 @@ export interface CandidateCommitOutcome {
 type Prepared = { review: CandidateCommitReview; candidate: StagedDatasetCandidate; validation: Readonly<CandidateValidationReceipt>;
     marker: DatasetCommitMarker; csv: CsvData; output: SandboxTransformationOutput; check: () => void;
     recovery?: DatasetRecoveryMaterial;
+    streamed?: {manifest:AcceptedStreamedDual;custody:SpillReadCustody};
     spill?: {manifest:AcceptedSpillManifest;custody:SpillReadCustody};
     bindingStatus: ReturnType<StoreApi['getState']>['datasetCommitBindingStatus'] };
 
@@ -100,16 +104,18 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         // Unsupported dual candidates retain the draft-only gate.
         const restriction = port.commitRestriction(candidateId);
         if (restriction) throw new Error(restriction);
-        if(candidate.spill&&(candidate.tables.length!==1||candidate.execution.inputs?.length||candidate.execution.coverage?.length||candidate.execution.sources?.length))throw new Error('candidate_spill_inputs_unsupported');
+        if((candidate.spill||candidate.streamedDual)&&((candidate.spill&&candidate.tables.length!==1)||candidate.execution.inputs?.length||candidate.execution.coverage?.length||candidate.execution.sources?.length))throw new Error('candidate_spill_inputs_unsupported');
         const sourceBundle = store.getState().datasetBundle;
         if (!sourceBundle) throw new Error('complete_input_unavailable');
-        const custody = candidate.spill ? port.captureSpillRead(candidateId) : undefined;
+        const custody = candidate.spill||candidate.streamedDual ? port.captureSpillRead(candidateId) : undefined;
+        const targetSignature=JSON.stringify(sourceBundle),targetCsv=store.getState().csvData;
         // Review revalidation can have a complete retained original without an accepted preview.
         // This affects only the host commit policy check, never ordinary tool/execution grants.
         spillPolicy=Boolean(custody);
         const capturedPolicy = policy(), expiresAt = Date.now()+300_000;
         const check = () => {
             own();
+            if(candidate.streamedDual&&(JSON.stringify(store.getState().datasetBundle)!==targetSignature||store.getState().csvData!==targetCsv))throw new Error('input_version_changed');
             if (Date.now() >= expiresAt || policy() !== capturedPolicy) throw new Error('approval_invalid');
             if (resumed) { detachedCheck!(store, context); return; }
             if (port.read(candidateId) !== candidate || port.validationReceipt(candidateId) !== validation) throw new Error('validation_failed');
@@ -118,23 +124,29 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         check();
         const primary = candidate.tables.find(t=>t.name===input.primaryTable);
         if (!primary) throw new Error('candidate_primary_table_required');
-        if (port.boundedDualCommit(candidateId) && primary.name !== candidate.relationships[0].toTable) throw new Error('candidate_primary_grain_required');
+        if ((port.boundedDualCommit(candidateId)||candidate.streamedDual) && primary.name !== candidate.relationships[0].toTable) throw new Error('candidate_primary_grain_required');
         const artifact = execution.workspace.read(candidate.execution.program!.path,candidate.execution.program!.revision);
         const environment = candidate.execution.environment;
         if (!environment || await codeDigest(environment) !== validation.environmentDigest
             || await sha256Bytes(new TextEncoder().encode(artifact.content)) !== validation.programDigest) throw new Error('candidate_artifact_mismatch');
         check();
-        const spill = custody ? await planAcceptedSpill(custody,store,check) : undefined;check();
-        const recovery = spill ? undefined : await captureDatasetReplay(store, candidate, sourceBundle); check();
-        const csv: CsvData = spill ? acceptedSpillCsv(spill) : {fileName:sourceBundle.source.fileName,data:primary.rows.map(row=>({...row}))};
+        const streamed = candidate.streamedDual ? await planAcceptedStreamedDual(custody!,port.captureStreamedDualBinding(candidateId),store,check) : undefined;check();
+        const spill = custody&&!streamed ? await planAcceptedSpill(custody,store,check) : undefined;check();
+        const recovery = spill||streamed ? undefined : await captureDatasetReplay(store, candidate, sourceBundle); check();
+        const csv: CsvData = streamed ? acceptedStreamedDualCsv(streamed) : spill ? acceptedSpillCsv(spill) : {fileName:sourceBundle.source.fileName,data:primary.rows.map(row=>({...row}))};
         const outputVersion = getCsvDatasetVersion(csv), now = new Date().toISOString();
         const tables = candidate.tables.map((table,index)=>({tableId:table===primary?sourceBundle.primaryTableId:`${candidate.candidateId}-table-${index}`,
             bundleId:sourceBundle.bundleId,name:table.name,role:table.role,schema:structuredClone(table.schema),rowCount:table.rowCount,
-            storage:spill?{mode:'accepted_spill' as const,generation:spill.generation,manifestDigest:spill.digest,loadVersion:`accepted-${spill.digest}`,ephemeral:false as const}:{mode:'memory' as const,ephemeral:true},sourceRange:null,datasetVersion:outputVersion}));
+            storage:streamed?{mode:'accepted_spill' as const,generation:streamed.tables[index].generation,manifestDigest:streamed.digest,loadVersion:`accepted-${streamed.digest}`,ephemeral:false as const}:spill?{mode:'accepted_spill' as const,generation:spill.generation,manifestDigest:spill.digest,loadVersion:`accepted-${spill.digest}`,ephemeral:false as const}:{mode:'memory' as const,ephemeral:true},sourceRange:null,datasetVersion:outputVersion}));
         const output: SandboxTransformationOutput = {tables:tables.map((table,index)=>({tableId:table.tableId,name:table.name,role:table.role,
             columns:table.schema.map(c=>c.name),rows:candidate.tables[index].rows.map(row=>({...row}))})),lineage:[],relationships:[]};
         const relationships = candidate.relationships.map(r=>{
             const from=tables.find(t=>t.name===r.fromTable)!,to=tables.find(t=>t.name===r.toTable)!;
+            // Independent streaming validation proves every strictly unique parent key,
+            // same-record FK and unique header dimension without materializing a key map.
+            if(streamed)return {relationshipId:`relationship-${candidate.candidateId}`,fromTableId:from.tableId,toTableId:to.tableId,
+                fromKeys:r.fromKeys,toKeys:r.toKeys,cardinality:'many_to_one' as const,fromKeyUniqueness:to.rowCount/from.rowCount,
+                toKeyUniqueness:1,foreignKeyCoverage:1,duplicateAmplification:1,decision:'trusted' as const,reasonCodes:['relationship_safe' as const],validatedAt:now};
             return assessDatasetRelationship({fromTable:from,toTable:to,fromRows:output.tables.find(t=>t.tableId===from.tableId)!.rows,
                 toRows:output.tables.find(t=>t.tableId===to.tableId)!.rows,fromKeys:r.fromKeys,toKeys:r.toKeys},now);
         });
@@ -154,13 +166,13 @@ export const createCandidateCommitService = (store: StoreApi, options: {
             candidateId,primaryTable:primary.name,inputBindings:candidate.inputBindings,changeDigest:candidate.changeDigest,
             validationDigest:validation.receiptDigest,programDigest:validation.programDigest,environmentDigest:validation.environmentDigest,
             outputDigest:validation.outputDigest,scopeDigest:validation.scopeDigest,grantDigest:candidate.execution.grant!.digest,policyDigest:await codeDigest(capturedPolicy),
-            recoveryDigest:spill?.digest??recovery!.manifest.digest,...(spill?{spill}: {}),
-            ...(port.boundedDualCommit(candidateId) ? { namespaceId: candidate.namespaceId, targetCommit: bundle.acceptedCommit,
+            recoveryDigest:streamed?.digest??spill?.digest??recovery!.manifest.digest,...(spill?{spill}: {}),...(streamed?{acceptedStreamedDual:streamed}:{}),
+            ...(port.boundedDualCommit(candidateId)||streamed ? { namespaceId: candidate.namespaceId, targetCommit: bundle.acceptedCommit,
                 targetBundleDigest: await codeDigest(bundle), contractDigest: validation.contractDigest } : {})};
         check();
         const payloadDigest=await codeDigest(payload);
         const body={...payload,reviewId:`review-${crypto.randomUUID()}`,idempotencyKey:input.idempotencyKey,payloadDigest,expiresAt,
-            tables:tables.map(t=>({name:t.name,rowCount:t.rowCount,columns:t.schema.map(c=>c.name)})),rowStorage:spill?'durable_spill' as const:'transient' as const};
+            tables:tables.map(t=>({name:t.name,rowCount:t.rowCount,columns:t.schema.map(c=>c.name)})),rowStorage:spill||streamed?'durable_spill' as const:'transient' as const};
         let result=immutable({...body,reviewDigest:await codeDigest(body)});check();
         const marker: DatasetCommitMarker = {kind:'commit',recordId:commitIntentKey(lease.scope.sessionId,input.idempotencyKey),
             intentKey:commitIntentKey(lease.scope.sessionId,input.idempotencyKey),approvalKey:'',sessionId:lease.scope.sessionId,commitId,revision,
@@ -171,7 +183,7 @@ export const createCandidateCommitService = (store: StoreApi, options: {
             lineage:{tables:candidate.tables.map(t=>({name:t.name,cells:structuredClone(t.lineage)})),excludedRows:structuredClone(candidate.excludedRows)},
             approval:{approvalId:'',reviewDigest:result.reviewDigest,approvedAt:0,expiresAt,consumedAt:0},
             audit:{sessionEpoch:lease.scope.epoch,taskId:candidate.taskId,taskRevision:candidate.taskRevision,runId:lease.runId,turnId:lease.turnId,
-                toolCallId:context.toolCallId,stepId:context.stepId,grantDigest:payload.grantDigest,committedAt:now},rowStorage:spill?'durable_spill':'transient',...(spill?{acceptedSpill:spill,spillRunRequest:structuredClone(candidate.execution.runRequest!)}:{replayManifest:recovery!.manifest}),
+                toolCallId:context.toolCallId,stepId:context.stepId,grantDigest:payload.grantDigest,committedAt:now},rowStorage:spill||streamed?'durable_spill':'transient',...(streamed?{acceptedStreamedDual:streamed,spillRunRequest:structuredClone(candidate.execution.runRequest!)}:spill?{acceptedSpill:spill,spillRunRequest:structuredClone(candidate.execution.runRequest!)}:{replayManifest:recovery!.manifest}),
             previousCommit:sourceBundle.acceptedCommit};
         if (port.boundedDualCommit(candidateId)) {
             marker.acceptedDualGrain = await planAcceptedDual(marker, recovery!.material); check();
@@ -181,7 +193,12 @@ export const createCandidateCommitService = (store: StoreApi, options: {
             result = immutable({ ...exactBody, reviewDigest: await codeDigest(exactBody) }); check();
             marker.approval.reviewDigest = result.reviewDigest;
         }
-        reviews.set(result,{review:result,candidate,validation,marker,csv,output,check,recovery:recovery?.material,...(spill?{spill:{manifest:spill,custody:custody!}}:{}),bindingStatus:store.getState().datasetCommitBindingStatus});
+        if(streamed){
+            const exactBody={...body,acceptedStreamedDual:streamed,relationships:candidate.relationships,
+                grains:streamed.binding.streamedDual!.meaning.proposal.tables.map(t=>({table:t.name,grain:t.grain,metrics:dualMetrics(t)})),targetCommit:bundle.acceptedCommit};
+            result=immutable({...exactBody,reviewDigest:await codeDigest(exactBody)});check();marker.approval.reviewDigest=result.reviewDigest;
+        }
+        reviews.set(result,{review:result,candidate,validation,marker,csv,output,check,recovery:recovery?.material,...(streamed?{streamed:{manifest:streamed,custody:custody!}}:{}),...(spill?{spill:{manifest:spill,custody:custody!}}:{}),bindingStatus:store.getState().datasetCommitBindingStatus});
         return result;
     };
 
@@ -319,14 +336,16 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         dualAttempts.add(prepared);
         const previous = store.getState();
         let binding: Awaited<ReturnType<typeof prepareAcceptedTablesBinding>> | undefined;
-        let directory: Awaited<ReturnType<typeof writeAcceptedDual>> | undefined;
+        let directory: {remove:()=>Promise<void>} | undefined;
         let durable = false, admitted = false;
         try {
             prepared.check(); const db = await database(); prepared.check();
             if (await readCommitIntent(db, lease!.scope.sessionId, prepared.review.idempotencyKey)) throw new Error('approval_consumed');
             prepared.check();
-            directory = await writeAcceptedDual(prepared.marker, prepared.recovery!, prepared.check, options.acceptedStorage); prepared.check();
-            binding = await (options.prepareTablesBinding ?? prepareAcceptedTablesBinding)(prepared.marker, prepared.candidate, prepared.check, lease!.signal); prepared.check();
+            let files:File[]|undefined;
+            if(prepared.streamed){const written=await writeAcceptedStreamedDual(prepared.marker,prepared.streamed.custody,store,prepared.check,options.acceptedStorage);directory=written;files=written.files;}
+            else directory = await writeAcceptedDual(prepared.marker, prepared.recovery!, prepared.check, options.acceptedStorage); prepared.check();
+            binding = await (options.prepareTablesBinding ?? prepareAcceptedTablesBinding)(prepared.marker, prepared.candidate, prepared.check, lease!.signal,files); prepared.check();
             const marker = immutable({ ...prepared.marker, approvalKey: commitApprovalKey(lease!.scope.sessionId, approval.approvalId),
                 approval: { ...approval, consumedAt: Date.now() } });
             return await queueSessionWrite(async () => {
@@ -355,8 +374,8 @@ export const createCandidateCommitService = (store: StoreApi, options: {
                         activeMetricMappingValidation: null, activeSpreadsheetFilter: null, spreadsheetFilterFunction: null,
                         vectorStoreDocuments: [], pendingVectorMemoryDocs: [], vectorMemoryState: 'cold', reportMemoryScope: null,
                         duckDbSessionStatus: { ...binding!.binding, status: 'ready', fallbackReason: null, lastSyncedAt: new Date() } });
-                    registerSandboxTableRows(marker.bundle.bundleId, prepared.output, marker.bundle.datasetVersion);
-                    rememberRecoveryMaterial(store, marker.commitId, prepared.recovery!);
+                    if(!prepared.streamed){registerSandboxTableRows(marker.bundle.bundleId, prepared.output, marker.bundle.datasetVersion);
+                    rememberRecoveryMaterial(store, marker.commitId, prepared.recovery!);}
                     registerSessionResource(lease!.scope, () => clearSandboxTableRows(marker.bundle.bundleId));
                     binding!.finish();
                     const installedBinding = binding!;
@@ -388,7 +407,7 @@ export const createCandidateCommitService = (store: StoreApi, options: {
     const commit = async (approval: CandidateCommitApproval): Promise<CandidateCommitOutcome> => {
         const prepared=approvals.get(approval);
         if (!prepared||approval.reviewDigest!==prepared.review.reviewDigest) return {status:'not_committed',admitted:false,replay:false,reason:'approval_invalid'};
-        if (prepared.marker.acceptedDualGrain) return commitDual(approval, prepared);
+        if (prepared.marker.acceptedDualGrain||prepared.marker.acceptedStreamedDual) return commitDual(approval, prepared);
         if(prepared.spill)return commitSpill(approval,prepared);
         let commitDb: StorageDatabase | undefined;
         const ordinaryPrevious = store.getState();
@@ -477,10 +496,11 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         if (!prepared || suspended || resumed || !execution.captureCommitCheck) throw new Error('approval_invalid');
         prepared.check();
         const candidateCheck = port.captureCommitCheck(reviewed.candidateId);
-        const grantCheck = execution.captureCommitCheck(prepared.candidate.execution.jobId, context, options.policy,prepared.spill?.custody.authority);
+        const grantCheck = execution.captureCommitCheck(prepared.candidate.execution.jobId, context, options.policy,(prepared.streamed??prepared.spill)?.custody.authority);
         detachedCheck = (target, fresh) => { candidateCheck(target, fresh); grantCheck(target, fresh); };
         const capsule = Object.freeze({reviewId: reviewed.reviewId, reviewDigest: reviewed.reviewDigest});
-        if(prepared.spill)detachCandidateDraft(store,reviewed.reviewId,reviewed.reviewDigest,reviewed.expiresAt,prepared.spill.custody);
+        const draft=prepared.streamed??prepared.spill;
+        if(draft)detachCandidateDraft(store,reviewed.reviewId,reviewed.reviewDigest,reviewed.expiresAt,draft.custody);
         capsules.set(capsule, prepared); approvals = new WeakMap(); suspended = true;
         return capsule;
     };

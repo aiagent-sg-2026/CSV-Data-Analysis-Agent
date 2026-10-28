@@ -3,6 +3,7 @@ import { rootStore,registerSessionResource } from '../session/sessionOwnership';
 import type { SpillReadCustody } from './acceptedSpill';
 import { spillRow } from './spillCandidateValidation';
 import { spillBytes } from './candidateSpill';
+import { streamedDualPage } from './streamedDualPage';
 
 type EnvelopeCustody = ReturnType<import('./candidateStaging').CandidateStagingPort['captureDraftRead']>;
 const envelopes = new WeakMap<StoreApi['getState'], { custody: EnvelopeCustody; expiresAt: number }>();
@@ -56,8 +57,8 @@ export const readDetachedCandidateDraft=async(store:StoreApi,id:string,tableName
         check(); return result;
     }
     const entry=readers.get(key),c=entry?.custody.candidate;
-    if(!entry||!c||c.candidateId!==id||c.tables[0].name!==tableName||entry.custody.receipt.receiptDigest!==digest)throw new Error('candidate_draft_unavailable');
-    if(!Number.isSafeInteger(offset)||offset<0||offset>c.tables[0].rowCount||!Number.isSafeInteger(limit)||limit<1||limit>50)throw new Error('preview_bounds_invalid');
+    if(!entry||!c||c.candidateId!==id||!c.tables.some(t=>t.name===tableName)||entry.custody.receipt.receiptDigest!==digest)throw new Error('candidate_draft_unavailable');
+    if(!Number.isSafeInteger(offset)||offset<0||offset>c.tables.find(t=>t.name===tableName)!.rowCount||!Number.isSafeInteger(limit)||limit<1||limit>50)throw new Error('preview_bounds_invalid');
     const check=()=>{
         const state=store.getState(),task=state.activeAgentTask,pending=state.pendingClarification??state.activeTurn?.pendingClarificationRequest;
         if(readers.get(key)!==entry||Date.now()>=entry.expiresAt||task?.status!=='awaiting_approval'
@@ -65,6 +66,7 @@ export const readDetachedCandidateDraft=async(store:StoreApi,id:string,tableName
                 &&!(state.candidateRecovery?.proposal.candidateId===id&&state.candidateRecovery.proposal.approval.reviewDigest===entry.reviewDigest))throw new Error('candidate_draft_unavailable');
         entry.custody.check(store);
     };check();
+    if(c.streamedDual)return streamedDualPage(c,entry.custody.receipt,tableName,offset,limit,sequence=>entry.custody.readChunk(sequence,store,check),check);
     const result={label:'draft_uncommitted' as const,candidateId:id,tableName,validationReceiptDigest:digest,changeDigest:c.changeDigest,
         sessionId:c.sessionId,sessionEpoch:c.sessionEpoch,protectedSource:c.protectedSource,sourceSha256:c.protectedSource!.sha256,
         sourceVersion:c.protectedSource!.sha256,inputBindings:c.inputBindings,offset,totalRows:c.tables[0].rowCount,

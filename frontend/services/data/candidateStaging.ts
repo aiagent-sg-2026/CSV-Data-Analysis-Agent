@@ -14,6 +14,8 @@ import type {HostCandidateValidationContract} from './candidateValidationBinding
 import {assertSpillMeaning,spillSchema,spillRow,validateSpillCandidate,type SourceSpillCapability} from './spillCandidateValidation';
 import {spillBytes} from './candidateSpill';
 import {captureInferredMeaningBinding} from './inferCandidateMeaning';
+import { dualSchema, validateStreamedDual } from './streamedDualGrain';
+import { streamedDualPage } from './streamedDualPage';
 
 const freeze=<T>(v:T):T=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
 export interface CandidateValidationReceipt extends CandidateSemanticVerdict {
@@ -105,15 +107,33 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             if(JSON.stringify(source?{sourceId:source.sourceId,sha256:source.sha256}:null)!==JSON.stringify(sourceIdentity))throw new Error('input_version_changed');
         };
         if(receipt.mode==='source_records'){
-            const configured=validationBinding?.spill;
-            if(!configured||!execution.sourceSpill)throw new Error('candidate_stream_semantic_contract_required');
-            assertSpillMeaning(configured.meaning);
+            const configured=validationBinding?.spill, dual=validationBinding?.streamedDual;
+            if((!configured&&!dual)||!execution.sourceSpill)throw new Error('candidate_stream_semantic_contract_required');
+            if(configured)assertSpillMeaning(configured.meaning);
             const capability=execution.sourceSpill(jobId,context,policy),manifest=capability.manifest;
             const request=receipt.runRequest?.sourceRecords;
             if(!request||request.sourceId!==sourceIdentity?.sourceId||request.sha256!==sourceIdentity.sha256
-                ||request.width!==configured.meaning.columns.length||receipt.sourceStream?.manifest.generation!==manifest.generation
+                ||request.width!==(dual?.meaning.width??configured!.meaning.columns.length)||receipt.sourceStream?.manifest.generation!==manifest.generation
                 ||manifest.sourceRows!==protectedSource?.recordCount||manifest.sourceBytes!==protectedSource.byteSize
                 ||workspace.read(receipt.output!.path).content!==JSON.stringify(manifest))throw new Error('candidate_spill_binding_mismatch');
+            if(dual){
+                if(await codeDigest(dual.meaning)!==dual.digest)throw new Error('candidate_spill_meaning_invalid');check();
+                const meaning=structuredClone(dual.meaning),excludedRows=meaning.proposal.exclusions.map(e=>({origin:{kind:'source' as const,name:'original',row:e.row},reason:e.role}));
+                const tables=meaning.proposal.tables.map((t,i)=>({name:t.name,role:'fact' as const,schema:dualSchema(t),rowCount:meaning.counts[i],rows:[],lineage:[]}));
+                const lineageDigest=await codeDigest({manifest,meaningDigest:dual.digest,excludedRows});check();
+                const bound={schemaVersion:1 as const,complete:true as const,tables,relationships:meaning.proposal.relationships,excludedRows,namespaceId,taskId,taskRevision:revision,
+                    sessionId:lease.scope.sessionId,sessionEpoch:lease.scope.epoch,runId:lease.runId,turnId:lease.turnId,inputBindings:receipt.inputBindings,
+                    requestedChange:scope,protectedSource:sourceIdentity,execution:receipt,outputArtifacts:[receipt.output!],lineageDigest,
+                    streamedDual:{manifest,meaning,meaningDigest:dual.digest}};
+                const changeDigest=await codeDigest(bound);check();
+                if(candidates.size>=20)throw new Error('resource_limit');
+                const candidate=freeze({...bound,candidateId:`candidate-${crypto.randomUUID()}`,changeDigest,createdAt:Date.now(),status:'staged' as const,
+                    validation:'pending' as const,answerEvidence:false as const,staging:{toolCallId:context.toolCallId!,stepId:context.stepId!}});
+                candidates.set(candidate.candidateId,candidate);spills.set(candidate.candidateId,capability);
+                differences.set(candidate.candidateId,freeze({mappedCells:tables.reduce((n,t)=>n+t.rowCount*t.schema.length,0),changedCells:null,changes:[{kind:'host_dual_projection',note:'Ordered source-backed projections; complete validation required.'}],truncated:false}));
+                return candidate;
+            }
+            if(!configured)throw new Error('candidate_stream_semantic_contract_required');
             if(await codeDigest(configured.meaning)!==configured.digest)throw new Error('candidate_spill_meaning_invalid');check();
             const meaning=structuredClone(configured.meaning),rowCount=manifest.sourceRows-1-(meaning.summary==='last_record_sum'?1:0);
             if(rowCount<1)throw new Error('candidate_spill_meaning_invalid');
@@ -217,7 +237,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
     const read=(id:string)=>{policyCheck('candidate.read');return current(id);};
     const validationRequirements=()=>{
         policyCheck('candidate.read');
-        return {configured:Boolean(validationBinding),spill:validationBinding?.spill,ambiguities:validationContract?.ambiguities??[],inference:validationBinding?.inference,
+        return {configured:Boolean(validationBinding),spill:validationBinding?.spill,streamedDual:validationBinding?.streamedDual,ambiguities:validationContract?.ambiguities??[],inference:validationBinding?.inference,
             tables:validationContract?.tables.map(t=>({name:t.name,role:t.role,schema:t.schema,grain:t.grain,groupBy:t.groupBy,metrics:t.metrics,mutableColumns:t.mutableColumns,expectedRows:t.rows.length})),
             note:'Host contract is fixed before staging. AI interpretation must pass complete-source host compilation before execution. Inferred business semantics remain explicit assumptions.'};
     };
@@ -241,12 +261,12 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             if(validationAttempts.get(id)!==attempt)throw new Error('candidate_validation_superseded');
             const source=store.getState().datasetBundle?.source.inspection;
             if(JSON.stringify(source?{sourceId:source.sourceId,sha256:source.sha256}:null)!==JSON.stringify(c.protectedSource))throw new Error('input_version_changed');};
-        if(c.spill){
+        if(c.spill||c.streamedDual){
             const capability=spills.get(id);if(!capability)throw new Error('candidate_spill_unavailable');
             validationErrors.delete(id);
             try{
                 let verdict:CandidateSemanticVerdict;
-                try{verdict=await validateSpillCandidate(capability,c.spill.meaning,check);}
+                try{verdict=c.streamedDual?await validateStreamedDual(capability,c.streamedDual.meaning,check):await validateSpillCandidate(capability,c.spill!.meaning,check);}
                 catch(error){
                     const reason=error instanceof Error?error.message:'';
                     if(!reason.startsWith('validation_'))throw error;
@@ -305,7 +325,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
         policyCheck('candidate.read');
         if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>50)throw new Error('preview_bounds_invalid');
         const c=current(id),receipt=validationReceipt(id);
-        if(c.spill)throw new Error('candidate_async_preview_required');
+        if(c.spill||c.streamedDual)throw new Error('candidate_async_preview_required');
         if(!receipt||receipt.decision!=='validated'||receipt.receiptDigest!==receiptDigest
             ||receipt.candidateId!==id||receipt.namespaceId!==namespaceId||receipt.changeDigest!==c.changeDigest
             ||receipt.lineageDigest!==c.lineageDigest||receipt.outputDigest!==c.outputArtifacts[0].sha256
@@ -337,7 +357,13 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
         return freeze(result);
     };
     const previewAsync=async(id:string,tableName:string,receiptDigest:string,offset=0,limit=50)=>{
-        const c=current(id);if(!c.spill)return preview(id,tableName,receiptDigest,offset,limit);
+        const c=current(id);if(!c.spill&&!c.streamedDual)return preview(id,tableName,receiptDigest,offset,limit);
+        if(c.streamedDual){
+            const receipt=validationReceipt(id),cap=spills.get(id);
+            if(!cap||receipt?.decision!=='validated'||receipt.receiptDigest!==receiptDigest)throw new Error('validation_failed');
+            const check=()=>{policyCheck('candidate.read');if(current(id)!==c||validationReceipt(id)!==receipt)throw new Error('validation_failed');};
+            return freeze(await streamedDualPage(c,receipt,tableName,offset,limit,sequence=>cap.readChunk(sequence,check),check));
+        }
         policyCheck('candidate.read');
         if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>50)throw new Error('preview_bounds_invalid');
         const receipt=validationReceipt(id),table=c.tables.find(t=>t.name===tableName),capability=spills.get(id);
@@ -377,7 +403,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
     const diff=(id:string,againstId?:string)=>{
         policyCheck('candidate.diff');
         const c=current(id),before=againstId?current(againstId):undefined;
-        if(before&&(c.spill||before.spill))throw new Error('candidate_spill_comparison_unsupported');
+        if(before&&(c.spill||c.streamedDual||before.spill||before.streamedDual))throw new Error('candidate_spill_comparison_unsupported');
         let valueDiff:unknown=differences.get(id);
         if(before){
             const changes:unknown[]=[];let changedCells=0;
@@ -403,13 +429,13 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
     };
     const commitRestriction=(id:string)=>{
         current(id);
-        return draftOnlyMeaning && !boundedDualCommit(id) ? 'candidate_multi_table_atomic_promotion_unavailable' : null;
+        return draftOnlyMeaning && !boundedDualCommit(id) && !(current(id).streamedDual && validations.get(id)?.decision==='validated' && validationBinding?.streamedDual && meaningCheck) ? 'candidate_multi_table_atomic_promotion_unavailable' : null;
     };
     const assertCommitSupported=(id:string)=>{const restriction=commitRestriction(id);if(restriction)throw new Error(restriction);};
     const captureCommitCheck=(id:string)=>{
         assertCommitSupported(id);
         const candidate=current(id),validation=validationReceipt(id),bindingCheck=validationBindingChecks.get(id);
-        if(!validation||validation.decision!=='validated'||!candidate.spill&&!bindingCheck)throw new Error('validation_failed');
+        if(!validation||validation.decision!=='validated'||!candidate.spill&&!candidate.streamedDual&&!bindingCheck)throw new Error('validation_failed');
         return (target:StoreApi,context:ExecutionContext)=>{
             assertRunActive(target,context.lease); meaningCheck?.();
             const task=target.piTask?.snapshot;
@@ -422,7 +448,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             for(const ref of [candidate.execution.program!,...(candidate.execution.inputs??[]),...candidate.outputArtifacts]){
                 const actual=workspace.read(ref.path);if(actual.revision!==ref.revision||actual.sha256!==ref.sha256)throw new Error('workspace_conflict');
             }
-            if(candidate.spill){
+            if(candidate.spill||candidate.streamedDual){
                 if(JSON.stringify(source)!==sourceSignatureAtPreparation
                     ||JSON.stringify(readSourceBytes(target,source!.sourceId,0,0).source)!==sourceSignatureAtPreparation
                     ||JSON.stringify(authorityRoot.candidateValidationContract)!==rootBindingSignature)throw new Error('input_version_changed');
@@ -432,10 +458,10 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
     };
     const captureSpillRead = (id:string) => {
         const candidate=current(id),receipt=validationReceipt(id),capability=spills.get(id);
-        if(!candidate.spill||!capability||receipt?.decision!=='validated')throw new Error('candidate_spill_unavailable');
+        if((!candidate.spill&&!candidate.streamedDual)||!capability||receipt?.decision!=='validated')throw new Error('candidate_spill_unavailable');
         const reader=capability.captureRead(),signature=JSON.stringify(store.getState().settings.runtimeAccessControl);
         const check=(target:StoreApi)=>{
-            assertSessionResourceActive(target,lease.scope);
+            assertSessionResourceActive(target,lease.scope); meaningCheck?.();
             const state=target.getState(),task=target.piTask?.snapshot??state.activeAgentTask??(!lease.closed?getTask():undefined);
             if(disposed||candidates.get(id)!==candidate||validations.get(id)!==receipt||!task||task.taskId!==taskId
                 ||task.revision!==candidate.taskRevision||task.scope.digest!==candidate.requestedChange.scopeDigest
@@ -479,7 +505,9 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
         if (!validationBinding || receipt?.decision!=='validated' || !inputs) throw new Error('recovery_metadata_unavailable');
         return { binding:structuredClone(validationBinding), inputs:structuredClone(inputs), execution:c.execution };
     };
-    return Object.freeze({namespaceId,stage,read,diff,validate,validationReceipt,validationRequirements,bindInferredMeaning,commitRestriction,boundedDualCommit,captureCommitCheck,captureSpillRead,captureDraftRead,captureRecovery,preview,previewAsync,validationError:(id:string)=>{own();return validationErrors.get(id);},
+    return Object.freeze({namespaceId,stage,read,diff,validate,validationReceipt,validationRequirements,
+        // Internal batching hint, not a new tool permission or a validation/commit grant.
+        useCompactSourceRecords:()=>Boolean(validationBinding?.streamedDual&&meaningCheck),bindInferredMeaning,commitRestriction,boundedDualCommit,captureCommitCheck,captureSpillRead,captureDraftRead,captureRecovery,captureStreamedDualBinding:(id:string)=>{const c=current(id);if(!c.streamedDual||validations.get(id)?.decision!=='validated'||!validationBinding?.streamedDual||!meaningCheck)throw new Error('validation_failed');return validationBinding;},preview,previewAsync,validationError:(id:string)=>{own();return validationErrors.get(id);},
         suspend:()=>{own();suspended=true;},list:()=>{
             own();const live:StagedDatasetCandidate[]=[];
             for(const id of candidates.keys()){
@@ -493,7 +521,7 @@ export const createCandidateStaging=(store:StoreApi,workspace:TaskWorkspace,getT
             return live;
         },
         abandon:(id:string)=>{policyCheck('candidate.abandon');const c=candidates.get(id);if(!c)throw new Error('candidate_unavailable');candidates.delete(id);spills.delete(id);validationErrors.delete(id);differences.delete(id);validations.delete(id);validationChecks.delete(id);validationAttempts.delete(id);recoveryInputs.delete(id);
-            if(!c.spill)bytes-=new TextEncoder().encode(workspace.read(c.outputArtifacts[0].path,c.outputArtifacts[0].revision).content).byteLength;
+            if(!c.spill&&!c.streamedDual)bytes-=new TextEncoder().encode(workspace.read(c.outputArtifacts[0].path,c.outputArtifacts[0].revision).content).byteLength;
             return {candidateId:id,status:'abandoned' as const,namespaceId};},dispose});
 };
 export type CandidateStagingPort=ReturnType<typeof createCandidateStaging>;

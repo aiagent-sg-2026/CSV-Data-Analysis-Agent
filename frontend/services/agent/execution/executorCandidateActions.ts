@@ -9,7 +9,7 @@ export const executeCandidateAction=async(action:AiAction,store:StoreApi,policy?
         try{
             const {inferCandidateMeaning}=await import('../../data/inferCandidateMeaning');
             const requirements=await inferCandidateMeaning(store,args);
-            return {status:'success',toolName,message:`AI meaning inferred and host source-equivalence checks passed. Accepted rows and types are unchanged. Next execute your own program using the compiled contract (source_records for spill, complete candidate envelope otherwise), stage and independently validate it, ${requirements.tables?.length === 2 ? 'stop at both validated read-only drafts; multi-table acceptance is gated until atomic promotion is ready' : 'then request separate exact human candidate approval'}. Any required semantic choice has been resolved, not converted into commit permission.`,shouldStop:false,
+            return {status:'success',toolName,message:`AI meaning inferred and host source-equivalence checks passed. Accepted rows and types are unchanged. Next execute your own program using the compiled contract (source_records for spill, complete candidate envelope otherwise), stage and independently validate it, ${requirements.streamedDual ? 'execute source_records at the compiled width, inspect both validated read-only drafts, then request separate exact ALL-table human approval' : requirements.tables?.length === 2 ? 'inspect both validated read-only drafts, then request separate exact ALL-table human approval for supported bounded candidates' : 'then request separate exact human candidate approval'}. Any required semantic choice has been resolved, not converted into commit permission.`,shouldStop:false,
                 payload:{requirements,answerEvidence:false},artifacts:{requirements}};
         }catch(error){
             const reason=error instanceof Error&&/^(meaning_[a-z_]+|source_stream_[a-z_]+|validation_[a-z_,]+|input_version_changed|scope_revoked|resource_limit|capability_unavailable)$/.test(error.message)?error.message:'meaning_proposal_rejected';
@@ -45,7 +45,7 @@ export const executeCandidateAction=async(action:AiAction,store:StoreApi,policy?
             const offset=Number(args.offset??0),limit=Number(args.limit??10);
             if(t&&offset>t.rowCount)throw new Error('candidate_range_invalid');
             const receipt=port.validationReceipt(id);
-            if(c.spill&&t&&receipt?.decision!=='validated')throw new Error('candidate_validation_required');
+            if((c.spill||c.streamedDual)&&t&&receipt?.decision!=='validated')throw new Error('candidate_validation_required');
             const draft=t&&receipt?.decision==='validated'?await port.previewAsync(id,t.name,receipt.receiptDigest,offset,limit):undefined;
             candidate=t?(draft
                 ? {...draft,table:t.name,nextRow:offset+draft.rows.length,complete:offset+draft.rows.length>=t.rowCount,validation:'validated'}

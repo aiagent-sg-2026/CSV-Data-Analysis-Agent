@@ -23,7 +23,8 @@ try {
     evidence.browser = context.browser()?.version();
     await context.route('**/*', route => { if (new URL(route.request().url()).origin === new URL(base).origin) return route.continue(); evidence.externalAttempts.push(route.request().url()); return route.abort(); });
     for (const mode of process.argv[4]?.split(',') ?? ['A42', 'A60', 'A90', 'B90', 'documents90', 'denyA90', 'neither', 'choice-tamper', 'proposal-tamper', 'guest-tamper', 'program-revision']) {
-        const page = await context.newPage(), cdp = await context.newCDPSession(page);
+        const page = await context.newPage(), cdp = await context.newCDPSession(page), started=Date.now();
+        let memoryTimer,heapHigh=0,heapSamples=0;
         page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') console.log('BROWSER', m.type(), m.text()); });
         page.on('pageerror', e => evidence.pageErrors.push(e.message)); page.on('worker', w => evidence.workers.push(w.url()));
         await cdp.send('Storage.clearDataForOrigin', { origin: new URL(base).origin, storageTypes: 'all' });
@@ -37,6 +38,7 @@ try {
                 root.setState({ ensureDatasetSemanticSnapshot: async () => null }); // Unrelated external annotation only.
                 const f = await qa.preparePiDualGrainSmoke(root, { width: mode === 'A42' ? 42 : mode === 'A60' ? 60 : 90,
                     ...(mode === 'documents90' ? { layout: 'document_rows' } : {}),
+                    ...(mode === 'Large90' ? { streamRecords:10000 } : {}),
                     ...(mode === 'guest-tamper' ? { fault: 'value' } : {}), ...(mode === 'program-revision' ? { fault: 'program_revision' } : {}),
                     ...(mode === 'proposal-tamper' ? { confirmedProposal: p => ({ ...p, assumptions: ['Changed after semantic selection'] }) } : {}) });
                 globalThis.dualQa = { root, f };
@@ -44,6 +46,7 @@ try {
                 return { result: f.result, pending: root.getState().pendingClarification, source: f.source, widths: f.fixture.raw.map(r => r.length),
                     programs: root.getState().taskInspection?.programs.length, renderer: debug && gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) };
             }, { agent, alias, index, mode });
+            if(mode==='Large90'){assert.ok(initial.source.byteSize>25*1024*1024);memoryTimer=setInterval(()=>{cdp.send('Runtime.getHeapUsage').then(m=>{heapHigh=Math.max(heapHigh,m.usedSize);heapSamples++;}).catch(()=>{});},200);}
             assert.ok(initial.pending?.resumeContext?.piSpillMeaningChoice, JSON.stringify(initial));
             assert.equal(initial.programs, 0); assert.match(initial.renderer, /SwiftShader/i);
             const show = page.getByRole('button', { name: 'Show Assistant panel', exact: true }); if (await show.isVisible()) await show.click();
@@ -58,15 +61,16 @@ try {
             }
             const choice = mode === 'neither' ? 'Neither' : mode === 'B90' ? 'B — Confirm alternative interpretation' : 'A — Confirm exact interpretation';
             await page.getByRole('button', { name: choice, exact: true }).click();
-            await page.waitForFunction(() => !globalThis.qaRoot.getState().isBusy && !globalThis.qaRoot.getState().activeExecution, undefined, { timeout: 120000 });
+            await page.waitForFunction(() => !globalThis.qaRoot.getState().isBusy && !globalThis.qaRoot.getState().activeExecution, undefined, { timeout: mode==='Large90'?600000:120000 });
             const after = await page.evaluate(() => {
                 const { root, f } = globalThis.dualQa, s = root.getState();
                 return { task: s.activeAgentTask, inspection: s.taskInspection, pending: s.pendingClarification, accepted: s.datasetBundle.acceptedCommit ?? null,
                     progress: JSON.parse(s.workspaceFiles['/intake/repair-task.json']), sameOriginalData: s.csvData === f.data, canonical: s.canonicalCsvData, cards: s.analysisCards.length, queries: s.queryHistory.length, trace: f.trace };
             });
+            evidence.scenarios.push({mode,initial,after});
             assert.equal(after.accepted, null); assert.equal(after.canonical, null); assert.equal(after.sameOriginalData, true); assert.equal(after.cards, 0); assert.equal(after.queries, 0);
-            if (/^(A|B)|^documents|^deny/.test(mode)) {
-                assert.ok(after.pending?.resumeContext?.piCandidateApproval);
+            if (/^(A|B|Large)|^documents|^deny/.test(mode)) {
+                assert.ok(after.pending?.resumeContext?.piCandidateApproval, JSON.stringify(after));
                 assert.equal(after.inspection.candidate.validation.decision, 'validated', JSON.stringify(after));
                 assert.equal(after.progress.state, 'awaiting_commit_approval');
                 assert.ok(after.task.budget.used.providerTurns < after.task.budget.limits.providerTurns);
@@ -83,7 +87,10 @@ try {
                     const rows = sections.nth(i).getByLabel('Draft rows', { exact: true }); await rows.waitFor();
                     previews.push(JSON.parse(await rows.innerText()));
                 }
-                if (mode === 'documents90') {
+                if (mode === 'Large90') {
+                    assert.equal(previews[0].length,10);assert.ok(previews[0].every(r=>r['Cost [USD]']===1.25));
+                    assert.deepEqual(previews[1].slice(0,3).map(r=>r['Value [USD]']),[null,0,-1.25]);
+                } else if (mode === 'documents90') {
                     assert.deepEqual(previews[0].map(r => r['Cost [USD]']), [250, 150]);
                     assert.deepEqual(previews[1].map(r => r['Cost [USD]']), [0, -1.25, 2.5, 3]);
                 } else {
@@ -107,10 +114,10 @@ try {
                         const value = mode === 'documents90' ? 'Cost [USD]' : 'Value [USD]';
                         const questions = [
                             ['How many entities?', aggregate(entity.tableId, 'count')],
-                            ['List entity identifiers.', { tableId: entity.tableId, select: ['Id'], orderBy: [{ column: 'Id', direction: 'asc' }] }],
+                            ['List entity identifiers.', { tableId: entity.tableId, select: ['Id'], ...(mode==='Large90'?{limit:3}:{}), orderBy: [{ column: 'Id', direction: 'asc' }] }],
                             ['Total entity cost?', aggregate(entity.tableId, 'sum', 'Cost [USD]')],
                             ['Total entity net?', aggregate(entity.tableId, 'sum', 'Net [USD]')],
-                            ['Cost per entity?', { tableId: entity.tableId, select: ['Id', 'Cost [USD]'], orderBy: [{ column: 'Id', direction: 'asc' }] }],
+                            ['Cost per entity?', { tableId: entity.tableId, select: ['Id', 'Cost [USD]'], ...(mode==='Large90'?{limit:3}:{}), orderBy: [{ column: 'Id', direction: 'asc' }] }],
                             ['How many metric rows?', aggregate(metric.tableId, 'count')],
                             ['How many reported metric values?', aggregate(metric.tableId, 'count', value)],
                             ['Total metric cost (not entity summaries)?', aggregate(metric.tableId, 'sum', value)],
@@ -127,6 +134,12 @@ try {
                     const verify = actual => {
                         assert.equal(actual.results.length, 10); assert.equal(actual.joinError, 'accepted_dual_joins_sql_unsupported');
                         for (const q of actual.results) { assert.equal(q.engine, 'duckdb'); assert.ok(q.sql && q.loadVersion && q.boundary && q.source && q.table.tableId); }
+                        if(mode==='Large90'){
+                            const rows=actual.results.map(q=>q.rows);
+                            assert.equal(String(rows[0][0].n),'10000');assert.deepEqual(rows[1].map(r=>r.Id),['E00000000','E00000001','E00000002']);
+                            assert.equal(rows[2][0].n,'12500.00');assert.equal(rows[3][0].n,'-12500.00');assert.deepEqual(rows[4].map(r=>r['Cost [USD]']),['1.25','1.25','1.25']);
+                            assert.equal(String(rows[5][0].n),'600000');assert.equal(String(rows[6][0].n),'590000');assert.equal(rows[7][0].n,'28949200.00');assert.equal(rows[8][0].n,'-1.25');assert.equal(rows[9][0].n,'100.59');return;
+                        }
                         const doc = mode === 'documents90', m = mode === 'A42' ? 12 : mode === 'A60' ? 30 : 60;
                         const rows = actual.results.map(q => q.rows);
                         assert.equal(String(rows[0][0].n), doc ? '2' : '3');
@@ -139,6 +152,7 @@ try {
                         assert.equal(rows[8][0].n, '-1.25'); assert.equal(rows[9][0].n, doc ? '3.00' : '3.01');
                     };
                     after.acceptedQueries = await query(); verify(after.acceptedQueries);
+                    if(mode==='Large90')after.sourceReads=await page.evaluate(()=>({...globalThis.dualQa.f.reads}));
                     await page.reload();
                     await page.evaluate(async ({ index }) => { globalThis.qaRoot = (await import(`/assets/${index}`)).u; }, { index });
                     await page.waitForFunction(() => !globalThis.qaRoot.getState().isAppInitializing);
@@ -232,8 +246,10 @@ try {
                 if (mode === 'proposal-tamper') assert.ok(after.trace.join('\n').includes('meaning_dual_grain_alternatives_required'));
                 if (mode === 'program-revision') assert.ok(after.trace.join('\n').includes('workspace_conflict'));
             }
-            evidence.scenarios.push({ mode, initial, after }); console.log('PASS', mode);
-        } finally { await page.close(); }
+            if(memoryTimer)clearInterval(memoryTimer);
+            after.measurements={elapsedMs:Date.now()-started,rendererV8SampledHigh:heapHigh,heapSamples,method:'CDP Runtime.getHeapUsage every 200ms after initial semantic proposal; excludes fixture construction peaks, worker/WASM/Blob/OPFS and process RSS. Source reads are requested native File slice bytes, not OS physical disk reads; only original handle before reload.'};
+            console.log('PASS', mode);
+        } finally { if(memoryTimer)clearInterval(memoryTimer); await page.close(); }
     }
     assert.deepEqual(evidence.pageErrors, []);
     // The unrelated default-provider UI may attempt session bootstrap. Routing aborts it
