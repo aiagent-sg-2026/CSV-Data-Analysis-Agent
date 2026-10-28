@@ -1,7 +1,9 @@
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import type { StateCreator } from 'zustand';
 import type { AppStore } from '../useAppStore';
-import type { CloudAiConsentRequest, CsvRow } from '../../types';
+import type { CloudAiConsentRequest, CsvData, CsvRow } from '../../types';
+import { getPreferredAnalysisDataset } from '../../services/agent/reportStructureState';
+import { getCsvDataRowCount } from '../../utils/datasetId';
 import {
     shouldAllowAgentThinkingSurface,
     shouldAllowDatabaseSurface,
@@ -35,6 +37,9 @@ export interface IUISlice {
     isSettingsModalOpen: boolean;
     isHistoryPanelOpen: boolean;
     isDatabaseModalOpen: boolean;
+    /** Live UI intent only; never persisted or a candidate/commit authority. */
+    localDataPreviewRequest: { dataset: CsvData; sessionId: string } | null;
+    openLocalDataPreview: () => void;
     isWorkspaceModalOpen: boolean;
     isDataPreparationModalOpen: boolean;
     isDebugLogsModalOpen: boolean;
@@ -100,6 +105,7 @@ export const createUISlice: StateCreator<AppStore, [], [], IUISlice> = (set, get
     isSettingsModalOpen: false,
     isHistoryPanelOpen: false,
     isDatabaseModalOpen: false,
+    localDataPreviewRequest: null,
     isWorkspaceModalOpen: false,
     isDataPreparationModalOpen: false,
     isDebugLogsModalOpen: false,
@@ -146,7 +152,13 @@ export const createUISlice: StateCreator<AppStore, [], [], IUISlice> = (set, get
     setIsSpreadsheetVisible: (isVisible) => set({ isSpreadsheetVisible: isVisible }),
     setIsSettingsModalOpen: (isOpen) => set({ isSettingsModalOpen: isOpen ? shouldAllowSettingsSurface() : false }),
     setIsHistoryPanelOpen: (isOpen) => set({ isHistoryPanelOpen: isOpen }),
-    setIsDatabaseModalOpen: (isOpen) => set({ isDatabaseModalOpen: isOpen ? shouldAllowDatabaseSurface() : false }),
+    setIsDatabaseModalOpen: (isOpen) => set({ isDatabaseModalOpen: isOpen ? shouldAllowDatabaseSurface() : false, localDataPreviewRequest: null }),
+    openLocalDataPreview: () => {
+        const state = get(), dataset = getPreferredAnalysisDataset(state);
+        if (!shouldAllowDatabaseSurface() || !dataset || getCsvDataRowCount(dataset) < 1 || state.isBusy
+            || state.initialAnalysisFailureKind !== 'cloud_consent_declined') return;
+        set({ isDatabaseModalOpen: true, localDataPreviewRequest: { dataset, sessionId: state.sessionId } });
+    },
     setIsWorkspaceModalOpen: (isOpen) => set({ isWorkspaceModalOpen: isOpen ? shouldAllowWorkspaceSurface() : false }),
     setIsDataPreparationModalOpen: (isOpen) => set({ isDataPreparationModalOpen: isOpen ? shouldAllowWorkflowSurface() : false }),
     setIsDebugLogsModalOpen: (isOpen) => set({ isDebugLogsModalOpen: isOpen ? shouldAllowLogsSurface() : false }),

@@ -1,3 +1,4 @@
+import { readDetachedCandidateDraft } from '../../../data/detachedCandidateDraft';
 import type { ToolExecutionResult } from '../../../../types';
 import type { StoreApi } from '../../types';
 import type { TaskWorkspace } from '../../taskWorkspace';
@@ -22,18 +23,21 @@ export interface TaskCandidateView {
     tables: Array<{ name: string; rows: number; columns: string[] }>;
     excludedCount: number; exclusions: string[]; diff: string; diffTruncated: boolean;
     requirements: string; requirementsTruncated: boolean;
-    validation?: { decision: string; reasons: string[]; checks: string[]; reconciliation: string; truncated: boolean };
+    validationError?: string;
+    // Display-only projection. Publication authority remains in the staging closure.
+    commitRestriction?: string | null;
+    validation?: { decision: string; reasons: string[]; checks: string[]; reconciliation: string; truncated: boolean; receiptDigest?: string };
 }
 export interface TaskInspectionProjection {
     taskId: string; sessionId: string; sessionEpoch: number; runId: string; runtime: string; outcome?: string;
     programs: Array<CodeArtifactRef & { byteSize: number }>; omittedPrograms: number;
     observations: TaskObservationView[]; omittedObservations: number;
-    candidate?: TaskCandidateView; grounding?: Pick<QueryGroundingVerdict, 'status' | 'queryIds' | 'computationIds' | 'reasons'>;
+    candidate?: TaskCandidateView; candidateError?: string; grounding?: Pick<QueryGroundingVerdict, 'status' | 'queryIds' | 'computationIds' | 'reasons'>;
     outputs?: import('../../../../types').RuntimeTaskOutputVerdict;
 }
 const LIMITS = { programs: 40, observations: 30, text: 2000 };
 const bound = (text: string) => text.slice(0, LIMITS.text);
-const readers = new WeakMap<StoreApi['getState'], { lease: RunLease; workspace: TaskWorkspace; taskId: string; seen: Set<string> }>();
+const readers = new WeakMap<StoreApi['getState'], { lease: RunLease; workspace: TaskWorkspace; taskId: string; seen: Set<string>; candidates?: CandidateStagingPort }>();
 
 /** A session-owned read port exposes ranges, never an execution or mutation handle. */
 export const readTaskProgram = (store: StoreApi, taskId: string, program: CodeArtifactRef, offset = 0) => {
@@ -45,6 +49,16 @@ export const readTaskProgram = (store: StoreApi, taskId: string, program: CodeAr
     return range;
 };
 
+/** Saved projections are stale-view preconditions, never storage or validation authority. */
+export const readTaskCandidateDraft = async (store: StoreApi, taskId: string, candidateId: string, table: string, digest: string, offset = 0) => {
+    const reader = readers.get(rootStore(store).getState), state = store.getState();
+    if (!reader?.candidates || !ownsSessionScope(store, reader.lease.scope) || reader.taskId !== taskId
+        || state.activeAgentTask?.taskId !== taskId || state.taskInspection?.candidate?.candidateId !== candidateId
+        || state.taskInspection.candidate.validation?.receiptDigest !== digest) throw new Error('candidate_draft_unavailable');
+    if(state.activeAgentTask?.status==='awaiting_approval' || !ownsRun(store, reader.lease) || reader.lease.closed)return readDetachedCandidateDraft(store,candidateId,table,digest,offset,10);
+    return reader.candidates.previewAsync(candidateId, table, digest, offset, 10);
+};
+
 export const createTaskInspection = (store: StoreApi, lease: RunLease, workspace: TaskWorkspace, taskId: string,
     previous?: TaskInspectionProjection) => {
     let projection: TaskInspectionProjection = previous ?? { taskId, sessionId: lease.scope.sessionId, sessionEpoch: lease.scope.epoch,
@@ -52,7 +66,7 @@ export const createTaskInspection = (store: StoreApi, lease: RunLease, workspace
     projection = { ...projection, runId: lease.runId, outcome: undefined, grounding: undefined, outputs: undefined };
     const key = rootStore(store).getState, prior = readers.get(key);
     const seen = prior?.taskId === taskId ? prior.seen : new Set<string>();
-    const reader = { lease, workspace, taskId, seen };
+    const reader: {lease: RunLease; workspace: TaskWorkspace; taskId: string; seen: Set<string>; candidates?: CandidateStagingPort} = { lease, workspace, taskId, seen };
     readers.set(key, reader);
     registerSessionResource(lease.scope, () => { if (readers.get(key) === reader) readers.delete(key); });
     const publish = () => {
@@ -86,12 +100,19 @@ export const createTaskInspection = (store: StoreApi, lease: RunLease, workspace
             observations: observations.slice(-LIMITS.observations),
             omittedObservations: projection.omittedObservations + Math.max(0, observations.length - LIMITS.observations) };
         if (tool.startsWith('candidate.') && candidates) {
+            reader.candidates = candidates;
+            projection = { ...projection, candidateError: undefined };
             try {
-                const last = candidates.list().at(-1), candidate = last ? candidates.read(last.candidateId) : undefined;
+                const validationId = (result.artifacts?.candidateValidation as {candidateId?: string} | undefined)?.candidateId;
+                const failedId = (result.artifacts?.candidateFailure as {candidateId?: string} | undefined)?.candidateId;
+                const activeId = validationId ?? failedId;
+                const last = activeId ? undefined : candidates.list().at(-1);
+                const candidate = activeId ? candidates.read(activeId) : last ? candidates.read(last.candidateId) : undefined;
                 if (!candidate) projection = { ...projection, candidate: undefined };
                 else {
                     let diff = 'Structural diff unavailable under current policy.';
                     try { diff = JSON.stringify(candidates.diff(candidate.candidateId).valueDiff, null, 2); } catch { /* An inspection does not bypass a denied diff tool. */ }
+                    const validationError = candidates.validationError(candidate.candidateId);
                     const validation = candidates.validationReceipt(candidate.candidateId), reconciliation = JSON.stringify(validation?.groups ?? [], null, 2);
                     let requirements = 'Host requirements unavailable under current policy.';
                     try { requirements = JSON.stringify(candidates.validationRequirements(), null, 2); } catch { /* Read policy remains authoritative. */ }
@@ -102,11 +123,18 @@ export const createTaskInspection = (store: StoreApi, lease: RunLease, workspace
                         exclusions: candidate.excludedRows.slice(0, 20).map(e => bound(`${e.origin.kind} ${e.origin.name} row ${e.origin.row}: ${e.reason}`)),
                         diff: bound(diff), diffTruncated: diff.length > LIMITS.text,
                         requirements: bound(requirements), requirementsTruncated: requirements.length > LIMITS.text,
-                        ...(validation ? { validation: { decision: validation.decision, reasons: validation.reasonCodes.slice(0, 30),
+                        validationError, commitRestriction: candidates.commitRestriction(candidate.candidateId),
+                        ...(validation ? { validation: { decision: validation.decision, receiptDigest: validation.receiptDigest, reasons: validation.reasonCodes.slice(0, 30),
                             checks: validation.checks.slice(0, 30), reconciliation: bound(reconciliation),
                             truncated: reconciliation.length > LIMITS.text || validation.checks.length > 30 || validation.reasonCodes.length > 30 } } : {}) } };
                 }
-            } catch { /* Stale candidates remain observations, never executable reviews. */ }
+            } catch (error) {
+                // Do not leave a previous PASS visible when the active validation/storage read failed.
+                projection = { ...projection, candidate: undefined, candidateError: error instanceof Error ? bound(error.message) : 'candidate_unavailable' };
+            }
+            if (tool === 'candidate.validate' && result.status !== 'success') {
+                projection = { ...projection, candidateError: bound(result.message) };
+            }
         }
         publish();
     };

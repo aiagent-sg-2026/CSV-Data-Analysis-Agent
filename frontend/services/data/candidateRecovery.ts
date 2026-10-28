@@ -1,3 +1,4 @@
+import { recoverSpillCandidate,isLiveRecoveredSpill,commitRecoveredSpill } from './spillCandidateRecovery';
 import type { StoreApi } from '../agent/types';
 import { assertRunActive, canCommitRun, rootStore } from '../session/sessionOwnership';
 import type { CandidateRecoveryCheckpoint } from './datasetRecoveryContract';
@@ -37,7 +38,7 @@ const verifyCheckpoint = async (checkpoint: CandidateRecoveryCheckpoint) => {
         || Object.entries(task.budget.limits).some(([key, value]) => value > DEFAULT_TASK_LIMITS[key as keyof typeof DEFAULT_TASK_LIMITS])) throw new Error('recovery_checkpoint_invalid');
     await verifyReplayManifest(body.proposal); return task;
 };
-export interface RecoveredCandidateReview { reviewId: string; digest: string; expiresAt: number; checkpointId: string;
+export interface RecoveredCandidateReview { exact?:import('./candidateCommit').CandidateCommitReview; reviewId: string; digest: string; expiresAt: number; checkpointId: string;
     tables: Array<{ name: string; rowCount: number; columns: string[] }> }
 type Prepared = { owner: StoreApi['getState']; scope: object; runId: string; checkpoint: CandidateRecoveryCheckpoint;
     result: Awaited<ReturnType<typeof reconstructDatasetCommit>>; policy: string };
@@ -59,6 +60,8 @@ export const recoverCandidateReview = async (store: StoreApi, options: RecoveryO
         if(savedHigher&&liveHigher)throw new Error('recovery_checkpoint_conflict');
         if(savedHigher||!liveHigher&&canonical.repetitions>=checkpoint.repetitions){checkpoint=canonical;store.setState({candidateRecovery:canonical});}
     }
+    if(checkpoint.proposal.acceptedStreamedDual)throw new Error('recovery_streamed_dual_requires_fresh_meaning_and_execution');
+    if(checkpoint.proposal.acceptedSpill)return recoverSpillCandidate(store,checkpoint,options,dependencies);
     const task = await verifyCheckpoint(checkpoint); own(store); const capturedPolicy = policy(store);
     // A successful read is required. A failed journal read must never be treated as absence.
     const durable = await db.get(DATASET_COMMITS_STORE, checkpoint.proposal.recordId); own(store);
@@ -113,6 +116,7 @@ export const recoverCandidateReview = async (store: StoreApi, options: RecoveryO
 };
 
 export const commitRecoveredCandidate = async (store: StoreApi, review: RecoveredCandidateReview, dependencies: RecoveryDependencies = {}) => {
+    if(isLiveRecoveredSpill(review))return commitRecoveredSpill(store,review);
     const lease = own(store), prepared = reviews.get(review);
     if (!prepared || prepared.owner !== rootStore(store).getState || prepared.scope !== lease.scope || prepared.runId === lease.runId
         || Date.now() >= review.expiresAt || store.getState().candidateRecovery?.digest !== prepared.checkpoint.digest || prepared.policy !== policy(store)) throw new Error('approval_invalid');

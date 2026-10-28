@@ -1,3 +1,4 @@
+import { CandidateDraft } from './task/CandidateDraft';
 import React, { useEffect, useRef, useState } from 'react';
 import { shallow } from 'zustand/shallow';
 import { useAppStore } from '../store/useAppStore';
@@ -27,7 +28,7 @@ export const DatasetRecoveryPanel: React.FC = () => {
     useEffect(() => { setTargets([]); setSelected(''); setReview(null); setCandidateReview(null); setMessage(''); }, [sessionId, reference?.commitId]);
     const perform = async (operation: (store: StoreApi) => Promise<unknown>, success: string, continueInitial=false) => {
         if (useAppStore.getState().isBusy || useAppStore.getState().activeExecution) return;
-        const lease = beginRun(useAppStore, 'follow_up', `dataset-recovery-${crypto.randomUUID()}`), store = scopeRunStore(useAppStore, lease);
+        const lease = beginRun(useAppStore, 'follow_up', `dataset-recovery-${crypto.randomUUID()}`,`dataset-recovery-turn-${crypto.randomUUID()}`), store = scopeRunStore(useAppStore, lease);
         useAppStore.setState({ isBusy: true }); setMessage('Verifying local dataset…');
         let succeeded=false;
         try {
@@ -66,6 +67,10 @@ export const DatasetRecoveryPanel: React.FC = () => {
             {candidateReview && <div className="mt-2">
                 <p>Fresh review: {candidateReview.tables.map(t=>`${t.name}: ${t.rowCount} rows`).join('; ')}</p>
                 <p className="break-all text-xs">{candidateReview.digest}</p>
+                {candidateReview.exact && <div>
+                    <p className="break-all text-xs">Program: {candidateReview.exact.programDigest} · Validation: {candidateReview.exact.validationDigest} · Source: {candidateReview.exact.spill?.source.sha256}</p>
+                    <CandidateDraft taskId={candidateReview.exact.spill!.taskId} candidateId={candidateReview.exact.candidateId} table={candidateReview.exact.primaryTable} digest={candidateReview.exact.validationDigest} />
+                </div>}
                 <button disabled={busy} onClick={()=>void perform(async s=>{await commitRecoveredCandidate(s,candidateReview);setCandidateReview(null);},'Revalidated candidate committed once. Run a fresh query for facts.',true)} className="mt-2 rounded bg-blue-700 px-3 py-2 text-white">Approve recovered candidate</button>
                 <button disabled={busy} onClick={()=>void perform(async s=>{s.setState({candidateRecovery:null});setCandidateReview(null);},'Recovered candidate denied; accepted data unchanged.')} className="ml-2 rounded border px-3 py-2">Deny recovered candidate</button>
             </div>}

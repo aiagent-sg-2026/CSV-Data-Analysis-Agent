@@ -700,7 +700,8 @@ describe('Pi production runtime', () => {
         ['a failure the cleaning loop wrote', { runId: 'r', status: 'failed', lastError: 'Numeric reconciliation failed.', steps: [], currentStep: 0 }, null],
     ])('marks only an analysis-caused failure as such in a qualified run: %s', async (_name, cleaningRun, expectedOrigin) => {
         const store = createStore();
-        store.setState({ cleaningRun, confirmedAnalysisGoal: 'Find patterns.', datasetBundle: createSingleTableDatasetBundle({
+        // This test exercises a post-structure host failure, not unresolved-source blocking.
+        store.setState({ canonicalCsvData: store.getState().csvData, cleaningRun, confirmedAnalysisGoal: 'Find patterns.', datasetBundle: createSingleTableDatasetBundle({
             datasetId: 'synthetic', sourceFingerprint: 'synthetic', file: { name: 'synthetic.csv', size: 20, lastModified: 1 }, data: store.getState().csvData,
         }) });
         stageMock.mockImplementation(async ({ toolName, phase, context }) => ({

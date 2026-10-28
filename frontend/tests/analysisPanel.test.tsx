@@ -1330,6 +1330,25 @@ describe('analysis panel rendering', () => {
         expect(store.setIsSettingsModalOpen).toHaveBeenCalledWith(true);
     });
 
+    it('offers local data as the first action without retrying AI after a local-only import', () => {
+        const store = { ...createRecoveryStore(), initialAnalysisStatus: 'degraded', initialAnalysisFailureKind: 'cloud_consent_declined',
+            openLocalDataPreview: vi.fn(), settings: { language: 'Mandarin', provider: 'openai' } };
+        (useAppStoreModule.useAppStore as unknown as ReturnType<typeof vi.fn>).mockImplementation((selector: (value: typeof store) => unknown) => selector(store));
+        render(<AnalysisPanel />);
+        const local = screen.getByRole('button', { name: '查看数据（本地）' });
+        fireEvent.click(local);
+        expect(store.openLocalDataPreview).toHaveBeenCalledOnce();
+        expect(store.handleInitialAnalysis).not.toHaveBeenCalled();
+        expect(screen.getByRole('button', { name: '允许云端 AI 分析' })).toBeInTheDocument();
+    });
+    it('does not offer a local data CTA for empty or failed imports', () => {
+        const store = { ...createRecoveryStore(), csvData: { fileName: 'empty.csv', data: [] }, canonicalCsvData: null,
+            initialAnalysisStatus: 'degraded', initialAnalysisFailureKind: 'cloud_consent_declined', openLocalDataPreview: vi.fn() };
+        (useAppStoreModule.useAppStore as unknown as ReturnType<typeof vi.fn>).mockImplementation((selector: (value: typeof store) => unknown) => selector(store));
+        render(<AnalysisPanel />);
+        expect(screen.queryByRole('button', { name: 'View data (local)' })).not.toBeInTheDocument();
+    });
+
     it('asks to allow cloud AI instead of reviewing evidence after a local-only import', async () => {
         const store = {
             ...createRecoveryStore(),

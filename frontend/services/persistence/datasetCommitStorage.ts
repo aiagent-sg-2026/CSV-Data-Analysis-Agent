@@ -9,7 +9,24 @@ export const readCommitIntent = async (db: StorageDatabase, sessionId: string, k
     if (!validCommitKey(key)) throw new Error('idempotency_key_invalid');
     const record = await db.get(DATASET_COMMITS_STORE, commitIntentKey(sessionId, key));
     if (record && record.kind !== 'commit') throw new Error('commit_marker_invalid');
+    if(record?.kind==='commit'&&record.activationFailed)throw new Error('approval_consumed');
     return record?.kind === 'commit' ? record : undefined;
+};
+
+/** CAS compensation for a spill publication failure. Preserve the consumed approval/audit and every backing generation. */
+export const compensateSpillCommit = async(db:StorageDatabase,marker:DatasetCommitMarker,previous:Report,previousHead:DatasetCommitHead|undefined)=>{
+    const tx=db.transaction([DATASET_COMMITS_STORE,'reports'],'readwrite',{durability:'strict'});void tx.done.catch(()=>{});
+    try{
+        const commits=tx.objectStore(DATASET_COMMITS_STORE),reports=tx.objectStore('reports');
+        const head=await commits.get(commitHeadKey(marker.sessionId));
+        if(head?.kind!=='head'||head.commitId!==marker.commitId)throw new Error('commit_compensation_superseded');
+        await commits.put(toSerializable({...marker,activationFailed:true as const}));
+        if(previousHead)await commits.put(previousHead);else await commits.delete(commitHeadKey(marker.sessionId));
+        await reports.put(toSerializable({...previous,id:marker.sessionId}));
+        const alias=await reports.get(CURRENT_SESSION_KEY);
+        if(alias?.appState.sessionId===marker.sessionId)await reports.put(toSerializable({...previous,id:CURRENT_SESSION_KEY}));
+        await tx.done;
+    }catch(e){try{tx.abort();}catch{/* Already completed. */}await tx.done.catch(()=>{});throw e;}
 };
 
 /** The transaction owns CAS, uniqueness and approval consumption. No external awaits enter it. */

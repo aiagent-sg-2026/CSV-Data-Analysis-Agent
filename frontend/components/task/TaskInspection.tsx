@@ -8,6 +8,7 @@ import { inspectPiCandidateReview } from '../../services/agent/runtime/pi/piCand
 import { cancelOwnedRun } from '../../services/session/sessionOwnership';
 import { useCandidateReview } from './useCandidateReview';
 import { TaskExport } from './TaskExport';
+import { CandidateDraft } from './CandidateDraft';
 
 const control = 'min-h-[44px] rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50';
 const pre = 'max-w-full whitespace-pre-wrap break-all rounded-md bg-slate-100 p-3 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500';
@@ -105,21 +106,31 @@ export const TaskInspectionView: React.FC<{ onReturnToChat?: () => void; onOpenR
             </section>}
             {section === 'Review' && <section className="space-y-3 text-sm text-slate-700">
                 <h3 className="font-semibold text-slate-900">Candidate review</h3>
+                {view.candidateError && <p role="alert">Candidate unavailable: {view.candidateError}</p>}
                 {candidate ? <><p className="break-all text-xs">{candidate.candidateId} · task revision {candidate.taskRevision}</p>
                     <p className="break-all text-xs">Scope: {candidate.scopeDigest}</p><p className="break-all text-xs">Change: {candidate.changeDigest}</p>
                     <h4 className="font-medium">Host grain and scope requirements</h4><pre className={pre}>{candidate.requirements}</pre>
                     {candidate.requirementsTruncated && <p>Requirements preview truncated.</p>}
+                    {candidate.commitRestriction === 'candidate_multi_table_atomic_promotion_unavailable' && <p role="status">Multi-table Draft / Uncommitted. Atomic all-table promotion is unavailable; neither table can be accepted. Meaning selection is not exact Dataset Commit approval.</p>}
                     {candidate.tables.map(t => <p key={t.name} className="break-words">{t.name}: {t.rows} rows · {t.columns.join(', ')}</p>)}
                     <h4 className="font-medium">Structural diff</h4><p>This comparison is structural; independent validation supplies the semantic decision.</p><pre className={pre}>{candidate.diff}</pre>
                     {candidate.diffTruncated && <p>Diff preview truncated.</p>}
                     <h4 className="font-medium">Excluded rows: {candidate.excludedCount}</h4>{candidate.exclusions.map((e, i) => <p key={i} className="break-words">{e}</p>)}
                     {candidate.excludedCount > candidate.exclusions.length && <p>Exclusions preview truncated.</p>}
                     <h4 className="font-medium">Independent validation</h4>
+                    {candidate.validationError && <p role="alert">Validation unavailable: {candidate.validationError}</p>}
+                    {!candidate.validationError && candidate.validation?.decision === 'validated' && candidate.validation.receiptDigest && candidate.tables.map(table =>
+                        <CandidateDraft key={`${candidate.candidateId}:${candidate.validation!.receiptDigest}:${table.name}`} taskId={task.taskId} candidateId={candidate.candidateId} table={table.name} digest={candidate.validation!.receiptDigest!} />)}
                     {candidate.validation ? <><p>Decision: {candidate.validation.decision}</p><p className="break-words">{candidate.validation.reasons.join('; ') || 'No rejection reasons.'}</p>
                         <p className="break-words">{candidate.validation.checks.join('; ')}</p><pre className={pre}>{candidate.validation.reconciliation}</pre>
                         {candidate.validation.truncated && <p>Validation preview truncated.</p>}</> : <p>Independent validation is pending; staging cannot change accepted data.</p>}
                 </> : <p>No current candidate snapshot. Historical metadata cannot be approved here.</p>}
                 {review.review && <><p>Primary table: {review.review.primaryTable}</p><p>Expires: {new Date(review.review.expiresAt).toISOString()}</p>
+                    {(review.review.acceptedDualGrain || review.review.acceptedStreamedDual) && <div role="note"><p>Exact approval publishes both tables together and retains their verified source and lineage locally. Meaning selection is not commit approval.</p>
+                        {review.review.tables.map(t => <p key={t.name}>{t.name}: {t.rowCount} rows · key/grain: {review.review!.grains?.find(g => g.table === t.name)?.grain.join(', ')}</p>)}
+                        {review.review.relationships?.map((r, i) => <p key={i}>{r.fromTable} ({r.fromKeys.join(', ')}) → {r.toTable} ({r.toKeys.join(', ')}): {r.cardinality}</p>)}
+                        <p>Summary/excluded rows are evidence only, not additional facts. Joins are unsupported; query each grain separately.</p></div>}
+                    {review.review.spill && <p>Approval retains {review.review.spill.rowCount} projected rows in immutable local storage ({review.review.spill.bytes} bytes). Host-declared source-record grain and units remain explicit assumptions. Draft reads never grant commit.</p>}
                     <details><summary className="cursor-pointer py-2">Exact approval identity</summary><pre className={pre}>{JSON.stringify(review.review, null, 2)}</pre></details></>}
                 <p role="status">{review.reason}</p>
             </section>}

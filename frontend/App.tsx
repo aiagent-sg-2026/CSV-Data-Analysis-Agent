@@ -190,6 +190,10 @@ const App: React.FC = () => {
     const canUseAgentThinkingSurface = shouldAllowAgentThinkingSurface();
     const canUseLongTermMemorySurface = shouldAllowLongTermMemorySurface();
 
+    // Load lazily once, then retain same-source drafts and an in-flight preview across close/reopen.
+    // DatabaseModal itself resets all transient state on source/session replacement.
+    const hasOpenedDatabaseRef = useRef(false);
+    if (isDatabaseModalOpen) hasOpenedDatabaseRef.current = true;
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const { headerRef, headerHeight, isHeaderHidden } = useAutoHideHeader({ scrollContainerRef });
 
@@ -253,7 +257,7 @@ const App: React.FC = () => {
                 {canUseSettingsSurface && isSettingsModalOpen && <SettingsModal />}
                 {showAgentThinking && canUseAgentThinkingSurface && isAgentModalOpen && <AgentMonitorModal />}
                 {isHistoryPanelOpen && <HistoryPanel />}
-                {canUseDatabaseSurface && isDatabaseModalOpen && <DatabaseModal />}
+                {canUseDatabaseSurface && hasOpenedDatabaseRef.current && <DatabaseModal />}
                 {canUseWorkspaceSurface && isWorkspaceModalOpen && <WorkspaceModal />}
                 {canUseWorkflowSurface && isDataPreparationModalOpen && <DataPreparationWorkflowModal />}
                 {isReportBoundaryConfirmModalOpen && <ReportBoundaryConfirmModal />}

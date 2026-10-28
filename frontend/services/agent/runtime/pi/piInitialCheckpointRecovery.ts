@@ -70,7 +70,7 @@ export const reattachPiInitialCheckpointSource = async (file: File, inputStore: 
         status, reason, fileName: checkpoint.schemaVersion === 2 ? checkpoint.source.fileName : state.datasetBundle?.source.fileName ?? '',
         nextStageIndex: checkpoint.nextStageIndex,
     });
-    const codingCommit=checkpoint.schemaVersion===2&&checkpoint.coding&&(checkpoint.coding.commit||[2,3].includes(checkpoint.pendingStageIndex??-1));
+    const codingCommit=checkpoint.schemaVersion===2&&checkpoint.coding&&(checkpoint.coding.commit||[0,2,3].includes(checkpoint.pendingStageIndex??-1));
     const reason = codingCommit?null:validateCheckpointState(checkpoint, state, stages, optional, false);
     if (reason || checkpoint.schemaVersion !== 2) {
         store.setState({ initialAnalysisRecovery: projection('blocked', reason ?? 'legacy_checkpoint_requires_prepared_rows'), isBusy: false });

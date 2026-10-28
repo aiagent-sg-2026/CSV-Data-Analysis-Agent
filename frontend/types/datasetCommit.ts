@@ -23,7 +23,13 @@ export interface DatasetCommitMarker {
     lineage: { tables: Array<{ name: string; cells: unknown[] }>; excludedRows: unknown[] };
     approval: { approvalId: string; reviewDigest: string; approvedAt: number; expiresAt: number; consumedAt: number };
     audit: { sessionEpoch: number; taskId: string; taskRevision: number; runId: string; turnId?: string; toolCallId: string; stepId: string; grantDigest: string; committedAt: string };
-    rowStorage: 'transient';
+    rowStorage: 'transient' | 'durable_spill';
+    acceptedSpill?: import('../services/data/acceptedSpill').AcceptedSpillManifest;
+    acceptedDualGrain?: import('../services/data/acceptedDualGrain').AcceptedDualGrain;
+    acceptedStreamedDual?: import('../services/data/acceptedStreamedDual').AcceptedStreamedDual;
+    spillRunRequest?: import('../services/agent/execution/codeExecutionContract').CodeRunRequest;
+    /** Compensated failed publication; consumes approval but is not an accepted head. */
+    activationFailed?: true;
     /** Optional for compatible v12 reads. Missing metadata blocks automatic reconstruction. */
     replayManifest?: DatasetReplayManifest;
     rollbackTarget?: DatasetCommitReference;

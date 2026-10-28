@@ -65,7 +65,9 @@ interface MyDB extends DBSchema {
     key: string;
     value: {
       key: string;
-      settings: Settings;
+      settings?: Settings;
+      /** Restrictive coordinator accounting, never settings or executable authority. */
+      coordinatorBudget?: import('./agent/runtime/pi/piRepairReservation').RepairBudgetCheckpoint;
     };
   };
   [CLOUD_AI_CONSENTS_STORE_NAME]: {
@@ -561,6 +563,8 @@ export const clearAllLocalBrowserData = async (): Promise<ClearAllLocalBrowserDa
         opfsCleared = await clearAllOpfsDatasetData();
         const { clearAllRetainedDatasetRows } = await import('./persistence/datasetRetention');
         opfsCleared = await clearAllRetainedDatasetRows() || opfsCleared;
+        const { clearAllAcceptedSpillData } = await import('./data/acceptedSpill');
+        opfsCleared = await clearAllAcceptedSpillData() || opfsCleared;
     } catch (error) {
         localDataClearInProgress = false;
         throw new StorageOperationError('clearAllLocalBrowserData', error);

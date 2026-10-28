@@ -17,17 +17,18 @@ import { captureMcpTask } from '../../connectors/mcpConnectorRegistry';
 import { projectTypedTaskPlan, type TypedTaskPlan, type TaskRepairCommit } from './piTaskPlan';
 import {canRepairComputationScope} from './piScopeRepair';
 import { admitComputationEvidence, type ComputationEvidenceReceipt } from '../../execution/computationEvidence';
+import { hash } from 'fast-sha256';
 
 export interface PiTaskContinuation { taskId: string; revision: number; scopeDigest: string }
 type Adapter = ReturnType<typeof createCodeExecutionAdapter>;
 type Guest = Parameters<typeof createCodeExecutionAdapter>[3];
-type RecordState = { task: AgentTaskContract; workspace: TaskWorkspace; skills:SkillSnapshot; mcp:import('../../connectors/httpMcpContract').McpTaskPort; skillPrograms:Map<string,{pin:PinnedSkill;reference:import('../../execution/codeExecutionContract').CodeArtifactRef}>; coding: boolean; workStarted: boolean; scopeRepairAttempts:number; failureKey: string; repetitions: number; repairCommit?: TaskRepairCommit; retire?: () => void; inspection?: TaskInspectionProjection };
+type RecordState = { guest?: Guest; spillFactory?: Parameters<typeof createCodeExecutionAdapter>[4]; task: AgentTaskContract; workspace: TaskWorkspace; skills:SkillSnapshot; mcp:import('../../connectors/httpMcpContract').McpTaskPort; skillPrograms:Map<string,{pin:PinnedSkill;reference:import('../../execution/codeExecutionContract').CodeArtifactRef}>; coding: boolean; workStarted: boolean; scopeRepairAttempts:number; failureKey: string; repetitions: number; repairCommit?: TaskRepairCommit; retire?: () => void; inspection?: TaskInspectionProjection };
 const tasks = new WeakMap<StoreApi['getState'], RecordState>();
 const digest = (value: unknown) => sha256Bytes(new TextEncoder().encode(JSON.stringify(value)));
 const codingTool = (name: string) => name.startsWith('code.') || name.startsWith('candidate.') || ['workspace.write', 'workspace.append', 'workspace.replace'].includes(name);
 
 /** Session-retained task state is host-owned. A saved continuation is only a locator, never executable authority. */
-export const preparePiTask = async (store: StoreApi, message: string, continuation?: PiTaskContinuation, guest?: Guest, recoveryBudget?: TaskBudget): Promise<PiCodingTask> => {
+export const preparePiTask = async (store: StoreApi, message: string, continuation?: PiTaskContinuation, guest?: Guest, recoveryBudget?: TaskBudget, spillFactory?:Parameters<typeof createCodeExecutionAdapter>[4], recoveryFailure?: { failureKey: string; repetitions: number }): Promise<PiCodingTask> => {
     if (store.piTask) return store.piTask;
     const lease = store.executionContext?.lease;
     if (!lease) throw new Error('scope_revoked');
@@ -65,7 +66,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
         const mcp = await awaitOwned(captureMcpTask(store, task.taskId, () => tasks.get(key) === record), store, lease);
         const workspace = createTaskWorkspace(root, task.taskId, { allowedPrefixes: ['/workspace/'], allowedPaths: ['/dataset/cleaned.csv'] });
         task = { ...task, protectedInvariants: [...task.protectedInvariants, { id: 'mcp-snapshot', digest: mcp.digest }] };
-        record = { task, workspace, skills,mcp,skillPrograms:new Map(), coding: false, workStarted: false, scopeRepairAttempts:0, failureKey: '', repetitions: 0 };
+        record = { guest, spillFactory, task, workspace, skills,mcp,skillPrograms:new Map(), coding: false, workStarted: false, scopeRepairAttempts:0, failureKey: recoveryFailure?.failureKey ?? '', repetitions: recoveryFailure?.repetitions ?? 0 };
         tasks.set(key, record);
         const captured = record;
         registerSessionResource(lease.scope, () => { captured.retire?.(); captured.workspace.dispose(); if (tasks.get(key) === captured) tasks.delete(key); });
@@ -118,7 +119,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
     };
     const ensureAdapter = () => {
         current();
-        adapter ??= createCodeExecutionAdapter(store, record.workspace, () => record.task, guest);
+        adapter ??= createCodeExecutionAdapter(store, record.workspace, () => record.task, guest ?? record.guest, spillFactory ?? record.spillFactory);
         store.codeExecution = adapter;
         return adapter;
     };
@@ -164,7 +165,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
                 }
             } catch { /* Invalidated candidates cannot advance the plan. */ }
             const requirements=candidatePort?.validationRequirements();
-            return projectTypedTaskPlan(record.task,{meaningConfigured:Boolean(requirements?.configured),repairInput:requirements?.inference?.input,
+            return projectTypedTaskPlan(record.task,{meaningConfigured:Boolean(requirements?.configured),sourceSpill:Boolean(requirements?.spill),repairInput:requirements?.inference?.input,
                 candidateId,candidateValidated,successfulJobId,repairCommit,scopeRepairRemaining:2-record.scopeRepairAttempts,
                 computationAccepted:Boolean(computations.length&&admitComputationEvidence(store,lease,computations).receipt),computationNeedsRevision});
         },
@@ -296,7 +297,10 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
                 const request = args;
                 // Grant paths are constrained by task workspace and central governance; model lineage is never accepted.
                 const grant = await port.issueGrant({ readPaths: [...new Set([request.program.path, ...request.inputs.map(input => input.path)])],
-                    writePaths: [request.output.path], sources: (request.sources ?? []).map(source => ({ sourceId: source.sourceId, sha256: source.sha256 })),
+                    writePaths: [request.output.path], sources: request.sourceRecords
+                        ? [{ sourceId: request.sourceRecords.sourceId, sha256: request.sourceRecords.sha256 }]
+                        : (request.sources ?? []).map(source => ({ sourceId: source.sourceId, sha256: source.sha256 })),
+                    ...(request.sourceRecords ? { limits: { inputBytes: 256 * 1024, outputBytes: 256 * 1024, heapBytes: 32 * 1024 * 1024 } } : {}),
                     tableIds: (request.tables ?? []).map(table => table.tableId),
                     expiresAt: Date.now() + Math.max(1, record.task.budget.limits.activeMs - record.task.budget.used.activeMs) });
                 current();
@@ -351,7 +355,8 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
                 } }));
                 if (record.task.status === 'executing') move('validating');
                 if (actual.status === 'succeeded') { executionAccepted = true; computationNeedsRevision=false; record.failureKey = ''; record.repetitions = 0; move('verifying'); return; }
-                const failure = JSON.stringify([actual.program?.sha256, actual.inputDigest, actual.reasonCode, actual.error]);
+                // Retain equality/no-progress evidence without persisting guest error text or cells.
+                const failure = Array.from(hash(new TextEncoder().encode(JSON.stringify([actual.program?.sha256, actual.inputDigest, actual.reasonCode, actual.error]))), b => b.toString(16).padStart(2, '0')).join('');
                 record.repetitions = record.failureKey === failure ? record.repetitions + 1 : 1; record.failureKey = failure;
                 if (record.repetitions >= 2) blockedReason = 'coding_no_progress';
                 if (record.task.status === 'validating') move('programming');

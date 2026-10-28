@@ -6,15 +6,27 @@ const FOCUSABLE_SELECTOR = [
     'input:not([disabled])',
     'select:not([disabled])',
     'textarea:not([disabled])',
+    'summary',
     '[tabindex]:not([tabindex="-1"])',
 ].join(',');
+
+const isVisibleInDisclosure = (element: HTMLElement, dialog: HTMLElement) => {
+    for (let parent = element.parentElement; parent && parent !== dialog; parent = parent.parentElement) {
+        if (parent.tagName === 'DETAILS' && !parent.hasAttribute('open')) {
+            const summary = parent.querySelector(':scope > summary');
+            if (!summary?.contains(element)) return false;
+        }
+    }
+    return true;
+};
 
 const getFocusableElements = (dialog: HTMLElement) => Array.from(
     dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
 ).filter(element =>
     !element.hidden
     && element.getAttribute('aria-hidden') !== 'true'
-    && element.closest('[hidden]') === null,
+    && element.closest('[hidden]') === null
+    && isVisibleInDisclosure(element, dialog),
 );
 
 export const useDialogAccessibility = <T extends HTMLElement>(

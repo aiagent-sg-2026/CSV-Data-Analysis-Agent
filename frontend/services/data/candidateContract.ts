@@ -23,6 +23,10 @@ export interface StagedDatasetCandidate extends CandidateOutput {
     execution:Readonly<CodeExecutionReceipt>;
     staging:{toolCallId:string;stepId:string};
     outputArtifacts:CodeArtifactRef[];
+    /** Opt-in host staging extension, never accepted by the closed guest CandidateOutput v1 parser.
+     * Tables expose metadata only; rows and implicit one-to-one lineage live in authenticated chunks. */
+    spill?:{manifest:Readonly<import('./candidateSpill').SpillManifest>;meaning:import('./spillCandidateValidation').SpillCandidateMeaning;meaningDigest:string};
+    streamedDual?:{manifest:Readonly<import('./candidateSpill').SpillManifest>;meaning:import('./streamedDualGrain').StreamedDualMeaning;meaningDigest:string};
 }
 const exact=(v:unknown,keys:string[])=>Boolean(v&&typeof v==='object'&&!Array.isArray(v)
     &&Object.keys(v).sort().join('|')===[...keys].sort().join('|'));

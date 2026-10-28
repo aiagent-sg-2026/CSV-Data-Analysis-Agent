@@ -1,5 +1,6 @@
 
 import { createWithEqualityFn } from 'zustand/traditional';
+import { retireInactiveAcceptedQuery } from '../services/duckdb/acceptedQueryOwner';
 import { captureSessionScope, ownsSessionScope, scopeStore } from '../services/session/sessionOwnership';
 import { Report, AppState, ReportListItem, MetricMappingValidationArtifact } from '../types';
 import { getReport, getDefaultSettings, getSettings } from '../services/storageService';
@@ -524,6 +525,8 @@ configureLocalDiagnosticContext(() => {
 // A melt's band columns (SeriesLabelL1, ...) read as what their values are ("Fiscal year"),
 // so the display labels follow whichever dataset is currently analysed.
 useAppStore.subscribe((state, previous) => {
+    // Upload/source replacement also revokes host query custody; preparation does not.
+    retireInactiveAcceptedQuery();
     if (state.csvData === previous.csvData && state.canonicalCsvData === previous.canonicalCsvData) return;
     syncBandColumnLabels((state.canonicalCsvData ?? state.csvData)?.data);
 });

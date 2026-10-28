@@ -34,7 +34,10 @@ vi.mock('../services/persistence/datasetCommitStorage',()=>({
 }));
 vi.mock('../services/duckdb/queryEngine',async original=>{
     const actual=await original<typeof import('../services/duckdb/queryEngine')>();
-    return {...actual,primeDuckDbDataset:vi.fn(async()=>({engine:'duckdb',tableName:'data',loadVersion:'bound',fallbackReason:null})),
+    const bind:typeof actual.primeDuckDbDataset=vi.fn(async()=>({engine:'duckdb' as const,tableName:'data',loadVersion:'bound',fallbackReason:null,fallbackStage:null}));
+    return {...actual,primeDuckDbDataset:bind,
+        // Only the worker I/O is modeled; retain production activation/rollback and query custody.
+        prepareOrdinaryDatasetBinding:(...args:Parameters<typeof actual.prepareOrdinaryDatasetBinding>)=>actual.prepareOrdinaryDatasetBinding(args[0],args[1],args[2],args[3]??bind),
         executeManagedDataQuery:async(data,plan,allowedColumns)=>{
             io.queryCalls++;await io.beforeQuery?.();
             const {executeDataQuery}=await import('../services/agent/execution/dataOperationRunner');

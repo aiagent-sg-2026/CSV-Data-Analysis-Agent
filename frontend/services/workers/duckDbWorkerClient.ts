@@ -65,6 +65,13 @@ export class DuckDbWorkerClient {
         this.resetWorker(normalizeAbortError('The DuckDB session was replaced.'), 'abort');
     }
 
+    /** Synchronous ownership check: stale import cleanup must not abort a newer job. */
+    retireDatasetIfOwned(loadVersion: string): boolean {
+        if (this.lastLoad?.payload.loadVersion !== loadVersion || this.callbacks.size > 0) return false;
+        this.retireSession();
+        return true;
+    }
+
     private assertGeneration(generation: number) {
         if (generation !== this.generation) throw normalizeAbortError('The DuckDB session was replaced.');
     }
@@ -415,6 +422,7 @@ export class DuckDbWorkerClient {
             loadVersion: string;
             tableName: string;
             previewRows: number;
+            exactColumns?: Array<{name:string; type:string; nullable?: boolean}>;
         },
         timeoutMs = 180_000,
         abortSignal?: AbortSignal,
@@ -498,4 +506,8 @@ export class DuckDbWorkerClient {
     }
 }
 
-export const duckDbWorkerClient = new DuckDbWorkerClient();
+export let duckDbWorkerClient = new DuckDbWorkerClient();
+/** Host-only synchronous swap after an isolated worker has fully loaded and passed integrity checks. */
+export const exchangeDuckDbWorkerClient = (next:DuckDbWorkerClient):DuckDbWorkerClient => {
+    const previous=duckDbWorkerClient;duckDbWorkerClient=next;return previous;
+};

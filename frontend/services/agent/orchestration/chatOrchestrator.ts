@@ -120,7 +120,10 @@ const handleOwnedClarificationResponse = async (
     console.log(`${LOG_PREFIX} Resuming runtime turn from clarification.`, { userChoice });
     setState({ isBusy: true });
     try {
-        if (pendingClarification.resumeContext?.piCandidateApproval) {
+        if (pendingClarification.resumeContext?.piSpillMeaningChoice) {
+            const { resumeSpillMeaningChoice } = await import('../runtime/pi/piSpillMeaningChoice');
+            await resumeSpillMeaningChoice(store, pendingClarification, userChoice);
+        } else if (pendingClarification.resumeContext?.piCandidateApproval) {
             const {resumePiCandidateApproval}=await import('../runtime/pi/piCandidateApproval');
             await resumePiCandidateApproval(pendingClarification,userChoice,store);
         } else if (pendingClarification.resumeContext?.piMutationApproval) {
@@ -346,7 +349,7 @@ const orchestrateOwnedChatResponse = async (message: string, store: StoreApi) =>
 const withFollowUpLease = async (message: string, store: StoreApi, operation: (owned: StoreApi) => Promise<void>): Promise<void> => {
     const turn = createAgentTurn(message);
     const pending=store.getState().pendingClarification;
-    const kind=pending?.resumeContext?.piCandidateApproval?piCandidateApprovalRunKind(store,pending):'follow_up';
+    const kind=pending?.resumeContext?.piSpillMeaningChoice?'initial_analysis':pending?.resumeContext?.piCandidateApproval?piCandidateApprovalRunKind(store,pending):'follow_up';
     const lease = beginRun(store, kind, turn.runId, turn.turnId);
     const scoped = scopeRunStore(store, lease);
     const startingMessageCount = store.getState().chatHistory.length;

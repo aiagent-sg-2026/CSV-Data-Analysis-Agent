@@ -11,7 +11,7 @@ import type {
     WorkspaceDataQueryRequest,
     WorkspaceQueryTemplateId,
 } from '../../../types';
-import { executeManagedDataQuery } from '../../duckdb/queryEngine';
+import { executeManagedDataQuery, acceptedQueryTable } from '../../duckdb/queryEngine';
 import type { DimensionNormalizationConfig } from '../../duckdb/dimensionNormalization';
 import { getTranslation } from '../../../utils/localization';
 import {
@@ -238,12 +238,13 @@ export const executeStructuredDataQuery = async (
         throw new Error('No dataset is available for read-only data querying.');
     }
 
-    const columnRegistry = options.columnRegistryOverride ?? buildEffectiveColumnRegistryFromState(getState(), {
+    const acceptedTable = getState().datasetBundle?.acceptedCommit ? acceptedQueryTable(dataset, options.plan.tableId) : null;
+    const columnRegistry = acceptedTable ? null : options.columnRegistryOverride ?? buildEffectiveColumnRegistryFromState(getState(), {
         datasetOverride: dataset,
     });
     const canonicalPlan = canonicalizeQueryPlan(options.plan, columnRegistry);
     const normalizedWhere = normalizeQueryWhereClauseLike(canonicalPlan.where);
-    const allowedColumns = options.allowedColumnsOverride && options.allowedColumnsOverride.length > 0
+    const allowedColumns = acceptedTable ? acceptedTable.columns : options.allowedColumnsOverride && options.allowedColumnsOverride.length > 0
         ? options.allowedColumnsOverride
         : getAllowedColumns(columnRegistry, 'select').length > 0
             ? getAllowedColumns(columnRegistry, 'select')
@@ -299,6 +300,7 @@ export const executeStructuredDataQuery = async (
     }
 
     const normalizedPlan = {
+        ...(acceptedTable ? { tableId: acceptedTable.tableId } : {}),
         ...(executionPlan.postAggregateFilter ? { postAggregateFilter: executionPlan.postAggregateFilter } : {}),
         select: execution.result.selectedColumns,
         ...(executionPlan.where ? { where: executionPlan.where } : {}),
@@ -320,6 +322,7 @@ export const executeStructuredDataQuery = async (
         stepId: activeStep?.stepId,
         toolCallId: activeStep?.toolCallId ?? activeStep?.stepId,
         ...identity.fields,
+        ...(acceptedTable ? { tableId: acceptedTable.tableId } : {}),
         queryMode: 'structured',
         explanation: options.explanation,
         plan: normalizedPlan,

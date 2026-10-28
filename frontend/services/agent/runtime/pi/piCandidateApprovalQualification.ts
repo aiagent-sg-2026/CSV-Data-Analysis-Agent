@@ -15,7 +15,17 @@ import {runPiFollowUpTurn} from './piFollowUpRuntimeService';
 import type {PiLoopCheck} from './piCodingLoopQualification';
 import {queueSessionWrite} from '../../../persistence/currentSessionPersistence';
 
+export {qualifySourceStream} from '../../execution/codeSourceStreamQualification';
+export {qualifySpillCandidate} from '../../execution/spillCandidateQualification';
+import { prepareSpillCommitFixture } from '../../../data/spillCommitQualificationFixture';
+export {restoreAcceptedDataset} from '../../../data/datasetRecoveryActions';
+export {executeManagedDataQuery, executeRawSqlQuery} from '../../../duckdb/queryEngine';
+export {preparePiOrdinaryTransitionSmoke} from './piAcceptedTransitionQualification';
+export {createCandidateCommitService} from '../../../data/candidateCommit';
 export {preparePiInitialCodingUiSmoke} from './piInitialCodingQualification';
+export {preparePiStructureRepairSmoke,queryPiStructureRepairSmoke} from './piStructureRepairQualification';
+export {preparePiLargeCoordinatorSmoke} from './piLargeCoordinatorQualification';
+export {preparePiDualGrainSmoke} from './piDualGrainQualification';
 export {executeEvaluationCase,executeEvaluationInitialProbe} from './piEvaluationRuntime';
 export {runWeightedMedianDemoProbe} from './piWeightedMedianQualification';
 export {runRepairComputationDemoProbe} from './piRepairComputationQualification';
@@ -88,6 +98,22 @@ export const qualifyPiCandidateApproval=async(signal:AbortSignal,onObservation?:
         const observation={id:mode,passed,status,elapsedMs:Math.round(performance.now()-started),details};observations.push(observation);if(!signal.aborted)onObservation?.(observation);
     }}finally{signal.removeEventListener('abort',retire);client.retireSession();}
     return {passed:observations.length===modes.length&&observations.every(o=>o.passed)&&!signal.aborted,observations};
+};
+
+/** Synthetic large qualification invokes the same request/review/approve runtime and React UI as small candidates. */
+export const prepareSpillApprovalUiSmoke=async(root:StoreApi,file:File,scale=0,columns?:Parameters<typeof prepareSpillCommitFixture>[0]['columns'])=>{
+    const fixture=await prepareSpillCommitFixture({root,file,scale,columns});let turn=0;
+    const usage={input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}};
+    const stream:StreamFn=model=>{
+        const content:AssistantMessage['content']=turn++===0?[{type:'toolCall',name:'candidate_request_approval',id:crypto.randomUUID(),arguments:{candidateId:fixture.candidate.candidateId,primaryTable:'records'}}]
+            :turn===2?[{type:'toolCall',name:'data_query',id:crypto.randomUUID(),arguments:{explanation:'Deterministic accepted-record verification, not a live AI answer.',plan:{aggregates:[{function:'count',as:'RowCount'}]}}}]
+                :[{type:'text',text:'Synthetic accepted-record verification finished.'}];
+        const reason=content.some(c=>c.type==='toolCall')?'toolUse':'stop',message:AssistantMessage={role:'assistant',content,api:model.api,provider:model.provider,model:model.id,usage,stopReason:reason,timestamp:Date.now()};
+        const result=createAssistantMessageEventStream();result.push({type:'start',partial:message});result.push({type:'done',reason,message});return result;
+    };
+    const before={hasOutput:Boolean(fixture.prep.task.outputReceipt()),plan:fixture.prep.task.plan,scope:fixture.prep.task.snapshot.scope};
+    const result=await runPiFollowUpTurn({message:fixture.prep.task.snapshot.goal},fixture.store,stream);
+    return {...fixture,result,before,oldRunId:fixture.lease.runId};
 };
 
 /** Used only by browser QA in an isolated, synthetic app context; the caller controls that context's lifecycle. */

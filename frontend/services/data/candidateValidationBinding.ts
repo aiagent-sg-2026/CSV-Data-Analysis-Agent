@@ -6,6 +6,8 @@ import type {CandidateValidationContract} from './candidateValidation';
 export interface HostCandidateValidationContract {
     sessionId:string;sessionEpoch:number;goal:string;inputBindings:DatasetScopeBinding[];tableDigests:Record<string,string>;
     protectedSource:{sourceId:string;sha256:string}|null;contract:CandidateValidationContract;
+    spill?:{meaning:import('./spillCandidateValidation').SpillCandidateMeaning;digest:string};
+    streamedDual?:{meaning:import('./streamedDualGrain').StreamedDualMeaning;digest:string};
     inference?:{kind:'ai_inferred';assumptions:string[];proposalDigest:string;input?:{kind:'table'|'source';name:string;tableId?:string}};
 }
 const freeze=<T>(v:T):T=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};

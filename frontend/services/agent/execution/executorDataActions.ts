@@ -367,13 +367,16 @@ export const executeDataQueryAction = async (
     }
 
     const normalizedPayload = normalizeDataQueryPayload(action.args);
-    const queryInput = preferredDataset.data;
+    const acceptedTable = state.datasetBundle?.acceptedCommit
+        ? (await import('../../duckdb/queryEngine')).acceptedQueryTable(preferredDataset, normalizedPayload.plan.tableId) : null;
+    if (acceptedTable && (action.args.plan.rawSql || action.args.plan.query || action.args.plan.joins || normalizedPayload.unpivotParams)) throw new Error('accepted_dual_joins_sql_unsupported');
+    const queryInput = acceptedTable ? (await import('../../data/sandboxTableRegistry')).getSandboxTableRows(state.datasetBundle!.bundleId, acceptedTable.tableId, state.datasetBundle!.datasetVersion) ?? [] : preferredDataset.data;
     const fallbackOperation = normalizedPayload.fallbackFilterOperation;
     const phase = state.cleaningRun && state.cleaningRun.status !== 'completed' ? 'verify' : 'analysis';
     const governance = getToolGovernanceMeta(store, 'data.query');
     const activeTurn = state.activeTurn;
     const activeStep = activeTurn?.steps.at(-1);
-    const columnRegistry = buildEffectiveColumnRegistryFromState(state, {
+    const columnRegistry = acceptedTable ? null : buildEffectiveColumnRegistryFromState(state, {
         datasetOverride: preferredDataset,
     });
 
@@ -382,9 +385,9 @@ export const executeDataQueryAction = async (
     // This ensures the AI does not need to manually add RowRole filters.
     // A verified row hierarchy fixes the detail-row filter even when no harness
     // steering exists (the harness may have been skipped or failed).
-    const rowHierarchy = resolveRowHierarchy(state);
+    const rowHierarchy = acceptedTable ? null : resolveRowHierarchy(state);
     const sessionSteering = state.latestAnalysisSession?.analysisSteering;
-    const steering = rowHierarchy
+    const steering = acceptedTable ? null : rowHierarchy
         ? withRowHierarchyDetailFilter(
             sessionSteering ?? ({
                 preferGroupBy: [], blockGroupBy: [], excludeFromAggregation: [], parentDescriptions: [], duplicateDescriptions: [],
@@ -393,7 +396,7 @@ export const executeDataQueryAction = async (
         )
         : sessionSteering;
     let augmentedPlan = normalizedPayload.plan;
-    const actualDataColumns = getAllowedColumns(columnRegistry, 'select').length > 0
+    const actualDataColumns = acceptedTable ? acceptedTable.columns : getAllowedColumns(columnRegistry, 'select').length > 0
         ? getAllowedColumns(columnRegistry, 'select')
         : state.columnProfiles.map(profile => profile.name);
     const canonicalizeColumns = (columns?: string[]) =>
@@ -659,7 +662,7 @@ export const executeDataQueryAction = async (
         const semanticMismatch = validateGroupedQuerySemantics({
             plan: activeDataQuery.plan,
             resultRows: activeDataQuery.result.rows,
-            datasetRows: preferredDataset.data,
+            datasetRows: queryInput,
         });
         if (semanticMismatch) {
             setState({ activeDataQuery: null });
@@ -737,7 +740,7 @@ export const executeDataQueryAction = async (
             throw error;
         }
         const errorMessage = error instanceof Error ? error.message : String(error);
-        if (fallbackOperation && !preferredDataset.backing?.readOnly) {
+        if (fallbackOperation && !acceptedTable && !preferredDataset.backing?.readOnly) {
             const fallbackPlan = createQueryPlanFromFilterOperation(fallbackOperation, { limit: action.args.plan.limit });
             identity.assertCurrent();
             throwIfAborted(abortSignal);

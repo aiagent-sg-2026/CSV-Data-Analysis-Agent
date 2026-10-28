@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { Settings } from '../types';
+import { CsvSourceScanPanel } from './CsvSourceScanPanel';
 import { IconCheck } from '../icons/IconCheck';
 import { IconChevron } from '../icons/IconChevron';
 import { IconFileUpload } from '../icons/IconFileUpload';
@@ -95,6 +96,8 @@ export const ImportProgressCard: React.FC<ImportProgressCardProps> = ({
                 <p role="status" aria-live="polite" className={`mt-4 text-sm leading-6 ${isError ? 'text-red-700' : 'font-medium text-slate-800'}`}>
                     {detail}
                 </p>
+
+                <CsvSourceScanPanel />
 
                 <div className="mt-6 grid gap-3 sm:grid-cols-2">
                     <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">

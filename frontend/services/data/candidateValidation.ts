@@ -2,11 +2,11 @@ import type {CsvCellValue,CsvRow,DatasetColumnSchema,DatasetTableRole} from '../
 import type {CandidateCellOrigin,CandidateRowOrigin,CandidateOutput,CandidateRelationship} from './candidateContract';
 
 export interface ValidationMetric {column:string;scale:number;toleranceMinor:number;unit:string;currencyColumn?:string;allowedCurrencies?:string[];unitColumn?:string;allowedUnits?:string[]}
-export interface ValidationCell {column:string;origin:CandidateCellOrigin;conversion:'identity'|'trim'|'decimal'|'iso_date';scale?:number}
+export interface ValidationCell {column:string;origin:CandidateCellOrigin;conversion:'identity'|'trim'|'decimal'|'iso_date'|'decimal_or_null';scale?:number}
 export interface ValidationTable {name:string;role:DatasetTableRole;schema:readonly DatasetColumnSchema[];grain:string[];groupBy:string[];metrics:ValidationMetric[];mutableColumns:string[];rows:Array<{cells:ValidationCell[]}>}
 export interface ValidationExclusion {origin:CandidateRowOrigin;role:'header'|'group_header'|'note'|'subtotal'|'grand_total'|'duplicate';duplicateOf?:CandidateRowOrigin;checks:Array<{column:string|number;table:string;detailRows:number[];metric:string;scope?:Array<{field:string;origin:CandidateCellOrigin}>}>}
 /** Host-only resolved meaning. Never populated from guest assertions or candidate values. */
-export interface CandidateValidationContract {version:1;ambiguities:string[];tables:ValidationTable[];relationships:Array<CandidateRelationship & {maxAmplification:number;requireCoverage:boolean}>;exclusions:ValidationExclusion[]}
+export interface CandidateValidationContract {version:1;ambiguities:string[];tables:ValidationTable[];relationships:Array<CandidateRelationship & {maxAmplification:number;requireCoverage:boolean}>;exclusions:ValidationExclusion[];completeSourceCells?:boolean}
 export interface ValidationInputs {tables:Record<string,CsvRow[]>;sources:Record<string,string[][]>;sourceIdentities?:Record<string,string>}
 export interface CandidateSemanticVerdict {decision:'validated'|'blocked'|'clarification';reasonCodes:string[];checks:string[];groups:Array<{table:string;group:string;metric:string;expectedMinor:string;actualMinor:string}>}
 const key=(v:unknown)=>JSON.stringify(v);
@@ -28,9 +28,11 @@ const minor=(v:CsvCellValue,scale:number):bigint=>{
 export const convertValidationCell=(value:CsvCellValue,c:ValidationCell):CsvCellValue=>{
     if(c.conversion==='identity')return value;
     if(c.conversion==='trim'){if(typeof value!=='string')throw new Error('validation_type_mismatch');return value.trim();}
-    if(c.conversion==='decimal'){
+    if(c.conversion==='decimal_or_null'&&(value===null||value===''))return null;
+    if(c.conversion==='decimal'||c.conversion==='decimal_or_null'){
         const scale=c.scale??0,n=minor(value,scale),result=Number(n)/10**scale;
-        if(!Number.isSafeInteger(Number(n)))throw new Error('validation_numeric_invalid');return result;
+        if(!Number.isSafeInteger(Number(n)))throw new Error('validation_numeric_invalid');
+        if(minor(result,scale)!==n)throw new Error('validation_decimal_precision');return result;
     }
     if(c.conversion==='iso_date'&&typeof value==='string'&&validDate(value))return value;
     throw new Error('validation_date_ambiguous');
@@ -48,6 +50,8 @@ export const validateCandidateSemantics=(candidate:CandidateOutput,contract:Cand
         if(contract.version!==1||!contract.tables.length||contract.tables.length>20||new Set(contract.tables.map(t=>t.name)).size!==contract.tables.length)throw new Error('validation_contract_invalid');
         if(contract.tables.some(t=>t.role==='unknown'||!t.grain.length||t.schema.some(s=>s.dataType==='unknown'))){reasons.add('validation_grain_or_type_unresolved');return result('clarification');}
         const expected=new Map<string,CsvRow[]>(),accounted=new Set<string>(),excluded=new Set<string>();
+        const canonicalCell=(o:CandidateCellOrigin)=>cellKey(o.kind==='source'?{...o,name:inputs.sourceIdentities?.[o.name]??o.name}:o);
+        const mappedCells=new Set<string>(),metricOwners=new Set<string>(),metricRows=new Set<string>();
         if(key(candidate.tables.map(t=>t.name).sort())!==key(contract.tables.map(t=>t.name).sort()))reasons.add('validation_table_set_mismatch');
         for(const t of contract.tables){
             const columns=t.schema.map(s=>s.name);
@@ -65,6 +69,12 @@ export const validateCandidateSemantics=(candidate:CandidateOutput,contract:Cand
                 for(const c of r.cells){
                     if(c.conversion!=='identity'&&!t.mutableColumns.includes(c.column))throw new Error('validation_scope_invalid');
                     row[c.column]=convertValidationCell(read(inputs,c.origin),c);accounted.add(accountingKey(c.origin));
+                    mappedCells.add(canonicalCell(c.origin));
+                    if(contract.completeSourceCells&&t.metrics.some(m=>m.column===c.column)){
+                        const id=canonicalCell(c.origin);
+                        if(metricOwners.has(id))throw new Error('validation_additive_source_ownership_overlap');
+                        metricOwners.add(id);metricRows.add(accountingKey(c.origin));
+                    }
                 }
                 return row;
             });expected.set(t.name,rows);
@@ -95,7 +105,7 @@ export const validateCandidateSemantics=(candidate:CandidateOutput,contract:Cand
                 const sum=(rr:CsvRow[])=>{const totals=new Map<string,bigint>();for(const r of rr){
                     if(m.currencyColumn&&!m.allowedCurrencies!.includes(String(r[m.currencyColumn])))reasons.add('validation_currency_mismatch');
                     if(m.unitColumn&&!m.allowedUnits!.includes(String(r[m.unitColumn])))reasons.add('validation_unit_mismatch');
-                    const group=key(t.groupBy.map(c=>r[c]));totals.set(group,(totals.get(group)??0n)+minor(r[m.column],m.scale));
+                    const group=key(t.groupBy.map(c=>r[c]));totals.set(group,(totals.get(group)??0n)+(r[m.column]===null?0n:minor(r[m.column],m.scale)));
                 }return totals;};
                 const before=sum(rows),after=sum(actual.rows);
                 if(key([...before.keys()].sort())!==key([...after.keys()].sort()))reasons.add('validation_group_set_mismatch');
@@ -106,7 +116,10 @@ export const validateCandidateSemantics=(candidate:CandidateOutput,contract:Cand
         checks.push('schema-type-null','source-cell-mapping','fact-grain','scope-unchanged-regions','unit-currency','group-reconciliation');
         if(key(candidate.excludedRows.map(e=>rowKey(e.origin)).sort())!==key(contract.exclusions.map(e=>rowKey(e.origin)).sort()))reasons.add('validation_exclusion_set_mismatch');
         for(const e of contract.exclusions){
-            const id=accountingKey(e.origin);if(excluded.has(id)||accounted.has(id))throw new Error('validation_contract_accounting_invalid');excluded.add(id);
+            if(contract.completeSourceCells&&candidate.excludedRows.find(row=>rowKey(row.origin)===rowKey(e.origin))?.reason!==e.role)reasons.add('validation_exclusion_reason_mismatch');
+            const id=accountingKey(e.origin);
+            const headerEvidence=contract.completeSourceCells&&['header','group_header'].includes(e.role)&&!metricRows.has(id);
+            if(excluded.has(id)||accounted.has(id)&&!headerEvidence)throw new Error('validation_contract_accounting_invalid');excluded.add(id);
             const inputRow=e.origin.kind==='table'?inputs.tables[e.origin.name]?.[e.origin.row]:inputs.sources[e.origin.name]?.[e.origin.row];
             if(!inputRow)throw new Error('validation_source_mapping_invalid');
             if(!['header','group_header','note','subtotal','grand_total','duplicate'].includes(e.role))throw new Error('validation_meaning_ambiguous');
@@ -126,12 +139,15 @@ export const validateCandidateSemantics=(candidate:CandidateOutput,contract:Cand
                     if(detail.some(row=>row[s.field]!==value))reasons.add('validation_summary_group_mismatch');}
                 if([metric.currencyColumn,metric.unitColumn].some(column=>column&&new Set(detail.map(r=>r[column])).size>1))throw new Error('validation_summary_scope_unresolved');
                 if(e.role==='subtotal'&&new Set(detail.map(r=>key(table!.groupBy.map(k=>r[k])))).size!==1)throw new Error('validation_summary_scope_unresolved');
-                const total=detail.reduce((sum,r)=>sum+minor(r[c.metric],metric.scale),0n),observed=minor(read(inputs,{...e.origin,column:c.column}),metric.scale);
+                const total=detail.reduce((sum,r)=>sum+(r[c.metric]===null?0n:minor(r[c.metric],metric.scale)),0n),observed=minor(read(inputs,{...e.origin,column:c.column}),metric.scale);
                 if(abs(total-observed)>BigInt(metric.toleranceMinor))reasons.add('validation_summary_reconciliation_failed');
             }
         }
         for(const [kind,collection] of [['table',inputs.tables],['source',inputs.sources]] as const)for(const [name,rows] of Object.entries(collection))for(let row=0;row<rows.length;row++){
             const id=accountingKey({kind,name,row});if(!accounted.has(id)&&!excluded.has(id))reasons.add('validation_input_coverage_incomplete');
+            if(contract.completeSourceCells&&kind==='source'&&!excluded.has(id))for(let column=0;column<(rows[row] as string[]).length;column++){
+                if(!mappedCells.has(canonicalCell({kind,name,row,column})))reasons.add('validation_input_cell_coverage_incomplete');
+            }
         }
         checks.push('complete-input-accounting','summary-exclusion-reconciliation');
         const relation=(r:CandidateRelationship)=>key([r.fromTable,r.toTable,r.fromKeys,r.toKeys,r.cardinality]);

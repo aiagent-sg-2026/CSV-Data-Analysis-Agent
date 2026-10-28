@@ -6,12 +6,17 @@ import { executeArqueroQuery } from '../data/arqueroEngine';
 import { isRuntimeAbortError, throwIfAborted } from '../agent/runtime/runtimeAbort';
 import { compileQueryPlanToDuckDbSql } from './queryCompiler';
 import type { DimensionNormalizationConfig } from './dimensionNormalization';
-import { duckDbWorkerClient } from '../workers/duckDbWorkerClient';
+import { duckDbWorkerClient, DuckDbWorkerClient, exchangeDuckDbWorkerClient } from '../workers/duckDbWorkerClient';
+import type { AcceptedSpillManifest } from '../data/acceptedSpill';
+import type { DatasetCommitMarker } from '../../types/datasetCommit';
+import type { CandidateOutput } from '../data/candidateContract';
 import type { WorkerDiagnosticsReporter } from '../workers/workerDiagnostics';
 import { collectOrderedColumnNames } from '../data/columnRegistry';
 import { normalizeDecimalCommaColumns } from '../data/numberLocale';
 import { DUCKDB_QUERY_TIMEOUT_MS, resolveDuckDbQueryTimeoutMs } from './queryTimeout';
 import { validateSqlLimit, validateSqlText, SQL_POLICY_VERSION } from './sqlSecurity';
+
+import { configureAcceptedQueryRetirement } from './acceptedQueryOwner';
 
 const DEFAULT_MAX_ROWS = 500;
 const DEFAULT_MAX_COLUMNS = 50;
@@ -330,6 +335,7 @@ const primeDuckDbFileDatasetUnlocked = async (
     loadVersion: string,
     options?: {
         previewRows?: number;
+        assertCurrent?: () => void;
         abortSignal?: AbortSignal;
         reportDiagnostics?: WorkerDiagnosticsReporter;
     },
@@ -337,7 +343,19 @@ const primeDuckDbFileDatasetUnlocked = async (
     const generation = engineGeneration;
     assertGeneration(generation);
     throwIfAborted(options?.abortSignal);
+    const assertLoadedCurrent = () => {
+        assertGeneration(generation);
+        try { throwIfAborted(options?.abortSignal); options?.assertCurrent?.(); }
+        catch (error) {
+            // Inside the serial engine operation: never retire a later session/job.
+            if (duckDbWorkerClient.retireDatasetIfOwned(loadVersion)) {
+                clearCachedDuckDbBinding(); cachedSerializedPayload = null;
+            }
+            throw error;
+        }
+    };
     const loadFile = async () => {
+        options?.assertCurrent?.();
         await duckDbWorkerClient.initDuckDb(
             DUCKDB_INIT_TIMEOUT_MS,
             options?.abortSignal,
@@ -345,27 +363,28 @@ const primeDuckDbFileDatasetUnlocked = async (
         );
         assertGeneration(generation);
         throwIfAborted(options?.abortSignal);
-        return duckDbWorkerClient.loadFileDataset({
+        options?.assertCurrent?.();
+        const loaded = await duckDbWorkerClient.loadFileDataset({
             file,
             csvFileName: `${loadVersion}.csv`,
             loadVersion,
             tableName: DUCKDB_TABLE_NAME,
             previewRows: options?.previewRows ?? 1000,
         }, DUCKDB_FILE_LOAD_TIMEOUT_MS, options?.abortSignal, options?.reportDiagnostics);
+        assertLoadedCurrent();
+        return loaded;
     };
     let result = await loadFile();
-    assertGeneration(generation);
-    throwIfAborted(options?.abortSignal);
+    assertLoadedCurrent();
     if (result.rowCount > 0 && result.preview.length === 0) {
         // A hot reload or same-file re-import can preserve the worker table
         // while resetting app state. Recover once instead of handing an empty
         // preview to report intake and falsely reporting "no body rows".
+        assertLoadedCurrent();
         await duckDbWorkerClient.disposeDuckDbSession(DUCKDB_DISPOSE_TIMEOUT_MS, options?.reportDiagnostics);
-        assertGeneration(generation);
-        throwIfAborted(options?.abortSignal);
+        assertLoadedCurrent();
         result = await loadFile();
-        assertGeneration(generation);
-        throwIfAborted(options?.abortSignal);
+        assertLoadedCurrent();
     }
     if (result.rowCount > 0 && result.preview.length === 0) {
         throw new Error('The large CSV loaded, but its preview rows could not be recovered. Re-import the file and try again.');
@@ -377,6 +396,7 @@ const primeDuckDbFileDatasetUnlocked = async (
         fallbackReason: null,
         fallbackStage: null,
     };
+    assertLoadedCurrent();
     cachedDuckDbBinding = binding;
     cachedDuckDbPrime = null;
     cachedSerializedPayload = null;
@@ -384,7 +404,155 @@ const primeDuckDbFileDatasetUnlocked = async (
     return { binding, rowCount: result.rowCount, preview: result.preview };
 };
 
+/** Load accepted backing in isolation: failure cannot drop the currently accepted worker/table.
+ * The returned switch is synchronous; publication may explicitly compensate before releasing old resources.
+ */
+export const prepareAcceptedSpillBinding = async(file:File,manifest:AcceptedSpillManifest,current:()=>void,signal?:AbortSignal)=>{
+    const generation=engineGeneration,client=new DuckDbWorkerClient();
+    const check=()=>{assertGeneration(generation);throwIfAborted(signal);current();};
+    try{
+        check();await client.initDuckDb(DUCKDB_INIT_TIMEOUT_MS,signal);check();
+        const loadVersion=`accepted-${manifest.digest}`;
+        const result=await client.loadFileDataset({file,csvFileName:`${loadVersion}.csv`,loadVersion,tableName:DUCKDB_TABLE_NAME,previewRows:20,
+            exactColumns:manifest.meaning.columns.map(c=>({name:c.name,type:c.conversion==='decimal'?`DECIMAL(24,${c.scale})`:'VARCHAR'}))},DUCKDB_FILE_LOAD_TIMEOUT_MS,signal);check();
+        if(result.rowCount!==manifest.rowCount||result.preview.some(row=>Object.keys(row).join('\u0000')!==manifest.meaning.columns.map(c=>c.name).join('\u0000')))throw new Error('accepted_worker_mismatch');
+        const binding:DuckDbDatasetBinding={engine:'duckdb',tableName:DUCKDB_TABLE_NAME,loadVersion,fallbackReason:null,fallbackStage:null};
+        return { binding, preview: result.preview, ...prepareWorkerSwitch(client, binding, check) };
+    }catch(e){client.retireSession();throw e;}
+};
+
+/** Ordinary and spill publication share the same compensatable switch as dual routing.
+ * Capture the old route at activation, never destroy it during preparation.
+ */
+const prepareWorkerSwitch = (client: DuckDbWorkerClient | null, binding: DuckDbDatasetBinding, check: () => void) => {
+    let switched = false, finished = false, activationGeneration = -1;
+    let previous: DuckDbWorkerClient;
+    let priorTables: AcceptedTables | null, installed: AcceptedTables | null = null;
+    let cached: { binding: typeof cachedDuckDbBinding; prime: typeof cachedDuckDbPrime; payload: typeof cachedSerializedPayload; queries: typeof queryResultCache };
+    return {
+        activate(data?: CsvData, currentOwner?: () => boolean, primaryTableId?: string) {
+            check(); if (switched || finished) throw new Error('accepted_activation_invalid');
+            cached = { binding: cachedDuckDbBinding, prime: cachedDuckDbPrime, payload: cachedSerializedPayload, queries: queryResultCache };
+            priorTables = acceptedTables; previous = client ? exchangeDuckDbWorkerClient(client) : duckDbWorkerClient; switched = true;
+            installed = data && currentOwner ? { primary: primaryTableId ?? '', tables: [], dual: false, current: currentOwner } : null;
+            if (data && installed) acceptedOwners.set(data, installed);
+            acceptedTables = installed; engineGeneration++; activationGeneration = engineGeneration; cachedDuckDbBinding = binding;
+            cachedDuckDbPrime = null; cachedSerializedPayload = null; queryResultCache = new Map();
+        },
+        rollback() {
+            if (finished) return;
+            if (switched && engineGeneration === activationGeneration && (!client || duckDbWorkerClient === client) && acceptedTables === installed) {
+                if (client) exchangeDuckDbWorkerClient(previous); acceptedTables = priorTables; engineGeneration++;
+                cachedDuckDbBinding = cached.binding; cachedDuckDbPrime = cached.prime;
+                cachedSerializedPayload = cached.payload; queryResultCache = cached.queries;
+            }
+            client?.retireSession(); finished = true;
+        },
+        finish() {
+            if (!switched || finished) throw new Error('accepted_activation_invalid');
+            if (client) previous.retireSession(); priorTables?.tables.forEach(t => t.client.retireSession()); finished = true;
+        },
+    };
+};
+
+/** Bounded ordinary accepted rows are loaded off to the side, with normal locale semantics. */
+export const prepareOrdinaryDatasetBinding = async (data: CsvData, current: () => void, signal?: AbortSignal, bind?: typeof primeDuckDbDataset) => {
+    const generation = engineGeneration;
+    const check = () => { assertGeneration(generation); throwIfAborted(signal); current(); };
+    // Qualification adapters own their workers. Production always prepares an isolated client.
+    if (bind) {
+        check(); const binding = await bind(data, signal); check();
+        if (binding.engine !== 'duckdb' || !binding.tableName || !binding.loadVersion) throw new Error('committed_dataset_not_bound');
+        return { binding, ...prepareWorkerSwitch(null, binding, check) };
+    }
+    const client = new DuckDbWorkerClient();
+    try {
+        check(); await client.initDuckDb(DUCKDB_INIT_TIMEOUT_MS, signal); check();
+        const loadVersion = getCsvDatasetLoadVersion(data);
+        await client.loadCleanDataset({ csvText: serializeRowsToCsv(data.data, getColumns(data.data)),
+            csvFileName: `${loadVersion}.csv`, loadVersion, tableName: DUCKDB_TABLE_NAME }, DUCKDB_LOAD_TIMEOUT_MS, signal); check();
+        const binding: DuckDbDatasetBinding = { engine: 'duckdb', tableName: DUCKDB_TABLE_NAME, loadVersion, fallbackReason: null, fallbackStage: null };
+        return { binding, ...prepareWorkerSwitch(client, binding, check) };
+    } catch (e) { client.retireSession(); throw e; }
+};
+
+type AcceptedTable = { client: DuckDbWorkerClient; tableId: string; columns: string[]; exact: Record<string, string>; binding: DuckDbDatasetBinding };
+type AcceptedTables = { primary: string; tables: AcceptedTable[]; dual: boolean; current: () => boolean };
+let acceptedTables: AcceptedTables | null = null;
+// Non-serializable host custody. Copying CsvData/provider metadata cannot inherit workers.
+const acceptedOwners = new WeakMap<CsvData, AcceptedTables>();
+export const retireInactiveAcceptedTables = () => {
+    const outgoing = acceptedTables;
+    // Checking the epoch can itself retire registered session resources.
+    if (outgoing && !outgoing.current() && acceptedTables === outgoing) {
+        acceptedTables = null; engineGeneration++;
+        clearCachedDuckDbBinding(); outgoing.tables.forEach(t => t.client.retireSession());
+        if (!outgoing.dual) duckDbWorkerClient.retireSession();
+    }
+};
+configureAcceptedQueryRetirement(retireInactiveAcceptedTables);
+export const acceptedQueryTable = (data: CsvData, tableId?: string) => {
+    const owner = acceptedOwners.get(data);
+    if (owner && (owner !== acceptedTables || !owner.current())) throw new Error('accepted_table_unavailable');
+    if (!owner || !owner.dual) {
+        if (tableId && tableId !== owner?.primary) throw new Error('accepted_table_unavailable');
+        return null;
+    }
+    const table = owner.tables.find(t => t.tableId === (tableId ?? owner.primary));
+    if (!table) throw new Error('accepted_table_unavailable');
+    return { tableId: table.tableId, columns: table.columns };
+};
+/** Each grain has its own native worker. No join or raw SQL crosses this boundary. */
+export const prepareAcceptedTablesBinding = async (marker: DatasetCommitMarker, output: CandidateOutput, current: () => void, signal?: AbortSignal, files?: File[]) => {
+    const generation = engineGeneration, tables: AcceptedTable[] = [];
+    const check = () => { assertGeneration(generation); throwIfAborted(signal); current(); };
+    try {
+        for (const spec of marker.bundle.tables) {
+            check(); const table = output.tables.find(t => t.name === spec.name)!;
+            const streamed = marker.acceptedStreamedDual?.binding.streamedDual?.meaning.proposal.tables.find(t => t.name === spec.name);
+            const metrics = streamed ? streamed.columns.filter(c => c.dataType === 'number').map(c => ({ column: c.name, scale: c.scale!, unit: c.unit! }))
+                : marker.replayManifest!.validationBinding.contract.tables.find(t => t.name === spec.name)!.metrics;
+            const client = new DuckDbWorkerClient();
+            const binding: DuckDbDatasetBinding = { engine: 'duckdb', tableName: DUCKDB_TABLE_NAME,
+                loadVersion: `${marker.commitId}-${spec.tableId}`, fallbackReason: null, fallbackStage: null };
+            tables.push({ client, tableId: spec.tableId, columns: spec.schema.map(c => c.name), exact: Object.fromEntries(metrics.map(m => [m.column, m.unit])), binding });
+            await client.initDuckDb(DUCKDB_INIT_TIMEOUT_MS, signal); check();
+            // Quote all text, preserve null separately from empty strings and never normalize locales.
+            const quote = (v: unknown) => `"${String(v).replace(/"/g, '""')}"`;
+            const file = files?.[tables.length - 1] ?? new File([spec.schema.map(c => quote(c.name)).join(',') + '\n' + table.rows.map(row => spec.schema.map(c => row[c.name] === null ? '' : quote(row[c.name])).join(',')).join('\n')], 'bounded.csv');
+            if (streamed && !files?.[tables.length - 1]) throw new Error('accepted_dual_file_required');
+            const result = await client.loadFileDataset({ file, csvFileName: 'bounded.csv',
+                loadVersion: binding.loadVersion!, tableName: DUCKDB_TABLE_NAME, previewRows: 1,
+                exactColumns: spec.schema.map(c => ({ name: c.name, nullable: c.nullable, type: metrics.some(m => m.column === c.name)
+                    ? `DECIMAL(24,${metrics.find(m => m.column === c.name)!.scale})` : 'VARCHAR' })) }, DUCKDB_FILE_LOAD_TIMEOUT_MS, signal); check();
+            if (result.rowCount !== spec.rowCount) throw new Error('accepted_worker_mismatch');
+        }
+        let switched = false, finished = false;
+        let previous: AcceptedTables | null = null;
+        let previousDefault: DuckDbWorkerClient;
+        const installed: AcceptedTables = { primary: marker.bundle.primaryTableId, tables, dual: true, current: () => false };
+        return { binding: tables.find(t => t.tableId === installed.primary)!.binding,
+            activate(data: CsvData, currentOwner: () => boolean) {
+                check(); if (switched || finished) throw new Error('accepted_activation_invalid');
+                previous = acceptedTables; previousDefault = duckDbWorkerClient; installed.current = currentOwner;
+                acceptedOwners.set(data, installed); acceptedTables = installed;
+                engineGeneration++; queryResultCache.clear(); switched = true;
+            },
+            // Only the verified host publication may attach a legitimate clone. No serialized token exists.
+            bind(data: CsvData) { if (acceptedTables !== installed || !installed.current()) throw new Error('accepted_table_unavailable'); acceptedOwners.set(data, installed); },
+            rollback() { if (finished) return; if (switched && acceptedTables === installed) { acceptedTables = previous; engineGeneration++; } tables.forEach(t => t.client.retireSession()); finished = true; },
+            finish() {
+                if (!switched || finished) throw new Error('accepted_activation_invalid');
+                previous?.tables.forEach(t => t.client.retireSession()); previousDefault.retireSession();
+                if (acceptedTables === installed && duckDbWorkerClient === previousDefault) clearCachedDuckDbBinding();
+                finished = true;
+            },
+            dispose() { if (acceptedTables === installed) { acceptedTables = null; engineGeneration++; } tables.forEach(t => t.client.retireSession()); },
+        };
+    } catch (e) { tables.forEach(t => t.client.retireSession()); throw e; }
+};
 export const disposeDuckDbQueryEngine = async () => {
+    acceptedTables?.tables.forEach(t => t.client.retireSession()); acceptedTables = null;
     engineGeneration += 1;
     queryQueue = Promise.resolve();
     clearCachedDuckDbBinding();
@@ -407,6 +575,18 @@ const executeManagedDataQueryUnlocked = async (
     options?: ManagedDataQueryExecutionOptions,
 ): Promise<ManagedDataQueryExecution> => {
     const generation = engineGeneration;
+    const accepted = acceptedQueryTable(data, plan.tableId);
+    if (accepted) {
+        if (plan.rawSql || Object.hasOwn(plan, 'joins')) throw new Error('accepted_dual_joins_sql_unsupported');
+        const table = acceptedOwners.get(data)!.tables.find(t => t.tableId === accepted.tableId)!;
+        const compiled = compileQueryPlanToDuckDbSql(plan, { allowedColumns: table.columns, tableName: DUCKDB_TABLE_NAME,
+            exactDecimalColumns: Object.keys(table.exact), exactDecimalUnits: table.exact,
+            maxRows: DEFAULT_MAX_ROWS, maxColumns: DEFAULT_MAX_COLUMNS, maxOrderBy: DEFAULT_MAX_ORDER_BY });
+        const result = await table.client.executeCompiledQuery({ ...compiled, expectedBinding: { tableName: DUCKDB_TABLE_NAME, loadVersion: table.binding.loadVersion! } }, DUCKDB_QUERY_TIMEOUT_MS, options?.abortSignal);
+        assertGeneration(generation); throwIfAborted(options?.abortSignal);
+        acceptedQueryTable(data, accepted.tableId);
+        return { result, ...table.binding, sqlPreview: compiled.sql };
+    }
     const allowNativeFallback = data.backing?.mode === 'duckdb_file'
         ? false
         : options?.allowNativeFallback ?? true;
@@ -428,6 +608,9 @@ const executeManagedDataQueryUnlocked = async (
 
     const loadVersion = getCsvDatasetLoadVersion(data);
     const compiled = compileQueryPlanToDuckDbSql(plan, {
+        exactDecimalColumns:data.backing?.ephemeral===false?data.backing.exactDecimalColumns?.map(c=>c.name):undefined,
+        exactDecimalUnits:data.backing?.ephemeral===false&&data.backing.exactDecimalColumns
+            ?Object.fromEntries(data.backing.exactDecimalColumns.map(c=>[c.name,c.unit])):undefined,
         allowedColumns,
         tableName: DUCKDB_TABLE_NAME,
         maxRows: DEFAULT_MAX_ROWS,
@@ -533,6 +716,7 @@ const executeRawSqlQueryUnlocked = async (
     const abortSignal = options?.abortSignal;
     const reportDiagnostics = options?.reportDiagnostics;
     const columnRegistry = options?.columnRegistry ?? null;
+    if (acceptedQueryTable(data)) throw new Error('accepted_dual_joins_sql_unsupported');
     const limit = validateSqlLimit(options?.limit ?? DEFAULT_MAX_ROWS);
     validateSqlText(rawSql);
 
@@ -590,13 +774,20 @@ export const _testClearQueryCache = () => { queryResultCache.clear(); };
 
 export const primeDuckDbDataset = (...args: Parameters<typeof primeDuckDbDatasetUnlocked>) => inEngineScope(() => primeDuckDbDatasetUnlocked(...args));
 export const primeDuckDbFileDataset = (...args: Parameters<typeof primeDuckDbFileDatasetUnlocked>) => inEngineScope(() => primeDuckDbFileDatasetUnlocked(...args));
-export const executeManagedDataQuery = (...args: Parameters<typeof executeManagedDataQueryUnlocked>) => inEngineScope(() => executeManagedDataQueryUnlocked(...args));
-export const executeRawSqlQuery = (...args: Parameters<typeof executeRawSqlQueryUnlocked>) => inEngineScope(() => executeRawSqlQueryUnlocked(...args));
+export const executeManagedDataQuery = (...args: Parameters<typeof executeManagedDataQueryUnlocked>) => inEngineScope(async () => {
+    const result = await executeManagedDataQueryUnlocked(...args);
+    acceptedQueryTable(args[0], args[1].tableId); return result;
+});
+export const executeRawSqlQuery = (...args: Parameters<typeof executeRawSqlQueryUnlocked>) => inEngineScope(async () => {
+    const result = await executeRawSqlQueryUnlocked(...args);
+    acceptedQueryTable(args[0]); return result;
+});
 
 /** Keep dataset binding and specialized worker execution in the same resource lease. */
 export const executeBoundDuckDbQuery = <T>(data: CsvData, execute: (binding: DuckDbDatasetBinding) => Promise<T>, signal?: AbortSignal): Promise<T> =>
     inEngineScope(async () => {
         const generation = engineGeneration;
+        if (acceptedQueryTable(data)) throw new Error('accepted_dual_joins_sql_unsupported');
         const binding = await primeDuckDbDatasetUnlocked(data, signal);
         assertGeneration(generation);
         throwIfAborted(signal);
@@ -604,5 +795,6 @@ export const executeBoundDuckDbQuery = <T>(data: CsvData, execute: (binding: Duc
         const result = await execute(binding);
         assertGeneration(generation);
         throwIfAborted(signal);
+        acceptedQueryTable(data);
         return result;
     });

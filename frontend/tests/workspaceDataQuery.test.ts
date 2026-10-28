@@ -314,6 +314,26 @@ describe('workspace data slice actions', () => {
         );
     });
 
+    it.each(['source', 'session'] as const)('does not dispatch a preview after %s replacement during asynchronous admission', async mode => {
+        const harness = createSliceHarness({ sessionId: 'original' });
+        const result = harness.getState().runWorkspaceDataQuery({ templateId: 'preview_rows', columns: ['Code'], orderBy: null, limit: 25 }, { dataset: baseCsvData, sessionId: 'original' });
+        harness.setState(mode === 'source' ? { csvData: { ...baseCsvData, data: [{ ...baseCsvData.data[0], Amount: 999 }] } } : { sessionId: 'replacement' });
+        await expect(result).rejects.toThrow(mode === 'session' ? 'The session was replaced.' : 'workspace_query_source_changed');
+        expect(executeStructuredDataQueryMock).not.toHaveBeenCalled();
+    });
+    it('does not follow a switched dataset while a session rebind is pending', async () => {
+        const harness = createSliceHarness({ sessionId: 'original', duckDbSessionStatus: { status: 'idle' } });
+        let release!: (value: unknown) => void;
+        const refresh = vi.fn(() => new Promise(resolve => { release = resolve; }));
+        harness.setState({ refreshDuckDbSession: refresh });
+        const result = harness.getState().runWorkspaceDataQuery({ templateId: 'preview_rows', columns: ['Code'], orderBy: null, limit: 25 }, { dataset: baseCsvData, sessionId: 'original' });
+        await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+        harness.setState({ csvData: { ...baseCsvData } });
+        release({ status: 'ready' });
+        await expect(result).rejects.toThrow('workspace_query_source_changed');
+        expect(executeStructuredDataQueryMock).not.toHaveBeenCalled();
+    });
+
     it('surfaces and logs a workspace query whose result was not committed', async () => {
         executeStructuredDataQueryMock.mockImplementationOnce(async () => ({
             explanation: 'Preview rows',

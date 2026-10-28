@@ -5,6 +5,7 @@ import { IconApiKeyRequired } from '../icons/IconApiKeyRequired';
 import { IconFileUpload } from '../icons/IconFileUpload';
 import { IconLoadingSpinner } from '../icons/IconLoadingSpinner';
 import { ImportProgressCard } from './ImportProgressCard';
+import { CsvSourceScanPanel } from './CsvSourceScanPanel';
 import { shouldAllowLogsSurface, shouldAllowSettingsSurface, shouldShowNewSessionButton } from '../config/runtimeConfig';
 import { getCloudAiProviderLabel } from '../utils/cloudAiProviderLabel';
 import { getTranslation } from '../utils/localization';
@@ -253,6 +254,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ isWorkspaceRestoring = f
                     </p>}
                 </div>
             )}
+            <CsvSourceScanPanel />
             <IconFileUpload />
             <h2 className="mb-2 text-2xl font-bold tracking-tight text-slate-900">
                 {getTranslation('file_upload_title', language)}

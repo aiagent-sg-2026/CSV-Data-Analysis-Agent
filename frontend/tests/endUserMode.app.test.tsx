@@ -156,6 +156,19 @@ describe('App end user mode modal gating', () => {
         expect(screen.queryByTestId('agent-monitor-modal')).not.toBeInTheDocument();
     });
 
+    it('loads Data Explorer only on first use, then keeps its source-fenced transient controller mounted across close', async () => {
+        let state = { ...baseState, isDatabaseModalOpen: false };
+        useAppStoreMock.mockImplementation((selector: (value: typeof state) => unknown) => selector(state));
+        const view = render(<App />);
+        expect(screen.queryByTestId('database-modal')).not.toBeInTheDocument();
+        state = { ...state, isDatabaseModalOpen: true };
+        view.rerender(<App />);
+        await screen.findByTestId('database-modal');
+        state = { ...state, isDatabaseModalOpen: false };
+        view.rerender(<App />);
+        expect(screen.getByTestId('database-modal')).toBeInTheDocument();
+    });
+
     it('keeps the upload flow visible while first-time workspace initialization completes', () => {
         const initializingUploadState = {
             ...baseState,

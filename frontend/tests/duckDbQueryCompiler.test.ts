@@ -6,6 +6,35 @@ import { normalizeDataQueryPayload } from '../services/agent/execution/dataQuery
 import { executeDataQuery } from '../services/agent/execution/dataQueryExecutor';
 
 describe('compileQueryPlanToDuckDbSql', () => {
+    it('keeps accepted DECIMAL sums typed while ordinary CSV retains numeric coercion',()=>{
+        const plan={aggregates:[{function:'sum' as const,column:'value',as:'total'}]};
+        const options={allowedColumns:['value','other'],tableName:'session_clean_dataset'};
+        expect(compileQueryPlanToDuckDbSql(plan,{...options,exactDecimalColumns:['value']}).sql).toContain('SUM("value") AS "total"');
+        expect(compileQueryPlanToDuckDbSql(plan,options).sql).toContain('TRY_CAST');
+        expect(compileQueryPlanToDuckDbSql({aggregates:[{function:'sum',column:'OCT 2010 + NOV 2010 + DEC 2010',as:'total'}]},
+            {tableName:options.tableName,allowedColumns:['OCT 2010','NOV 2010','DEC 2010'],exactDecimalColumns:['OCT 2010','NOV 2010','DEC 2010'],
+                exactDecimalUnits:{'OCT 2010':'SGD','NOV 2010':'SGD','DEC 2010':'SGD'}}).sql)
+            .toContain('SUM(CASE WHEN COALESCE("OCT 2010", "NOV 2010", "DEC 2010") IS NULL THEN NULL ELSE COALESCE("OCT 2010", 0) + COALESCE("NOV 2010", 0) + COALESCE("DEC 2010", 0) END)');
+    });
+    it('compares accepted DECIMAL filters as exact base-10 values, including groups and aggregate filters',()=>{
+        const options={allowedColumns:['value'],tableName:'session_clean_dataset',exactDecimalColumns:['value']};
+        const eq={column:'value',operator:'eq' as const,value:-90071992547409.9};
+        const sql=compileQueryPlanToDuckDbSql({where:{predicates:[eq],groups:[{predicates:[{column:'value',operator:'in',value:['-90071992547409.90','0.00']}]}]},
+            aggregates:[{function:'sum',column:'value',as:'total',where:{predicates:[eq]}}]},options).sql;
+        expect(sql).toContain('"value" = CAST(\'-90071992547409.9\' AS DECIMAL(38,1))');
+        expect(sql).toContain('"value" IN (CAST(\'-90071992547409.90\' AS DECIMAL(38,2)), CAST(\'0.00\' AS DECIMAL(38,2)))');
+        expect(sql).toContain('FILTER (WHERE ("value" = CAST(');
+        expect(sql).not.toContain('AS DOUBLE');
+        expect(compileQueryPlanToDuckDbSql({aggregates:[{function:'sum',column:'value',as:'total'}],
+            postAggregateFilter:{predicates:[{column:'total',operator:'eq',value:'-180143985094819.80'}]}},options).sql)
+            .toContain('"total" = CAST(\'-180143985094819.80\' AS DECIMAL(38,2))');
+        for(const operator of ['neq','gt','gte','lt','lte','not_in','between'] as const){
+            const value=operator==='between'?['-0.01','0.01']:operator==='not_in'?['0.00']:'0.00';
+            expect(compileQueryPlanToDuckDbSql({where:{predicates:[{column:'value',operator,value}]}},options).sql).toContain('CAST(\'0.0');
+        }
+        expect(()=>compileQueryPlanToDuckDbSql({where:{predicates:[{...eq,value:"0'); SELECT 1 --"}]}},options)).toThrow('exact decimal');
+    });
+
     it('compiles projection, filter, order, and limit into generated SQL', () => {
         const compiled = compileQueryPlanToDuckDbSql({
             select: ['Region', 'Revenue'],

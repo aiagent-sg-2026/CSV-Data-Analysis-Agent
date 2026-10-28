@@ -13,6 +13,7 @@ vi.mock('../services/workers/duckDbWorkerClient', () => ({
         loadFileDataset: vi.fn(),
         executeCompiledQuery: vi.fn(),
         disposeDuckDbSession: vi.fn(),
+        retireDatasetIfOwned: vi.fn(),
     },
 }));
 
@@ -37,6 +38,48 @@ describe('dataQueryEngine', () => {
     beforeEach(() => {
         vi.resetModules();
         vi.clearAllMocks();
+    });
+
+    it.each(['init', 'load'])('fences a superseded file import during worker %s without retiring the newer queued binding', async phase => {
+        const worker = (await import('../services/workers/duckDbWorkerClient')).duckDbWorkerClient;
+        let release!: () => void, reached = false, current = true;
+        const deferred = new Promise<void>(resolve => { release = resolve; });
+        vi.mocked(worker.initDuckDb).mockImplementation(async () => { if (phase === 'init') { reached = true; await deferred; } return { initialized: true }; });
+        vi.mocked(worker.loadFileDataset).mockImplementation(async args => {
+            if (args.loadVersion === 'old' && phase === 'load') { reached = true; await deferred; }
+            return { loaded: true, loadVersion: args.loadVersion, tableName: args.tableName, rowCount: 1, preview: [{ key: args.loadVersion }] };
+        });
+        vi.mocked(worker.retireDatasetIfOwned).mockReturnValue(true);
+        const engine = await import('../services/duckdb/queryEngine');
+        const old = engine.primeDuckDbFileDataset(new File(['key\nx\n'], 'old.csv'), 'old', { assertCurrent: () => { if (!current) throw new Error('stale_source'); } });
+        void old.catch(() => {});
+        for (let i = 0; i < 100 && !reached; i += 1) await new Promise(resolve => setTimeout(resolve, 1));
+        expect(reached).toBe(true);
+        current = false;
+        const newer = engine.primeDuckDbFileDataset(new File(['key\ny\n'], 'new.csv'), 'new');
+        release();
+        await expect(old).rejects.toThrow('stale_source');
+        expect((await newer).binding.loadVersion).toBe('new');
+        if (phase === 'init') expect(worker.retireDatasetIfOwned).not.toHaveBeenCalled();
+        else expect(worker.retireDatasetIfOwned).toHaveBeenCalledExactlyOnceWith('old');
+        expect(worker.disposeDuckDbSession).not.toHaveBeenCalled();
+        expect(vi.mocked(worker.loadFileDataset).mock.calls.map(call => call[0].loadVersion)).toEqual(phase === 'init' ? ['new'] : ['old', 'new']);
+    });
+
+    it('retires a stale owned load even when revocation lands in the post-load await gap', async () => {
+        const worker = (await import('../services/workers/duckDbWorkerClient')).duckDbWorkerClient;
+        vi.mocked(worker.initDuckDb).mockResolvedValue({ initialized: true });
+        vi.mocked(worker.loadFileDataset).mockResolvedValue({ loaded: true, loadVersion: 'old', tableName: 'session_clean_dataset', rowCount: 1, preview: [{ key: 'old' }] });
+        vi.mocked(worker.retireDatasetIfOwned).mockReturnValue(true);
+        let checks = 0, current = true;
+        const engine = await import('../services/duckdb/queryEngine');
+        await expect(engine.primeDuckDbFileDataset(new File(['key\nx\n'], 'old.csv'), 'old', { assertCurrent: () => {
+            checks += 1;
+            if (checks === 3) queueMicrotask(() => { current = false; });
+            if (!current) throw new Error('stale_source');
+        } })).rejects.toThrow('stale_source');
+        expect(worker.retireDatasetIfOwned).toHaveBeenCalledExactlyOnceWith('old');
+        expect(worker.disposeDuckDbSession).not.toHaveBeenCalled();
     });
 
     it('stays on the native executor when the runtime flag is disabled', async () => {

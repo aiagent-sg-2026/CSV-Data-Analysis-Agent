@@ -161,6 +161,8 @@ export interface AppState {
     csvData: CsvData | null;
     rawCsvData: CsvData | null;
     rawIntakeIr: ReportIntakeIr | null;
+    csvSourceScan?: import('../services/data/csvSourceScan').CsvSourceScanView | null;
+    structureRepairReview?: import('./structureRepair').StructureRepairReview | null;
     reportStructureResolution: ReportStructureResolution | null;
     canonicalCsvData: CsvData | null;
     canonicalBuildMeta: CanonicalBuildMeta | null;

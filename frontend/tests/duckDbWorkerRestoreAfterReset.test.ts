@@ -62,6 +62,26 @@ describe('DuckDbWorkerClient restores the dataset after a worker reset', () => {
         vi.restoreAllMocks();
     });
 
+    it('retires only an idle exact owned dataset, never a newer binding or in-flight query', async () => {
+        const { duckDbWorkerClient } = await import('../services/workers/duckDbWorkerClient');
+        const run = async <T,>(promise: Promise<T>) => { await vi.advanceTimersByTimeAsync(100); return promise; };
+        await run(duckDbWorkerClient.initDuckDb(5000));
+        await run(duckDbWorkerClient.loadCleanDataset(cleanPayload, 5000));
+        await run(duckDbWorkerClient.loadCleanDataset({ ...cleanPayload, loadVersion: 'new' }, 5000));
+        expect(duckDbWorkerClient.retireDatasetIfOwned('v1')).toBe(false);
+        expect(harness.instances[0].terminate).not.toHaveBeenCalled();
+        harness.setHangTask('executeCompiledQuery');
+        const pending = duckDbWorkerClient.executeCompiledQuery(query, 5000);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(duckDbWorkerClient.retireDatasetIfOwned('new')).toBe(false);
+        expect(harness.instances[0].terminate).not.toHaveBeenCalled();
+        harness.instances[0].release();
+        await pending;
+        expect(duckDbWorkerClient.retireDatasetIfOwned('new')).toBe(true);
+        expect(harness.instances[0].terminate).toHaveBeenCalledOnce();
+        expect(duckDbWorkerClient.retireDatasetIfOwned('new')).toBe(false);
+    });
+
     it('reloads the last dataset on a fresh worker before the next query', async () => {
         const { duckDbWorkerClient } = await import('../services/workers/duckDbWorkerClient');
         const run = async <T,>(promise: Promise<T>) => { const settled = promise.then(v => ({ v }), e => ({ e })); await vi.advanceTimersByTimeAsync(100); return settled; };
