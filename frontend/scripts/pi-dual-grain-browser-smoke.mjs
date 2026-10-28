@@ -22,7 +22,7 @@ try {
         args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'], viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' });
     evidence.browser = context.browser()?.version();
     await context.route('**/*', route => { if (new URL(route.request().url()).origin === new URL(base).origin) return route.continue(); evidence.externalAttempts.push(route.request().url()); return route.abort(); });
-    for (const mode of ['A42', 'A60', 'A90', 'B90', 'documents90', 'denyA90', 'neither', 'choice-tamper', 'proposal-tamper', 'guest-tamper', 'program-revision']) {
+    for (const mode of process.argv[4]?.split(',') ?? ['A42', 'A60', 'A90', 'B90', 'documents90', 'denyA90', 'neither', 'choice-tamper', 'proposal-tamper', 'guest-tamper', 'program-revision']) {
         const page = await context.newPage(), cdp = await context.newCDPSession(page);
         page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') console.log('BROWSER', m.type(), m.text()); });
         page.on('pageerror', e => evidence.pageErrors.push(e.message)); page.on('worker', w => evidence.workers.push(w.url()));
@@ -150,6 +150,78 @@ try {
                     await page.waitForFunction(() => { const s = globalThis.qaRoot.getState(); return !s.isBusy && !s.activeExecution && s.csvData && s.datasetCommitBindingStatus === 'ready'; }, undefined, { timeout: 120000 });
                     after.restoredQueries = await query(); verify(after.restoredQueries);
                     assert.equal(after.restoredQueries.commit.commitId, after.acceptedQueries.commit.commitId);
+                    if (mode === 'A42') {
+                        const sample = async () => page.evaluate(async ({ agent, alias }) => {
+                            const qa = (await import(`/assets/${agent}`))[alias], s = globalThis.qaRoot.getState();
+                            const detail = s.datasetBundle.tables.find(t => t.name === 'metrics');
+                            const q = await qa.executeManagedDataQuery(s.csvData, { tableId: detail.tableId,
+                                where: { predicates: [{ column: 'Metric', operator: 'eq', value: 'Period1:Category1' }] },
+                                aggregates: [{ function: 'count', column: 'Value [USD]', as: 'n' }] }, [], { bypassCache: true });
+                            globalThis.previousGeneration = { data: s.csvData, detailId: detail.tableId };
+                            return { session: s.sessionId, commit: s.datasetBundle.acceptedCommit, primary: s.csvData, rows: q.result.rows, engine: q.engine };
+                        }, { agent, alias });
+                        const original = await sample(); assert.equal(Number(original.rows[0].n), 0);
+                        const continued = await page.evaluate(async ({ agent, alias }) => {
+                            const qa = (await import(`/assets/${agent}`))[alias];
+                            const f = await qa.preparePiDualGrainSmoke(globalThis.qaRoot, { width: 42, keepAccepted: true });
+                            return { result: f.result, trace: f.trace, pending: globalThis.qaRoot.getState().pendingClarification };
+                        }, { agent, alias });
+                        assert.ok(continued.pending?.resumeContext?.piSpillMeaningChoice, JSON.stringify(continued));
+                        const assistant = page.getByRole('button', { name: 'Show Assistant panel', exact: true }); if (await assistant.isVisible()) await assistant.click();
+                        await page.getByRole('button', { name: 'B — Confirm alternative interpretation', exact: true }).last().click();
+                        await page.waitForFunction(() => !globalThis.qaRoot.getState().isBusy && !globalThis.qaRoot.getState().activeExecution, undefined, { timeout: 120000 });
+                        const approvePending = async () => {
+                            await page.getByRole('button', { name: 'Inspect task', exact: true }).last().click();
+                            const dialog = page.getByRole('dialog', { name: 'Task inspection', exact: true });
+                            await dialog.getByRole('button', { name: 'Review', exact: true }).click();
+                            await dialog.getByText('Decision: validated', { exact: true }).waitFor();
+                            await dialog.getByRole('button', { name: 'Approve', exact: true }).click();
+                            await page.waitForFunction(() => !globalThis.qaRoot.getState().isBusy && !globalThis.qaRoot.getState().activeExecution, undefined, { timeout: 120000 });
+                        };
+                        await approvePending();
+                        const stale = async () => page.evaluate(async ({ agent, alias }) => {
+                            const qa = (await import(`/assets/${agent}`))[alias], s = globalThis.qaRoot.getState(), old = globalThis.previousGeneration;
+                            const errors = [];
+                            for (const [data, plan] of [[old.data, { select: ['Id'] }], [s.csvData, { tableId: old.detailId, select: ['Id'] }]]) {
+                                try { await qa.executeManagedDataQuery(data, plan, ['Id']); errors.push('UNEXPECTED_SUCCESS'); } catch(e) { errors.push(e.message); }
+                            }
+                            return errors;
+                        }, { agent, alias });
+                        assert.deepEqual(await stale(), ['accepted_table_unavailable', 'accepted_table_unavailable']);
+                        const replacement = await sample(); assert.equal(Number(replacement.rows[0].n), 3); assert.equal(replacement.engine, 'duckdb');
+                        assert.equal(replacement.session, original.session); assert.notEqual(replacement.commit.commitId, original.commit.commitId);
+                        assert.deepEqual(replacement.primary, original.primary);
+                        const ordinaryPreparation = await page.evaluate(async ({ agent, alias }) => {
+                            const qa = (await import(`/assets/${agent}`))[alias];
+                            return await qa.preparePiOrdinaryTransitionSmoke(globalThis.qaRoot);
+                        }, { agent, alias });
+                        assert.ok(await page.evaluate(() => globalThis.qaRoot.getState().pendingClarification?.resumeContext?.piCandidateApproval), JSON.stringify(ordinaryPreparation));
+                        await approvePending(); assert.deepEqual(await stale(), ['accepted_table_unavailable', 'accepted_table_unavailable']);
+                        const ordinaryQuery = async () => page.evaluate(async ({ agent, alias }) => {
+                            const qa = (await import(`/assets/${agent}`))[alias], s = globalThis.qaRoot.getState();
+                            const raw = await qa.executeRawSqlQuery(s.csvData, 'SELECT COUNT(*) n, SUM("Cost [USD]") total FROM session_clean_dataset', ['n', 'total'], { bypassCache: true });
+                            return { session: s.sessionId, commit: s.datasetBundle.acceptedCommit, tables: s.datasetBundle.tables.length, primary: s.csvData, rows: raw.result.rows, engine: raw.engine };
+                        }, { agent, alias });
+                        const ordinary = await ordinaryQuery(); assert.equal(ordinary.tables, 1); assert.equal(ordinary.session, original.session);
+                        assert.deepEqual(ordinary.primary, original.primary); assert.equal(Number(ordinary.rows[0].n), 3); assert.equal(Number(ordinary.rows[0].total), 400); assert.equal(ordinary.engine, 'duckdb');
+                        await page.screenshot({ path: `${output}.ordinary.png`, fullPage: true });
+                        if (await page.getByRole('button', { name: 'Inspect task', exact: true }).count()) await page.getByRole('button', { name: 'Inspect task', exact: true }).last().click();
+                        await page.getByRole('button', { name: 'Open dataset recovery', exact: true }).first().click();
+                        await page.getByRole('button', { name: 'Keep rows locally · 7 days', exact: true }).click();
+                        await page.getByText('Verified rows retained locally.', { exact: true }).waitFor();
+                        await page.reload();
+                        await page.evaluate(async ({ index }) => { globalThis.qaRoot = (await import(`/assets/${index}`)).u; }, { index });
+                        await page.waitForFunction(() => !globalThis.qaRoot.getState().isAppInitializing);
+                        if (!await page.getByRole('button', { name: 'Restore local rows', exact: true }).count()) {
+                            await page.getByRole('button', { name: 'History', exact: true }).click();
+                            await page.getByRole('button', { name: 'Resume analysis', exact: true }).first().click();
+                        }
+                        await page.getByRole('button', { name: 'Restore local rows', exact: true }).click();
+                        await page.waitForFunction(() => { const s = globalThis.qaRoot.getState(); return !s.isBusy && !s.activeExecution && s.csvData && s.datasetCommitBindingStatus === 'ready'; }, undefined, { timeout: 120000 });
+                        const restoredOrdinary = await ordinaryQuery();
+                        assert.equal(restoredOrdinary.commit.commitId, ordinary.commit.commitId); assert.deepEqual(restoredOrdinary.rows, ordinary.rows);
+                        after.sameSessionTransitions = { original, replacement, ordinary, restoredOrdinary, continued, ordinaryPreparation };
+                    }
                 }
             } else if (mode === 'guest-tamper') {
                 assert.equal(after.inspection.candidate.validation.decision, 'blocked');

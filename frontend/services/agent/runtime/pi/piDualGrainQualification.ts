@@ -81,6 +81,8 @@ return {schemaVersion:1,complete:true,tables,relationships:p.relationships,exclu
 
 /** Normal production coordinator/public tools. Deterministic provider, not a live provider test. */
 export const preparePiDualGrainSmoke = async (root: StoreApi, options: {
+    /** Qualification-only: start a fresh normal task without replacing accepted source/session. */
+    keepAccepted?: boolean;
     width?: number; layout?: 'document_rows'; coding?: PiInitialAnalysisOptions['codingPreparation']; fault?: 'value' | 'program_revision';
     proposal?: (proposal: DualGrainMeaningAlternatives) => unknown;
     confirmedProposal?: (proposal: DualGrainCandidateMeaning) => unknown;
@@ -88,15 +90,18 @@ export const preparePiDualGrainSmoke = async (root: StoreApi, options: {
 } = {}) => {
     const fixture = options.layout === 'document_rows' ? syntheticDocumentGrainSource(options.width) : syntheticDualGrainSource(options.width), file = new File([fixture.text], 'fictional-dual-grain.csv');
     const parsed = parseCsvTextWithDetection(fixture.text), ir = buildReportIntakeIr(file.name, parsed.rawRows, parsed.detection), data = buildCsvDataFromIntakeIr(ir);
-    const datasetId = crypto.randomUUID(), goal = 'Repair both source-backed grains without fanout; independently validate both tables and request separate exact human approval. Never commit without that approval.';
-    const bundle = createSingleTableDatasetBundle({ datasetId, sourceFingerprint: 'pending', file, data });
-    root.setState({ sessionId: crypto.randomUUID(), sessionCreatedAt: new Date(), confirmedAnalysisGoal: goal, csvData: data, rawCsvData: structuredClone(data), canonicalCsvData: null,
+    const datasetId = options.keepAccepted ? root.getState().currentDatasetId! : crypto.randomUUID(), goal = 'Repair both source-backed grains without fanout; independently validate both tables and request separate exact human approval. Never commit without that approval.';
+    const bundle = options.keepAccepted ? root.getState().datasetBundle! : createSingleTableDatasetBundle({ datasetId, sourceFingerprint: 'pending', file, data });
+    if (!options.keepAccepted) root.setState({ sessionId: crypto.randomUUID(), sessionCreatedAt: new Date(), confirmedAnalysisGoal: goal, csvData: data, rawCsvData: structuredClone(data), canonicalCsvData: null,
         rawIntakeIr: ir, datasetBundle: bundle, currentDatasetId: datasetId, currentView: 'analysis_dashboard', pipelineOutcome: { canAutoAnalyze: false, reasonCode: 'header_shape_drift' } as never,
         pendingClarification: null, candidateRecovery: null, analysisCards: [], columnProfiles: [], queryHistory: [], workspaceFiles: {}, datasetCommitBindingStatus: undefined,
         settings: { ...root.getState().settings, provider: 'default', simpleModel: 'mock', complexModel: 'mock', language: 'English', runtimeAccessControl: { permissionMode: 'open', toolOverrides: {}, workspaceRules: { deniedPathPrefixes: [] } } } });
-    const source = await captureCsvSource(root, file);
-    root.setState({ datasetBundle: { ...bundle, source: { ...bundle.source, inspection: source } } });
-    await scanCsvSourceForImport(root, file); bindCsvSourceScan(root, file, source);
+    const source = options.keepAccepted ? bundle.source.inspection! : await captureCsvSource(root, file);
+    if (options.keepAccepted) root.setState({ workspaceFiles: {}, pendingClarification: null, activeAgentTask: null, taskInspection: null });
+    else {
+        root.setState({ datasetBundle: { ...bundle, source: { ...bundle.source, inspection: source } } });
+        await scanCsvSourceForImport(root, file); bindCsvSourceScan(root, file, source);
+    }
     let step = 0, candidateId = '', staleJobId = '', calls = 0;
     const trace: string[] = [];
     const call = (name: string, args: unknown): AssistantMessage['content'] => [{ type: 'toolCall', id: crypto.randomUUID(), name, arguments: args as JsonObject }];

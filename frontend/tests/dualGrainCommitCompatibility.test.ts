@@ -81,6 +81,7 @@ const exactSetup = async () => {
         current(); expect(output.tables).toHaveLength(2);
         if (fault === 'one-table') throw new Error('injected_second_table');
         return { binding: { engine: 'duckdb' as const, tableName: 'native', loadVersion: 'exact', fallbackReason: null, fallbackStage: null },
+            bind() {},
             activate() { current(); worker = 'next'; if (fault === 'activate') throw new Error('injected_activation'); },
             rollback() { worker = 'prior'; }, finish() {}, dispose() {} };
     });
@@ -177,6 +178,57 @@ describe('bounded all-table accepted publication', () => {
             if (kind === 'lineage') marker.lineage.tables.pop();
             await expect(validateRecoveryMaterial(marker, material)).rejects.toThrow();
         }
+    });
+});
+
+describe('ordinary replacement of a prior accepted dual generation', () => {
+    const ordinary = async (f: Awaited<ReturnType<typeof exactSetup>>) => {
+        f.prep.task.close('completed'); finishRun(f.root, f.lease);
+        const lease = beginRun(f.root, 'follow_up', 'ordinary-replacement', 'ordinary-replacement'), store = scopeRunStore(f.root, lease);
+        const prep = await preparePiExecutor(store, { entryPoint: 'follow_up', goal: 'Retain the complete primary unchanged with exact approval.', guest });
+        cleanup.push(() => { prep.task.close('cancelled'); finishRun(f.root, lease); });
+        store.executionContext = { lease, toolCallId: 'ordinary-meaning', stepId: 'ordinary-meaning' };
+        const bundle = store.getState().datasetBundle!, primary = bundle.tables.find(t => t.tableId === bundle.primaryTableId)!;
+        const columns = primary.schema.map(c => c.name);
+        await inferCandidateMeaning(store, { input: { kind: 'table', name: 'records', tableId: primary.tableId }, table: {
+            name: 'entities', grain: ['Id'], groupBy: [], columns: primary.schema.map(c => ({ ...c, sourceColumn: c.name,
+                conversion: c.dataType === 'number' ? 'decimal' : 'identity', ...(c.dataType === 'number' ? { scale: 2, unit: 'USD' } : {}) })),
+            detailRanges: [{ start: 0, end: primary.rowCount - 1 }],
+        }, exclusions: [], assumptions: ['Retain the complete primary unchanged.'] });
+        const program = await store.codeExecution!.workspace.write('/workspace/ordinary.js', `const rows=input.records.rows.map(r=>({...r}));return {schemaVersion:1,complete:true,tables:[{name:'entities',role:'fact',schema:${JSON.stringify(primary.schema)},rowCount:rows.length,rows,lineage:rows.flatMap((_,row)=>${JSON.stringify(columns)}.map(column=>({row,column,origins:[{kind:'table',name:'records',row,column}]})))}],relationships:[],excludedRows:[]};`, 0);
+        const request = { program: { path: program.path, revision: program.revision, sha256: program.sha256 }, inputs: [], tables: [{ name: 'records', tableId: primary.tableId }], output: { path: '/workspace/ordinary.json', expectedRevision: 0, format: 'json' as const } };
+        const context = { lease, toolCallId: 'ordinary-run', stepId: 'ordinary-run' };
+        await prep.task.beforeTool('code.run', request, context.toolCallId);
+        const execution = await store.codeExecution!.run(request, context); expect(execution.status).toBe('succeeded');
+        prep.task.afterTool('code.run', { status: 'success', toolName: 'code.run', message: 'executed', shouldStop: false, artifacts: { codeExecution: execution } }, context);
+        const port = store.candidateStaging!, candidate = await port.stage(execution.jobId, { ...context, toolCallId: 'ordinary-stage' });
+        expect((await port.validate(candidate.candidateId, { ...context, toolCallId: 'ordinary-validate' })).decision).toBe('validated');
+        return { store, candidate };
+    };
+    it.each(['prepare', 'activation', 'unknown'])('preserves the prior accepted bundle on ordinary %s failure', async fault => {
+        const f = await exactSetup(), first = await f.service.commit(f.service.approve(f.review));
+        const { store, candidate } = await ordinary(f), before = f.root.getState();
+        const bind = vi.fn(async () => { if (fault === 'prepare') throw new Error('ordinary_prepare_failed');
+            return { engine: 'duckdb' as const, tableName: 'ordinary', loadVersion: 'ordinary', fallbackReason: null, fallbackStage: null }; });
+        const service = createCandidateCommitService(store, { database: async () => f.db, bind, onAdmitted: fault === 'unknown' ? () => f.fault('unknown') : undefined });
+        const review = await service.review(candidate.candidateId, { primaryTable: 'entities', idempotencyKey: 'ordinary-after-dual' });
+        const originalSet = f.root.setState; let injected = false;
+        if (fault === 'activation') f.root.setState = patch => {
+            originalSet(patch);
+            if (!injected && f.root.getState().datasetBundle?.acceptedCommit?.commitId !== first.marker!.commitId && f.root.getState().datasetCommitBindingStatus === 'ready') {
+                injected = true; throw new Error('activation_observer_failed');
+            }
+        };
+        try {
+            const result = await service.commit(service.approve(review));
+            expect(result.status).toBe(fault === 'unknown' ? 'unknown' : 'not_committed');
+            expect(f.root.getState().datasetBundle).toBe(before.datasetBundle); expect(f.root.getState().csvData).toBe(before.csvData);
+            expect(f.root.getState().datasetBundle!.tables).toHaveLength(2);
+            expect(f.root.getState().datasetCommitBindingStatus).toBe(fault === 'unknown' ? 'commit_unknown' : 'ready');
+            f.fault('');
+            if (fault !== 'unknown') expect((await f.db.get('dataset_commits', commitHeadKey(before.sessionId)))?.commitId).toBe(first.marker!.commitId);
+            expect((await readAcceptedDual(first.marker!, () => {}, f.storage)).output.tables).toHaveLength(2);
+        } finally { f.root.setState = originalSet; f.fault(''); }
     });
 });
 

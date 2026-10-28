@@ -14,7 +14,8 @@ import { commitDatasetTransaction, readCommitIntent } from '../persistence/datas
 import { datasetCommitBindings } from '../persistence/datasetCommitProjection';
 import { queueSessionWrite } from '../persistence/currentSessionPersistence';
 import { buildPersistedReportRecord } from '../persistence/persistedAppState';
-import { primeDuckDbDataset, prepareAcceptedSpillBinding, prepareAcceptedTablesBinding } from '../duckdb/queryEngine';
+import { primeDuckDbDataset, prepareOrdinaryDatasetBinding, prepareAcceptedSpillBinding, prepareAcceptedTablesBinding } from '../duckdb/queryEngine';
+import { acceptedQueryOwner } from '../duckdb/acceptedQueryOwner';
 import { planAcceptedDual, writeAcceptedDual } from './acceptedDualGrain';
 import { planAcceptedSpill, writeAcceptedSpill, acceptedSpillCsv, acceptedPublicationSnapshot, type AcceptedSpillManifest, type AcceptedSpillStorage, type SpillReadCustody } from './acceptedSpill';
 import { detachCandidateDraft } from './detachedCandidateDraft';
@@ -190,7 +191,8 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         approvals.set(approval,prepared);return approval;
     };
 
-    const install = async (marker: DatasetCommitMarker, prepared: Prepared, db: StorageDatabase): Promise<CandidateCommitOutcome['acknowledgement']> => {
+    const install = async (marker: DatasetCommitMarker, prepared: Prepared, db: StorageDatabase,
+        preparedBinding?: Awaited<ReturnType<typeof prepareOrdinaryDatasetBinding>>): Promise<CandidateCommitOutcome['acknowledgement']> => {
         if (!canCommitRun(store,lease)) return 'revoked';
         const current=await db.get(DATASET_COMMITS_STORE,commitHeadKey(marker.sessionId));
         if (!canCommitRun(store,lease)) return 'revoked';
@@ -201,30 +203,35 @@ export const createCandidateCommitService = (store: StoreApi, options: {
             return 'superseded';
         }
         if (store.getState().datasetBundle?.acceptedCommit?.commitId===marker.commitId && store.getState().datasetCommitBindingStatus==='ready') return 'installed';
-        const stillInstalled=()=>canCommitRun(store,lease)&&store.getState().datasetBundle?.acceptedCommit?.commitId===marker.commitId;
-        store.setState({datasetBundle:structuredClone(marker.bundle),csvData:structuredClone(prepared.csv),canonicalCsvData:structuredClone(prepared.csv),candidateRecovery:null,
+        const previous = store.getState(), csv = structuredClone(prepared.csv), signature = JSON.stringify(previous.datasetBundle);
+        const stillOwned = () => { if (!canCommitRun(store, lease)) throw new Error('scope_revoked');
+            if (store.getState().csvData !== previous.csvData || JSON.stringify(store.getState().datasetBundle) !== signature) throw new Error('input_version_changed'); };
+        const publish = () => store.setState({datasetBundle:structuredClone(marker.bundle),csvData:csv,canonicalCsvData:csv,candidateRecovery:null,
             datasetCommitBindingStatus:'rebinding',activeDataQuery:null,datasetSemanticSnapshot:null,semanticDatasetVersion:null,semanticStatus:'idle',
             columnRegistry:null,columnProfiles:[],canonicalBuildMeta:null,activeMetricMappingValidation:null,activeSpreadsheetFilter:null,spreadsheetFilterFunction:null,
             vectorStoreDocuments:[],pendingVectorMemoryDocs:[],vectorMemoryState:'cold',reportMemoryScope:null,
             duckDbSessionStatus:{status:'binding',engine:null,tableName:null,loadVersion:null,fallbackReason:null,lastSyncedAt:null}});
-        registerSandboxTableRows(marker.bundle.bundleId,prepared.output,marker.bundle.datasetVersion);
-        rememberRecoveryMaterial(store, marker.commitId, prepared.recovery!);
-        registerSessionResource(lease.scope,()=>clearSandboxTableRows(marker.bundle.bundleId));
         try {
-            const binding=await (options.bind??primeDuckDbDataset)(prepared.csv,lease.signal);
-            if (!stillInstalled()) return 'revoked';
-            const latest=await db.get(DATASET_COMMITS_STORE,commitHeadKey(marker.sessionId));
-            if (!stillInstalled()) return 'revoked';
-            if (latest?.kind!=='head'||latest.commitId!==marker.commitId) {
-                store.setState({datasetCommitBindingStatus:'binding_failed'});return 'superseded';
-            }
-            if (binding.engine!=='duckdb'||!binding.tableName||!binding.loadVersion) throw new Error('committed_dataset_not_bound');
-            store.setState({datasetCommitBindingStatus:'ready',duckDbSessionStatus:{...binding,status:'ready',fallbackReason:null,lastSyncedAt:new Date()}});
-            return 'installed';
+            preparedBinding ??= await prepareOrdinaryDatasetBinding(prepared.csv, stillOwned, lease.signal, options.bind);
+            stillOwned();
+            const latest=await db.get(DATASET_COMMITS_STORE,commitHeadKey(marker.sessionId)); stillOwned();
+            if (latest?.kind!=='head'||latest.commitId!==marker.commitId) { preparedBinding.rollback(); return 'superseded'; }
+            preparedBinding.activate(csv, acceptedQueryOwner(store, marker, csv), marker.bundle.primaryTableId); publish();
+            store.setState({datasetCommitBindingStatus:'ready',duckDbSessionStatus:{...preparedBinding.binding,status:'ready',fallbackReason:null,lastSyncedAt:new Date()}});
+            registerSandboxTableRows(marker.bundle.bundleId,prepared.output,marker.bundle.datasetVersion);
+            rememberRecoveryMaterial(store, marker.commitId, prepared.recovery!);
+            registerSessionResource(lease.scope,()=>clearSandboxTableRows(marker.bundle.bundleId));
+            preparedBinding.finish(); return 'installed';
         } catch {
-            if (!stillInstalled()) return 'revoked';
-            store.setState({datasetCommitBindingStatus:'binding_failed',duckDbSessionStatus:{status:'error',engine:null,tableName:null,loadVersion:null,
-                fallbackReason:'committed_dataset_not_bound',lastSyncedAt:null}});
+            preparedBinding?.rollback();
+            if (!canCommitRun(store, lease) || (store.getState().csvData !== previous.csvData && store.getState().csvData !== csv)) return 'revoked';
+            if (previous.datasetBundle?.acceptedCommit) {
+                store.setState({ ...acceptedPublicationSnapshot(previous), datasetCommitBindingStatus: prepared.bindingStatus, activeDataQuery: null });
+            } else {
+                publish();
+                store.setState({datasetCommitBindingStatus:'binding_failed',duckDbSessionStatus:{status:'error',engine:null,tableName:null,loadVersion:null,
+                    fallbackReason:'committed_dataset_not_bound',lastSyncedAt:null}});
+            }
             return 'binding_failed';
         }
     };
@@ -272,7 +279,7 @@ export const createCandidateCommitService = (store: StoreApi, options: {
                     prepared.check();
                     const latest=await db.get(DATASET_COMMITS_STORE,commitHeadKey(accepted.sessionId));prepared.check();
                     if(latest?.kind!=='head'||latest.commitId!==accepted.commitId)throw new Error('commit_activation_superseded');
-                    binding!.activate();
+                    binding!.activate(csv, acceptedQueryOwner(store, accepted, csv), accepted.bundle.primaryTableId);
                     store.setState({datasetBundle:structuredClone(accepted.bundle),csvData:csv,canonicalCsvData:csv,rawCsvData:null,candidateRecovery:null,
                         datasetCommitBindingStatus:'ready',activeDataQuery:null,datasetSemanticSnapshot:null,semanticDatasetVersion:null,semanticStatus:'idle',
                         columnRegistry:null,columnProfiles:[],canonicalBuildMeta:null,activeMetricMappingValidation:null,activeSpreadsheetFilter:null,spreadsheetFilterFunction:null,
@@ -285,8 +292,11 @@ export const createCandidateCommitService = (store: StoreApi, options: {
                     // Do not publish stale state across a source/session switch. The accepted journal remains recoverable.
                     if(!canCommitRun(store,lease))return {status:'committed' as const,admitted,replay:false,marker:accepted,acknowledgement:'revoked' as const};
                     try{
+                        // Restore route and its publication together before yielding to journal compensation.
+                        if(store.getState().csvData===previous.csvData||store.getState().csvData===csv)
+                            store.setState({...acceptedPublicationSnapshot(previous),datasetCommitBindingStatus:'commit_unknown',activeDataQuery:null});
                         await compensateSpillCommit(db,accepted,saved??baseline,head?.kind==='head'?head:undefined);
-                        if(canCommitRun(store,lease)&&JSON.stringify(store.getState().datasetBundle?.source.inspection)===JSON.stringify(previous.datasetBundle?.source.inspection))
+                        if(canCommitRun(store,lease)&&(store.getState().csvData===previous.csvData||store.getState().csvData===csv)&&JSON.stringify(store.getState().datasetBundle?.source.inspection)===JSON.stringify(previous.datasetBundle?.source.inspection))
                             store.setState({...acceptedPublicationSnapshot(previous),activeDataQuery:null});
                         return {status:'not_committed' as const,admitted,replay:false,reason:reason(error)};
                     }catch{
@@ -338,7 +348,7 @@ export const createCandidateCommitService = (store: StoreApi, options: {
                     prepared.check();
                     const latest = await db.get(DATASET_COMMITS_STORE, commitHeadKey(marker.sessionId)); prepared.check();
                     if (latest?.kind !== 'head' || latest.commitId !== marker.commitId) throw new Error('commit_activation_superseded');
-                    binding!.activate();
+                    binding!.activate(prepared.csv, acceptedQueryOwner(store, marker, prepared.csv));
                     store.setState({ datasetBundle: structuredClone(marker.bundle), csvData: prepared.csv, canonicalCsvData: prepared.csv, rawCsvData: null,
                         candidateRecovery: null, datasetCommitBindingStatus: 'ready', activeDataQuery: null, datasetSemanticSnapshot: null,
                         semanticDatasetVersion: null, semanticStatus: 'idle', columnRegistry: null, columnProfiles: [], canonicalBuildMeta: null,
@@ -355,9 +365,13 @@ export const createCandidateCommitService = (store: StoreApi, options: {
                 } catch (e) {
                     binding!.rollback();
                     if (!canCommitRun(store, lease)) return { status: 'committed' as const, admitted, replay: false, marker, acknowledgement: 'revoked' as const };
+                    // Do not leave the restored owner paired with the failed publication across an await.
+                    if (store.getState().csvData === previous.csvData || store.getState().csvData === prepared.csv)
+                        store.setState({ ...acceptedPublicationSnapshot(previous), datasetCommitBindingStatus: 'commit_unknown', activeDataQuery: null });
                     await compensateSpillCommit(db, marker, saved ?? baseline, head?.kind === 'head' ? head : undefined);
                     durable = false;
-                    store.setState({ ...acceptedPublicationSnapshot(previous), activeDataQuery: null });
+                    if (store.getState().csvData === previous.csvData || store.getState().csvData === prepared.csv)
+                        store.setState({ ...acceptedPublicationSnapshot(previous), activeDataQuery: null });
                     throw e;
                 }
             });
@@ -365,7 +379,7 @@ export const createCandidateCommitService = (store: StoreApi, options: {
             binding?.rollback();
             // An unreadable acknowledgement is not proof of abort. Preserve backing for journal recovery.
             if (!durable && reason(e) !== 'commit_outcome_unknown') await directory?.remove().catch(() => {});
-            if (canCommitRun(store, lease)) store.setState(durable || reason(e) === 'commit_outcome_unknown'
+            if (canCommitRun(store, lease) && (store.getState().csvData === previous.csvData || store.getState().csvData === prepared.csv)) store.setState(durable || reason(e) === 'commit_outcome_unknown'
                 ? { datasetCommitBindingStatus: 'commit_unknown', activeDataQuery: null }
                 : { ...acceptedPublicationSnapshot(previous), activeDataQuery: null });
             return { status: durable || reason(e) === 'commit_outcome_unknown' ? 'unknown' : 'not_committed', admitted, replay: false, reason: reason(e) };
@@ -377,6 +391,16 @@ export const createCandidateCommitService = (store: StoreApi, options: {
         if (prepared.marker.acceptedDualGrain) return commitDual(approval, prepared);
         if(prepared.spill)return commitSpill(approval,prepared);
         let commitDb: StorageDatabase | undefined;
+        const ordinaryPrevious = store.getState();
+        let ordinaryBinding: Awaited<ReturnType<typeof prepareOrdinaryDatasetBinding>> | undefined;
+        let compensation: { report: Parameters<typeof compensateSpillCommit>[2]; head: Parameters<typeof compensateSpillCommit>[3] } | undefined;
+        if (prepared.marker.previousCommit && ordinaryPrevious.datasetBundle?.acceptedCommit?.commitId === prepared.marker.previousCommit.commitId) {
+            // Replacing accepted data must not admit a new journal generation before its worker is ready.
+            const signature = JSON.stringify(ordinaryPrevious.datasetBundle);
+            const current = () => { own(); if (store.getState().csvData !== ordinaryPrevious.csvData || JSON.stringify(store.getState().datasetBundle) !== signature) throw new Error('input_version_changed'); };
+            try { ordinaryBinding = await prepareOrdinaryDatasetBinding(prepared.csv, current, lease.signal, options.bind); }
+            catch (error) { return { status: unresolved.has(approval) ? 'unknown' : 'not_committed', admitted: false, replay: false, reason: reason(error) }; }
+        }
         const durable = await queueSessionWrite(async(): Promise<CandidateCommitOutcome>=>{
             let admitted=false,db:StorageDatabase;
             try { own();db=await database();commitDb=db;own(); } catch(error) {return {status:unresolved.has(approval)?'unknown':'not_committed',admitted:false,replay:false,reason:reason(error)};}
@@ -390,6 +414,12 @@ export const createCandidateCommitService = (store: StoreApi, options: {
                     // A successful absent-marker read resolves an earlier uncertain abort.
                     if (unresolved.delete(approval) && store.getState().datasetCommitBindingStatus==='commit_unknown') {
                         store.setState({datasetCommitBindingStatus:prepared.bindingStatus});
+                    }
+                    if (ordinaryBinding) {
+                        const baseline = buildPersistedReportRecord(ordinaryPrevious, { id: lease.scope.sessionId, filename: prepared.csv.fileName });
+                        const saved = await db.get('reports', lease.scope.sessionId), head = await db.get(DATASET_COMMITS_STORE, commitHeadKey(lease.scope.sessionId)); own();
+                        if (head && head.kind !== 'head') throw new Error('commit_marker_invalid');
+                        compensation = { report: saved ?? baseline, head: head?.kind === 'head' ? head : undefined };
                     }
                     const marker=immutable({...prepared.marker,...(store.piTask?{taskBudget:structuredClone(store.piTask.snapshot.budget)}:{}),approvalKey:commitApprovalKey(lease.scope.sessionId,approval.approvalId),
                         approval:{...approval,consumedAt:Date.now()},audit:{...prepared.marker.audit,runId:lease!.runId,turnId:lease!.turnId,toolCallId:context.toolCallId,stepId:context.stepId,committedAt:new Date().toISOString()}});
@@ -419,9 +449,24 @@ export const createCandidateCommitService = (store: StoreApi, options: {
             &&JSON.stringify(datasetCommitBindings(store.getState().datasetBundle))===JSON.stringify(prepared.candidate.inputBindings)) {
             store.setState({datasetCommitBindingStatus:prepared.bindingStatus});
         }
-        if (durable.status!=='committed'||!durable.marker||!commitDb) return durable;
-        try {return {...durable,acknowledgement:await install(durable.marker,prepared,commitDb)};}
+        if (durable.status!=='committed'||!durable.marker||!commitDb) { ordinaryBinding?.rollback(); return durable; }
+        try {
+            const acknowledgement = await install(durable.marker, prepared, commitDb, ordinaryBinding);
+            if (ordinaryBinding && acknowledgement !== 'installed') ordinaryBinding.rollback();
+            if (ordinaryBinding && acknowledgement === 'binding_failed') {
+                store.setState({ datasetCommitBindingStatus: 'commit_unknown', activeDataQuery: null });
+                if (!compensation) return { ...durable, status: 'unknown', reason: 'commit_outcome_unknown' };
+                try {
+                    await compensateSpillCommit(commitDb, durable.marker, compensation.report, compensation.head);
+                    if (canCommitRun(store, lease) && store.getState().csvData === ordinaryPrevious.csvData)
+                        store.setState({ ...acceptedPublicationSnapshot(ordinaryPrevious), activeDataQuery: null });
+                    return { status: 'not_committed', admitted: durable.admitted, replay: false, reason: 'committed_dataset_not_bound' };
+                } catch { return { ...durable, status: 'unknown', reason: 'commit_compensation_failed' }; }
+            }
+            return { ...durable, acknowledgement };
+        }
         catch {
+            ordinaryBinding?.rollback();
             if (!canCommitRun(store,lease)) return {...durable,acknowledgement:'revoked'};
             store.setState({datasetCommitBindingStatus:'binding_failed',activeDataQuery:null,datasetSemanticSnapshot:null});
             return {...durable,acknowledgement:'binding_failed'};

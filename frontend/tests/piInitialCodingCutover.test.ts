@@ -40,14 +40,18 @@ vi.mock('../services/persistence/datasetCommitStorage',()=>({
         return {marker,replay:false};
     },
 }));
-vi.mock('../services/duckdb/queryEngine',async original=>({...await original<typeof import('../services/duckdb/queryEngine')>(),
-    primeDuckDbDataset:vi.fn(async()=>({engine:'duckdb',tableName:'data',loadVersion:'bound',fallbackReason:null})),
+vi.mock('../services/duckdb/queryEngine',async original=>{
+    const actual=await original<typeof import('../services/duckdb/queryEngine')>();
+    const bind:typeof actual.primeDuckDbDataset=vi.fn(async()=>({engine:'duckdb' as const,tableName:'data',loadVersion:'bound',fallbackReason:null,fallbackStage:null}));
+    return {...actual,primeDuckDbDataset:bind,
+    // Keep the existing modeled worker boundary while exercising the real atomic routing switch.
+    prepareOrdinaryDatasetBinding:(...args:Parameters<typeof actual.prepareOrdinaryDatasetBinding>)=>actual.prepareOrdinaryDatasetBinding(args[0],args[1],args[2],args[3]??bind),
     executeManagedDataQuery:async(data:import('../types').CsvData,plan:import('../types').QueryPlan,allowedColumns:string[])=>{
         io.queryCalls++;await io.beforeQuery?.();
         const {executeDataQuery}=await import('../services/agent/execution/dataOperationRunner');
         return {result:executeDataQuery(data.data,plan,{allowedColumns,maxRows:500,maxColumns:50,maxOrderBy:3}),
             engine:'native',tableName:null,loadVersion:null,sqlPreview:null,fallbackReason:null};
-    }}));
+    }};});
 vi.mock('../services/persistence/currentSessionPersistence',async original=>({...await original<typeof import('../services/persistence/currentSessionPersistence')>(),persistCurrentAppSessionSnapshot:vi.fn(async()=>true)}));
 vi.mock('../services/sandbox/javascriptGuestClient',async()=>{
     const {newQuickJSWASMModuleFromVariant}=await import('quickjs-emscripten-core');

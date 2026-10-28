@@ -19,7 +19,8 @@ export {qualifySourceStream} from '../../execution/codeSourceStreamQualification
 export {qualifySpillCandidate} from '../../execution/spillCandidateQualification';
 import { prepareSpillCommitFixture } from '../../../data/spillCommitQualificationFixture';
 export {restoreAcceptedDataset} from '../../../data/datasetRecoveryActions';
-export {executeManagedDataQuery} from '../../../duckdb/queryEngine';
+export {executeManagedDataQuery, executeRawSqlQuery} from '../../../duckdb/queryEngine';
+export {preparePiOrdinaryTransitionSmoke} from './piAcceptedTransitionQualification';
 export {createCandidateCommitService} from '../../../data/candidateCommit';
 export {preparePiInitialCodingUiSmoke} from './piInitialCodingQualification';
 export {preparePiStructureRepairSmoke,queryPiStructureRepairSmoke} from './piStructureRepairQualification';
