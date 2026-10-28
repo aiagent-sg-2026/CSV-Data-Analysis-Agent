@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseModal } from '../components/modals/DatabaseModal';
 
@@ -240,6 +240,87 @@ describe('DatabaseModal', () => {
         useAppStoreMock.mockImplementation((selector: any) => selector(state));
     });
 
+    const localState = (width = 5) => {
+        const columns = width === 5 ? ['Id', 'Date', 'Customer', 'Product', 'Amount'] : Array.from({ length: width }, (_, i) => `Column${i + 1}`);
+        const state = createStoreState({ sessionId: 'local', activeDataQuery: null, queryHistory: [], columnProfiles: columns.map(name => ({ name, type: 'categorical' })),
+            csvData: { fileName: 'synthetic.csv', data: Array.from({ length: 3 }, (_, i) => Object.fromEntries(columns.map(c => [c, c === 'Amount' ? 123 + i : `${c}-${i}`]))) } });
+        return Object.assign(state, { sessionId: 'local', localDataPreviewRequest: { dataset: state.csvData, sessionId: 'local' } });
+    };
+    it.each([5, 40])('one local intent runs a bounded preview once for %i columns, never on rerender/reopen', async width => {
+        const state = localState(width);
+        useAppStoreMock.mockImplementation((selector: any) => selector(state));
+        const view = render(<DatabaseModal />);
+        await waitFor(() => expect(runWorkspaceDataQueryMock).toHaveBeenCalledTimes(1));
+        expect(runWorkspaceDataQueryMock).toHaveBeenCalledWith({ templateId: 'preview_rows', columns: Object.keys(state.csvData.data[0]).slice(0, 12), orderBy: null, limit: 25 }, { dataset: state.csvData, sessionId: state.sessionId });
+        await screen.findByText(/Query completed/);
+        view.rerender(<DatabaseModal />);
+        expect(runWorkspaceDataQueryMock).toHaveBeenCalledTimes(1);
+        expect(screen.getAllByText(new RegExp(`visible.*${width}|/ ${width}`)).length).toBeGreaterThan(0);
+        if (width > 12) expect(screen.getByRole('button', { name: 'Choose columns' })).toBeInTheDocument();
+    });
+    it('previews source-facing columns, not canonical lineage sidecars, through the preferred managed dataset', async () => {
+        const state = localState();
+        const canonical = { ...state.csvData, data: state.csvData.data.map(row => ({ ...row, SourceRowIndex: 1, RowRole: 'data' })) };
+        Object.assign(state, { canonicalCsvData: canonical });
+        state.localDataPreviewRequest.dataset = canonical;
+        useAppStoreMock.mockImplementation((selector: any) => selector(state));
+        render(<DatabaseModal />);
+        await waitFor(() => expect(runWorkspaceDataQueryMock).toHaveBeenCalledOnce());
+        expect(runWorkspaceDataQueryMock).toHaveBeenCalledWith(expect.objectContaining({ columns: ['Id', 'Date', 'Customer', 'Product', 'Amount'] }), { dataset: canonical, sessionId: 'local' });
+    });
+    it('never auto-runs restored history, unrelated session intent, or empty data', async () => {
+        for (const mode of ['history', 'session', 'empty']) {
+            const state = localState();
+            if (mode === 'history') state.queryHistory = createStoreState().queryHistory;
+            if (mode === 'session') state.localDataPreviewRequest.sessionId = 'old';
+            if (mode === 'empty') state.csvData.data = [];
+            useAppStoreMock.mockImplementation((selector: any) => selector(state));
+            const view = render(<DatabaseModal />);
+            await Promise.resolve();
+            expect(runWorkspaceDataQueryMock).not.toHaveBeenCalled();
+            view.unmount();
+        }
+    });
+    it('shows honest local preview errors and allows explicit retry', async () => {
+        const state = localState();
+        useAppStoreMock.mockImplementation((selector: any) => selector(state));
+        runWorkspaceDataQueryMock.mockRejectedValueOnce(new Error('synthetic query failed'));
+        render(<DatabaseModal />);
+        await screen.findAllByRole('alert');
+        expect(screen.getAllByText('synthetic query failed').length).toBeGreaterThan(0);
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+        await waitFor(() => expect(runWorkspaceDataQueryMock).toHaveBeenCalledTimes(2));
+    });
+    it('keeps user-edited columns when a local intent or capability update arrives', async () => {
+        const requested = localState();
+        const state = { ...requested, localDataPreviewRequest: null as typeof requested.localDataPreviewRequest | null };
+        useAppStoreMock.mockImplementation((selector: any) => selector(state));
+        const view = render(<DatabaseModal />);
+        fireEvent.click(screen.getByRole('button', { name: 'Amount' }));
+        state.localDataPreviewRequest = requested.localDataPreviewRequest;
+        state.columnProfiles = [...state.columnProfiles];
+        view.rerender(<DatabaseModal />);
+        await act(async () => {});
+        expect(runWorkspaceDataQueryMock).not.toHaveBeenCalled();
+        expect(screen.getByRole('button', { name: 'Amount' })).toHaveAttribute('aria-pressed', 'true');
+    });
+    it.each(['source', 'session'])('drops a late preview result after same-schema %s replacement', async mode => {
+        let resolve!: (value: unknown) => void;
+        const outcome = await runWorkspaceDataQueryMock(); runWorkspaceDataQueryMock.mockClear();
+        runWorkspaceDataQueryMock.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+        let state = localState();
+        useAppStoreMock.mockImplementation((selector: any) => selector(state));
+        const view = render(<DatabaseModal />);
+        await waitFor(() => expect(runWorkspaceDataQueryMock).toHaveBeenCalledTimes(1));
+        state = localState();
+        if (mode === 'session') state.sessionId = 'replacement';
+        else state.localDataPreviewRequest.dataset = { ...state.csvData };
+        view.rerender(<DatabaseModal />);
+        await act(async () => { resolve(outcome); });
+        expect(screen.queryByText(/Query completed/)).not.toBeInTheDocument();
+        expect(runWorkspaceDataQueryMock).toHaveBeenCalledTimes(1);
+    });
+
     it('renders the current active query by default and shows data explorer session metadata', () => {
         render(<DatabaseModal />);
 
@@ -300,7 +381,7 @@ describe('DatabaseModal', () => {
 
         await waitFor(() => expect(refreshDuckDbSessionMock).toHaveBeenCalledTimes(1));
         expect(screen.getByRole('button', { name: /Run Query/i })).toBeDisabled();
-        expect(screen.getByRole('button', { name: /Refresh Query Session/i })).toBeInTheDocument();
+        expect(await screen.findByRole('button', { name: /Refresh Query Session/i })).toBeInTheDocument();
         expect(screen.getAllByText(/duckdb_disabled/i).length).toBeGreaterThan(0);
 
         view.rerender(<DatabaseModal />);

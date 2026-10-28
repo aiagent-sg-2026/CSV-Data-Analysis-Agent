@@ -33,6 +33,20 @@ it.each(['missing_footer_cell', 'numeric_label', 'wrong_metric', 'mixed_unit', '
     if (fault === 'partial_scope') p.tables[1].detailRanges = [{ start: 2, end: 3 }];
     expect(() => compileDualGrainCandidateMeaning(p, { tables: {}, sources: { original: raw } })).toThrow();
 });
+it.each(['$123.45', '(123.45)', '((123.45))', '.5', '-.5', '€ 12.00', 'USD123.45', '$(123.45)', '+(.5)'])('rejects unsupported numeric-like excluded value %s with coordinates', value => {
+    for (const role of ['header', 'footer']) {
+        const { raw, proposal } = syntheticDualGrainSource(), p = proposal.interpretations[0].meaning;
+        const row = role === 'header' ? 1 : 7;
+        raw[row][0] = value;
+        expect(() => compileDualGrainCandidateMeaning(p, { tables: {}, sources: { original: raw } }))
+            .toThrow(`row=${row} column=0 value=${JSON.stringify(value)}`);
+    }
+});
+it.each(['TOTAL', 'Total (USD)', 'Period1:Category1', 'Cost [USD]', 'ABC123'])('preserves genuine text footer label %s and evidenced text headers', value => {
+    const { raw, proposal } = syntheticDualGrainSource();
+    raw[7][0] = value;
+    expect(compileDualGrainCandidateMeaning(proposal.interpretations[0].meaning, { tables: {}, sources: { original: raw } }).structuralVerdict.decision).toBe('validated');
+});
 it('aligned ragged footer is fully checked, never padded or inferred from totals', () => {
     const { raw, proposal } = syntheticDualGrainSource();
     const p = proposal.interpretations[0].meaning;

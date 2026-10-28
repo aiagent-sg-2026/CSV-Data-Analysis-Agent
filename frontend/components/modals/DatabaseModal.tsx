@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { shallow } from 'zustand/shallow';
 import { TabulatorTable, type TabulatorTableSortState } from '../spreadsheet/TabulatorTable';
 import { useAppStore, type AppStore } from '../../store/useAppStore';
@@ -15,7 +15,9 @@ import {
     DatabaseWorkspaceQueryComposer,
     getWorkspaceQueryDraftValidationMessage,
 } from './DatabaseWorkspaceQueryComposer';
-import { createDefaultWorkspaceQueryDrafts } from '../../services/agent/execution/workspaceDataQuery';
+import { createDefaultWorkspaceQueryDrafts, createLocalPreviewDraft, DEFAULT_WORKSPACE_QUERY_LIMIT } from '../../services/agent/execution/workspaceDataQuery';
+import { getPreferredAnalysisDataset } from '../../services/agent/reportStructureState';
+import { getCsvDataRowCount } from '../../utils/datasetId';
 import { createIdleDuckDbSessionStatus } from '../../services/duckdb/sessionStatus';
 import { buildEffectiveColumnRegistryFromState } from '../../services/data/columnRegistry';
 import { useDialogAccessibility } from '../../hooks/useDialogAccessibility';
@@ -94,12 +96,24 @@ const getStatusBadgeClassName = (status: AppStore['duckDbSessionStatus']['status
     }
 };
 
+// A source/session replacement unmounts all local drafts and pending result handlers, even
+// when the new source has the same filename and columns. Closing/reopening never auto-runs history.
 export const DatabaseModal: React.FC = () => {
+    const source = useAppStore(state => ({ dataset: state.csvData, queryDataset: getPreferredAnalysisDataset(state), sessionId: state.sessionId }), shallow);
+    const owner = useRef({ ...source, key: 0 });
+    if (owner.current.dataset !== source.dataset || owner.current.queryDataset !== source.queryDataset || owner.current.sessionId !== source.sessionId) {
+        owner.current = { ...source, key: owner.current.key + 1 };
+    }
+    return <DatabaseModalContent key={owner.current.key} />;
+};
+
+const DatabaseModalContent: React.FC = () => {
     const {
         isOpen,
         onClose,
         activeDataQuery,
         csvData,
+        queryDataset,
         columnRegistry,
         columnProfiles,
         datasetSemanticSnapshot,
@@ -110,11 +124,14 @@ export const DatabaseModal: React.FC = () => {
         duckDbSessionStatus,
         runWorkspaceDataQuery,
         refreshDuckDbSession,
+        localDataPreviewRequest,
+        sessionId,
     } = useAppStore((state: AppStore) => ({
         isOpen: state.isDatabaseModalOpen,
         onClose: () => state.setIsDatabaseModalOpen(false),
         activeDataQuery: state.activeDataQuery,
         csvData: state.csvData,
+        queryDataset: getPreferredAnalysisDataset(state),
         columnRegistry: state.columnRegistry,
         columnProfiles: state.columnProfiles,
         datasetSemanticSnapshot: state.datasetSemanticSnapshot,
@@ -125,6 +142,8 @@ export const DatabaseModal: React.FC = () => {
         duckDbSessionStatus: state.duckDbSessionStatus,
         runWorkspaceDataQuery: state.runWorkspaceDataQuery,
         refreshDuckDbSession: state.refreshDuckDbSession,
+        localDataPreviewRequest: state.localDataPreviewRequest,
+        sessionId: state.sessionId,
     }), shallow);
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -148,11 +167,19 @@ export const DatabaseModal: React.FC = () => {
     const [sessionError, setSessionError] = useState<string | null>(null);
     const [isRefreshingSession, setIsRefreshingSession] = useState(false);
     const wasOpenRef = useRef(false);
+    const editedRef = useRef(false);
+    const autoPreviewStartedRef = useRef(false);
+    const mountedRef = useRef(true);
+    const querySequenceRef = useRef(0);
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => { mountedRef.current = false; };
+    }, []);
     const autoRefreshAttemptKeyRef = useRef<string | null>(null);
     const dialogRef = useDialogAccessibility<HTMLDivElement>(
         isOpen,
         onClose,
-        { restoreFocusSelector: '[data-data-explorer-trigger="true"]' },
+        { restoreFocusSelector: localDataPreviewRequest ? '[data-local-preview-trigger="true"]' : '[data-data-explorer-trigger="true"]' },
     );
     const resolvedDuckDbSessionStatus = duckDbSessionStatus ?? createIdleDuckDbSessionStatus();
     const effectiveColumnRegistry = useMemo(
@@ -244,12 +271,56 @@ export const DatabaseModal: React.FC = () => {
         resolvedQueryActivity?.loadVersion ?? 'no-version',
     ].join(':');
 
-    useEffect(() => {
-        setDrafts(defaultDrafts);
-        setActiveTemplateId('preview_rows');
-        setQueryRunState({ status: 'idle' });
+    const updateDraft = (nextDraft: WorkspaceDataQueryRequest) => {
+        editedRef.current = true;
+        setDrafts(prev => ({ ...prev, [nextDraft.templateId]: nextDraft }));
+    };
+    const runDraft = useCallback(async (draftToRun: WorkspaceDataQueryRequest, nextTemplateId?: WorkspaceQueryTemplateId, fenceInitialSource = Boolean(localDataPreviewRequest)) => {
+        const sequence = ++querySequenceRef.current;
+        const validationMessage = getWorkspaceQueryDraftValidationMessage(draftToRun);
+        if (validationMessage) {
+            setQueryRunState({ status: 'failed', message: validationMessage, draft: draftToRun });
+            return;
+        }
         setSessionError(null);
-    }, [columnSignature]);
+        setQueryRunState({ status: 'submitting' });
+        try {
+            const outcome = fenceInitialSource && queryDataset
+                ? await runWorkspaceDataQuery(draftToRun, { dataset: queryDataset, sessionId })
+                : await runWorkspaceDataQuery(draftToRun);
+            if (!mountedRef.current || sequence !== querySequenceRef.current) return;
+            if (nextTemplateId) setActiveTemplateId(nextTemplateId);
+            setSelectedQueryTraceId(outcome.traceId);
+            setQueryRunState({ status: 'succeeded', outcome });
+        } catch (error) {
+            if (!mountedRef.current || sequence !== querySequenceRef.current) return;
+            setQueryRunState({ status: 'failed', message: error instanceof Error ? error.message : String(error), draft: draftToRun });
+        }
+    }, [localDataPreviewRequest, queryDataset, runWorkspaceDataQuery, sessionId]);
+
+    useEffect(() => {
+        if (!editedRef.current && !autoPreviewStartedRef.current) setDrafts(defaultDrafts);
+    }, [defaultDrafts]);
+
+    useEffect(() => {
+        if (!isOpen || autoPreviewStartedRef.current || editedRef.current || !csvData || getCsvDataRowCount(csvData) < 1
+            || !queryDataset || localDataPreviewRequest?.dataset !== queryDataset || localDataPreviewRequest.sessionId !== sessionId
+            || availableColumns.length === 0) return;
+        autoPreviewStartedRef.current = true;
+        if (activeDataQuery || queryHistory.length > 0) {
+            // Reopen the person's existing work, rather than replacing it with another preview.
+            const activity = queryActivities[0];
+            if (activity?.origin === 'workspace' && activity.formSnapshot && activity.templateId) {
+                setDrafts(prev => ({ ...prev, [activity.templateId!]: activity.formSnapshot! }));
+                setActiveTemplateId(activity.templateId);
+            }
+            return;
+        }
+        const draft = createLocalPreviewDraft(availableColumns);
+        setDrafts(prev => ({ ...prev, preview_rows: draft }));
+        setActiveTemplateId('preview_rows');
+        void runDraft(draft, 'preview_rows', true);
+    }, [activeDataQuery, availableColumns, csvData, isOpen, localDataPreviewRequest, queryActivities, queryDataset, queryHistory.length, runDraft, sessionId]);
 
     useEffect(() => {
         if (isOpen && !wasOpenRef.current) {
@@ -286,6 +357,7 @@ export const DatabaseModal: React.FC = () => {
         }
         if (
             !csvData
+            || localDataPreviewRequest?.dataset === queryDataset
             || resolvedDuckDbSessionStatus.status === 'ready'
         ) {
             return;
@@ -308,6 +380,8 @@ export const DatabaseModal: React.FC = () => {
     }, [
         csvData,
         isOpen,
+        localDataPreviewRequest,
+        queryDataset,
         refreshDuckDbSession,
         resolvedDuckDbSessionStatus.status,
     ]);
@@ -323,42 +397,12 @@ export const DatabaseModal: React.FC = () => {
         && Boolean(resolvedQueryActivity.templateId && resolvedQueryActivity.formSnapshot);
     const canRerunSelectedTemplate = canLoadSelectedTemplate && resolvedDuckDbSessionStatus.status === 'ready' && !isSubmitting;
 
-    const updateDraft = (nextDraft: WorkspaceDataQueryRequest) => {
-        setDrafts(prev => ({
-            ...prev,
-            [nextDraft.templateId]: nextDraft,
-        }));
-    };
-
-    const runDraft = async (draftToRun: WorkspaceDataQueryRequest, nextTemplateId?: WorkspaceQueryTemplateId) => {
-        const validationMessage = getWorkspaceQueryDraftValidationMessage(draftToRun);
-        if (validationMessage) {
-            setQueryRunState({ status: 'failed', message: validationMessage, draft: draftToRun });
-            return;
-        }
-        setSessionError(null);
-        setQueryRunState({ status: 'submitting' });
-        try {
-            const outcome = await runWorkspaceDataQuery(draftToRun);
-            if (nextTemplateId) {
-                setActiveTemplateId(nextTemplateId);
-            }
-            setSelectedQueryTraceId(outcome.traceId);
-            setQueryRunState({ status: 'succeeded', outcome });
-        } catch (error) {
-            setQueryRunState({
-                status: 'failed',
-                message: error instanceof Error ? error.message : String(error),
-                draft: draftToRun,
-            });
-        }
-    };
-
     const handleRunQuery = async () => {
         await runDraft(currentDraft, activeTemplateId);
     };
 
     const handleTemplateChange = (nextTemplateId: WorkspaceQueryTemplateId) => {
+        editedRef.current = true;
         setActiveTemplateId(nextTemplateId);
         setQueryRunState({ status: 'idle' });
         setSessionError(null);
@@ -392,6 +436,19 @@ export const DatabaseModal: React.FC = () => {
         await runDraft(resolvedQueryActivity.formSnapshot, resolvedQueryActivity.templateId);
     };
 
+    const resultGrid = (
+        <div className="p-4" data-preview-result-grid>
+            <TabulatorTable
+                data={filteredRows} columns={currentColumns} pageSize={25} pageSizeOptions={PAGE_SIZE_OPTIONS}
+                tableKey={tableKey} language={language} variant="database-modal" sortState={sortState}
+                onSortChange={setSortState} containerClassName="h-[420px]" emptyStateText={emptyStateText}
+                measureColumns={(resolvedQueryActivity?.plan?.aggregates ?? [])
+                    .filter(aggregate => aggregate.function !== 'count' && aggregate.function !== 'count_distinct')
+                    .map(aggregate => aggregate.as)}
+            />
+        </div>
+    );
+
     return (
         <div className="fixed inset-0 z-50 bg-slate-950/45 backdrop-blur-sm" onClick={onClose}>
             <div
@@ -424,6 +481,11 @@ export const DatabaseModal: React.FC = () => {
                 </header>
 
                 <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-4 py-4">
+                    <p aria-live="polite" className="text-sm text-slate-700" data-local-preview-summary>
+                        {getTranslation('local_preview_counts', language, { visible: currentColumns.length, total: availableColumns.length,
+                            limit: resolvedQueryActivity?.result.appliedLimit ?? DEFAULT_WORKSPACE_QUERY_LIMIT })}
+                        {isSubmitting && ` ${getTranslation('local_preview_loading', language)}`}
+                    </p>
                     <section className="rounded-card border border-slate-200 bg-white p-4 shadow-sm">
                         <details>
                             <summary className="cursor-pointer text-sm font-semibold text-slate-800">{getTranslation('explorer_advanced_engine_status', language)}</summary>
@@ -463,6 +525,10 @@ export const DatabaseModal: React.FC = () => {
 
                     <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] gap-4 overflow-y-auto xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-1 xl:overflow-hidden">
                         <div className="min-w-0 space-y-4 pr-1 xl:min-h-0 xl:overflow-y-auto">
+                            <details open={!localDataPreviewRequest} className="rounded-card border border-slate-200 bg-white p-3">
+                                <summary className="min-h-[44px] cursor-pointer py-2 text-sm font-semibold text-blue-700">
+                                    {getTranslation('local_preview_adjust', language)}
+                                </summary>
                             <DatabaseWorkspaceQueryComposer
                                 availableColumns={availableColumns}
                                 groupableColumns={groupableColumns}
@@ -478,6 +544,7 @@ export const DatabaseModal: React.FC = () => {
                                 errorMessage={formError}
                                 language={language}
                             />
+                            </details>
 
                             <section className="min-w-0 rounded-card border border-slate-200 bg-white shadow-sm">
                                 {queryRunState.status === 'succeeded' ? (
@@ -501,6 +568,9 @@ export const DatabaseModal: React.FC = () => {
                                         </button>
                                     </div>
                                 ) : null}
+                                {localDataPreviewRequest && resultGrid}
+                                <details open={!localDataPreviewRequest}>
+                                    <summary className="min-h-[44px] cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700">{getTranslation('explorer_current_result', language)}</summary>
                                 <div className="border-b border-slate-200 px-4 py-3">
                                     <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                                         <div>
@@ -532,7 +602,7 @@ export const DatabaseModal: React.FC = () => {
                                         </div>
                                         <div className="rounded-card border border-slate-200 bg-slate-50 px-3 py-2.5">
                                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{getTranslation('explorer_columns', language)}</p>
-                                            <p className="mt-2 text-sm font-semibold text-slate-900">{currentColumns.length}</p>
+                                            <p className="mt-2 text-sm font-semibold text-slate-900">{currentColumns.length} / {availableColumns.length}</p>
                                         </div>
                                         <div className="rounded-card border border-slate-200 bg-slate-50 px-3 py-2.5">
                                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{getTranslation('explorer_order', language)}</p>
@@ -549,6 +619,7 @@ export const DatabaseModal: React.FC = () => {
                                     </div>
                                 </div>
 
+                                </details>
                                 <details className="border-b border-slate-200 px-4 py-3">
                                     <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">{getTranslation('explorer_technical_query_details', language)}</summary>
                                     <div className="mt-3 overflow-hidden rounded-card border border-slate-200 bg-slate-950 text-sm text-slate-100">
@@ -558,24 +629,7 @@ export const DatabaseModal: React.FC = () => {
                                     </div>
                                 </details>
 
-                                <div className="p-4">
-                                    <TabulatorTable
-                                        data={filteredRows}
-                                        columns={currentColumns}
-                                        pageSize={25}
-                                        pageSizeOptions={PAGE_SIZE_OPTIONS}
-                                        tableKey={tableKey}
-                                        language={language}
-                                        variant="database-modal"
-                                        sortState={sortState}
-                                        onSortChange={setSortState}
-                                        containerClassName="h-[420px]"
-                                        emptyStateText={emptyStateText}
-                                        measureColumns={(resolvedQueryActivity?.plan?.aggregates ?? [])
-                                            .filter(aggregate => aggregate.function !== 'count' && aggregate.function !== 'count_distinct')
-                                            .map(aggregate => aggregate.as)}
-                                    />
-                                </div>
+                                {!localDataPreviewRequest && resultGrid}
                             </section>
                         </div>
 

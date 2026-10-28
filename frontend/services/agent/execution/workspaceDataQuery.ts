@@ -13,6 +13,12 @@ import type {
 
 const MAX_WORKSPACE_QUERY_LIMIT = 250;
 export const DEFAULT_WORKSPACE_QUERY_LIMIT = 25;
+// Matches the existing column picker's small-table threshold: at most 300 preview cells.
+export const LOCAL_PREVIEW_COLUMN_LIMIT = 12;
+export const createLocalPreviewDraft = (columns: string[]): WorkspacePreviewRowsQueryRequest => ({
+    templateId: 'preview_rows', columns: columns.slice(0, LOCAL_PREVIEW_COLUMN_LIMIT), orderBy: null,
+    limit: DEFAULT_WORKSPACE_QUERY_LIMIT,
+});
 export const WORKSPACE_QUERY_LIMIT_OPTIONS = [10, 25, 50, 100, 250] as const;
 
 export interface WorkspaceQueryColumnCapabilities {

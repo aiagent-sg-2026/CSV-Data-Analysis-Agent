@@ -77,7 +77,10 @@ export const isDualGrainMeaningAlternatives = (value: unknown): value is DualGra
         && Array.isArray(p.assumptions) && p.assumptions.length <= 12 && p.assumptions.every(text)
         && new TextEncoder().encode(JSON.stringify(p)).byteLength <= DUAL_GRAIN_MEANING_LIMITS.proposalBytes;
 };
-const numericFact = (value: string) => value.trim() !== '' && /^[-+]?\d/.test(value.trim());
+// Detection only, never parsing: unsupported amount spellings cannot acquire label/header roles.
+const numericFact = (value: string) => /^(?:(?:[-+(]|\p{Sc}|USD|EUR|GBP|JPY|CNY|RMB|SGD|MYR)\s*)*(?:\d|\.\d)/u.test(value.trim());
+const excludedNumericError = (code: string, row: number, column: number, value: string) =>
+    new Error(`${code}: unsupported excluded numeric-like cell row=${row} column=${column} value=${JSON.stringify(value)}`);
 
 /** Independently builds values from complete ORIGINAL input, before any guest output exists.
  * A structurally valid result still has a semantic ambiguity gate. No caller can obtain an
@@ -173,8 +176,11 @@ export const compileDualGrainCandidateMeaning = (proposal: DualGrainCandidateMea
     const headerRows = new Set(p.tables.flatMap(t => [...t.columns.map(c => c.header.row), ...t.projections.flatMap(projection => projection.flatMap(c => c.sourceRow === undefined ? [] : [c.sourceRow]))]));
     for (const e of p.exclusions) {
         if (e.role === 'note' && raw[e.row].some(v => v.trim() !== '')) throw new Error('meaning_note_contains_unverified_cells');
-        if (e.role === 'header' && (raw[e.row].some(numericFact) || !headerRows.has(e.row)
-            && ![...headerRows].some(row => JSON.stringify(raw[row]) === JSON.stringify(raw[e.row])))) throw new Error('meaning_header_role_unverified');
+        if (e.role === 'header') {
+            const column = raw[e.row].findIndex(numericFact);
+            if (column >= 0) throw excludedNumericError('meaning_header_role_unverified', e.row, column, raw[e.row][column]);
+            if (!headerRows.has(e.row) && ![...headerRows].some(row => JSON.stringify(raw[row]) === JSON.stringify(raw[e.row]))) throw new Error('meaning_header_role_unverified');
+        }
         // Only an explicitly aligned grand total over ALL rows is supported. Human choice
         // establishes role; independent exact sums establish values, never the reverse.
         if (e.role === 'subtotal' || e.role !== 'grand_total' && e.cells !== undefined) throw new Error('meaning_dual_grain_footer_alignment_unsupported');
@@ -183,7 +189,7 @@ export const compileDualGrainCandidateMeaning = (proposal: DualGrainCandidateMea
             if (!e.cells || e.cells.length !== raw[e.row].length || new Set(e.cells.map(c => c.column)).size !== raw[e.row].length) throw new Error('meaning_footer_cell_coverage');
             for (const cell of e.cells) {
                 const value = read(e.row, cell.column);
-                if (cell.kind === 'label') { if (numericFact(value)) throw new Error('meaning_footer_unverified_numeric'); }
+                if (cell.kind === 'label') { if (numericFact(value)) throw excludedNumericError('meaning_footer_unverified_numeric', e.row, cell.column, value); }
                 else {
                     const table = contract.tables.find(t => t.name === cell.table);
                     if (!table?.metrics.some(m => m.column === cell.metric)) throw new Error('meaning_footer_mapping_invalid');

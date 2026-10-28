@@ -73,6 +73,14 @@ const NestedDialogHarness: React.FC<{ reverseListeners?: boolean }> = ({ reverse
     </div></div>, document.body)}</>;
 };
 
+const DisclosureDialog: React.FC = () => {
+    const ref = useDialogAccessibility<HTMLDivElement>(true, () => {});
+    return <div className="fixed"><div ref={ref} role="dialog" aria-label="Disclosure dialog">
+        <button data-dialog-initial-focus>Close preview</button>
+        <details><summary>Choose columns</summary><button>Hidden column</button></details>
+    </div></div>;
+};
+
 afterEach(cleanup);
 describe('useDialogAccessibility', () => {
     it.each([false, true])('leaves the outer dialog open when Escape closes its portaled child (reverse listeners: %s)', async reverseListeners => {
@@ -111,6 +119,16 @@ describe('useDialogAccessibility', () => {
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
         expect(trigger).toHaveFocus();
         expect(background).not.toHaveAttribute('inert');
+    });
+
+    it('traps focus on visible disclosure summaries, never their collapsed controls', async () => {
+        render(<DisclosureDialog />);
+        const close = screen.getByRole('button', { name: 'Close preview' });
+        await waitFor(() => expect(close).toHaveFocus());
+        fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+        expect(screen.getByText('Choose columns')).toHaveFocus();
+        fireEvent.keyDown(document, { key: 'Tab' });
+        expect(close).toHaveFocus();
     });
 
     it('restores focus to a trigger that remounts after the dialog closes', async () => {

@@ -59,7 +59,7 @@ export interface IDataSlice {
     ensureDatasetSemanticSnapshot: (dataset?: CsvData | null, options?: { force?: boolean; sessionScope?: SessionScope; runLease?: RunLease; assertCurrent?: () => void }) => Promise<DatasetSemanticSnapshot | null>;
     refreshDuckDbSession: (datasetOverride?: CsvData | null, sessionScope?: SessionScope, runLease?: RunLease, assertCurrent?: () => void) => Promise<DuckDbSessionStatus>;
     promoteToCanonicalDataset: (options: { reason: string; reshapeProvenance: CanonicalReshapeProvenance }) => void;
-    runWorkspaceDataQuery: (payload: WorkspaceDataQueryRequest) => Promise<WorkspaceQueryRunOutcome>;
+    runWorkspaceDataQuery: (payload: WorkspaceDataQueryRequest, expectedSource?: { dataset: CsvData; sessionId: string }) => Promise<WorkspaceQueryRunOutcome>;
     prepareStructureRepairReview: () => Promise<import('../../types/structureRepair').StructureRepairReview | null>;
     confirmStructureRepairMeaning: (reviewId: string, choice: string, rendered?: import('../../services/agent/structureRepairConfirmation').RenderedStructureRepairReview) => Promise<void>;
     resumeStructureRepairDraft: (reviewId: string) => Promise<void>;
@@ -684,9 +684,18 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
             });
         },
 
-        runWorkspaceDataQuery: async (payload) => {
+        runWorkspaceDataQuery: async (payload, expectedSource) => {
             const ownedStore = scopeCurrentExecution(storeApi);
             const { getState: get, setState: set } = ownedStore;
+            const admitted = get();
+            const assertQuerySource = () => {
+                const current = get();
+                if (!ownedStore.isActive?.()) throw new Error('The session was replaced.');
+                if (expectedSource && (current.sessionId !== expectedSource.sessionId || current.sessionId !== admitted.sessionId
+                    || current.csvData !== admitted.csvData || current.canonicalCsvData !== admitted.canonicalCsvData)) {
+                    throw new Error('workspace_query_source_changed');
+                }
+            };
             const [
                 { getPreferredAnalysisDataset },
                 { resolveDatasetBindingTarget, isDuckDbSessionCurrentForDataset },
@@ -698,7 +707,7 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
                 import('../../services/agent/execution/workspaceDataQuery'),
                 import('../../services/agent/execution/dataQueryExecution'),
             ]);
-            if (!ownedStore.isActive?.()) throw new Error('The session was replaced.');
+            assertQuerySource();
 
             const resolveCurrentWorkspaceTarget = () => {
                 const currentState = get();
@@ -715,13 +724,15 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
             };
             let { state, bindingTarget } = resolveCurrentWorkspaceTarget();
             if (!bindingTarget) throw new Error('Load a dataset before running an analyst workspace query.');
+            if (expectedSource && bindingTarget.dataset !== expectedSource.dataset) throw new Error('workspace_query_source_changed');
             let sessionStatus = state.duckDbSessionStatus;
 
             for (let attempt = 0; attempt < 2; attempt += 1) {
                 if (sessionStatus.status === 'ready' && isDuckDbSessionCurrentForDataset(sessionStatus, bindingTarget.dataset)) {
                     break;
                 }
-                sessionStatus = await get().refreshDuckDbSession(bindingTarget.dataset);
+                sessionStatus = await get().refreshDuckDbSession(bindingTarget.dataset, undefined, undefined, assertQuerySource);
+                assertQuerySource();
 
                 const latest = resolveCurrentWorkspaceTarget();
                 if (!latest.bindingTarget) {

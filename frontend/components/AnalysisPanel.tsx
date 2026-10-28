@@ -34,6 +34,7 @@ import { resolveSeriesMeasure } from '../services/agent/planning/seriesMeasureGu
 import { DEFAULT_AUTO_ANALYSIS_GOAL } from '../services/agent/analysisDefaults';
 import { hasOpenableLatestReport, isLatestReportPartial, resolveLatestReportBlockedInfo } from '../services/reporting/reportArtifactManifest';
 import { forgetCloudAiConsentDecline } from '../services/privacy/cloudAiConsent';
+import { getPreferredAnalysisDataset } from '../services/agent/reportStructureState';
 
 import { getStructureReviewReasonText, getTranslation } from '../utils/localization';
 import { getActiveSetAsideSections, getSetAsideRowCounts } from '../utils/setAsideTables';
@@ -42,7 +43,7 @@ const AnalysisPanelComponent: React.FC = () => {
     const _renderT0 = performance.now(); // PERF-309 diagnostic
     // PERF-303: Full aiTaskStatus object moved to AnalysisStatusSection (independent subscription).
     // Only aiTaskDone (boolean) is kept here for conditional rendering logic.
-    const { cards, finalSummary, finalSummaryProvenance, isGeneratingReport, isBusy, language, reportTemplate, setReportTemplate, reportGenerationProgress, aiTaskDone, cleaningRun, isSpreadsheetVisible, resumeCleaningRun, restartCleaningRun, handleInitialAnalysis, confirmedAnalysisGoal, generateAnalystReport, cancelReportGeneration, openLatestAnalystReport, exportLatestAnalystReportPdf, csvData, canonicalCsvData, rawCsvData, reportContextResolution, reportStructureResolution, pipelineOutcome, initialAnalysisFailureKind, rawIntakeIr, columnProfiles, dataPreparationPlan, runWorkspaceDataQuery, setIsSpreadsheetVisible, addProgress, handleShowCardFromChat, setIsDataPreparationModalOpen, setIsReportBoundaryConfirmModalOpen, setIsSettingsModalOpen, currentDatasetId, provider, hasLatestAnalystReport, reportBlockedInfo, isReportPartial, initialAnalysisStatus, latestAnalysisSession, visibleAnalysisTrace, storeResultsViewMode, setStoreResultsViewMode, canonicalBuildMeta } = useAppStore(
+    const { cards, finalSummary, finalSummaryProvenance, isGeneratingReport, isBusy, language, reportTemplate, setReportTemplate, reportGenerationProgress, aiTaskDone, cleaningRun, isSpreadsheetVisible, resumeCleaningRun, restartCleaningRun, handleInitialAnalysis, confirmedAnalysisGoal, generateAnalystReport, cancelReportGeneration, openLatestAnalystReport, exportLatestAnalystReportPdf, csvData, canonicalCsvData, rawCsvData, reportContextResolution, reportStructureResolution, pipelineOutcome, initialAnalysisFailureKind, rawIntakeIr, columnProfiles, dataPreparationPlan, runWorkspaceDataQuery, setIsSpreadsheetVisible, addProgress, handleShowCardFromChat, setIsDataPreparationModalOpen, setIsReportBoundaryConfirmModalOpen, setIsSettingsModalOpen, currentDatasetId, provider, hasLatestAnalystReport, reportBlockedInfo, isReportPartial, initialAnalysisStatus, latestAnalysisSession, visibleAnalysisTrace, storeResultsViewMode, setStoreResultsViewMode, canonicalBuildMeta, openLocalDataPreview, localPreviewDataset } = useAppStore(
         (state: AppStore) => ({
             cards: state.analysisCards,
             finalSummary: state.finalSummary,
@@ -94,6 +95,8 @@ const AnalysisPanelComponent: React.FC = () => {
             storeResultsViewMode: state.resultsViewMode ?? 'simple',
             setStoreResultsViewMode: state.setResultsViewMode,
             canonicalBuildMeta: state.canonicalBuildMeta ?? null,
+            openLocalDataPreview: state.openLocalDataPreview,
+            localPreviewDataset: getPreferredAnalysisDataset(state),
         }),
         shallow
     );
@@ -430,6 +433,8 @@ const AnalysisPanelComponent: React.FC = () => {
                             disabled={isRetryingAnalysis || isBusy || (nextStepKind === 'report' && (isGeneratingReport || isSimpleReportBlocked))}
                             blockedTitle={isSimpleReportBlocked ? getTranslation('report_blocked_title', language) : undefined}
                             onPrimaryAction={() => handleNextStepAction(nextStepKind)}
+                            onViewLocalData={needsCloudAiConsent && localPreviewDataset && getCsvDataRowCount(localPreviewDataset) > 0
+                                ? openLocalDataPreview : undefined}
                             onChangeProvider={(nextStepKind === 'recover_provider' || nextStepKind === 'enable_cloud_ai') && shouldAllowSettingsSurface()
                                 ? () => setIsSettingsModalOpen?.(true)
                                 : undefined}
