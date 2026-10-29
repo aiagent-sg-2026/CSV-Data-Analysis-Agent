@@ -51,7 +51,11 @@ export const preparePiInitialCodingUiSmoke = async (root:StoreApi, options: {
             candidate?:{candidateId:string};candidateValidation?:{decision:string}};receipt?:{jobId:string}} | undefined;
         try { parsed=last?JSON.parse(last.content.filter(p=>p.type==='text').map(p=>p.text).join('')):undefined; } catch { parsed=undefined; }
         let content:AssistantMessage['content'];
-        const rawStep=step++,current=options.failFirstProgram&&rawStep>=7?rawStep-2:rawStep;
+        // One initial coordinator turn now runs both structure and noise stages.
+        // Keep the scripted repair sequence aligned with the same cleaning boundary.
+        const turn = step++;
+        const rawStep = turn === 0 ? 0 : turn + 1;
+        const current=options.failFirstProgram&&rawStep>=7?rawStep-2:rawStep;
         if(current<2)content=tool('run_next_analysis_stage',{});
         else if(mode==='no-cleaning')content=tool('run_next_analysis_stage',current===2?{stage:'dataset.validatePreparedData'}:{});
         else if(current===2)content=tool('candidate_infer_meaning',proposal);

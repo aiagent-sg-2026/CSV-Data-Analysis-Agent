@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createConcurrencyLimiter, releaseWhenBodyDone } from '../services/ai/demoGatewayConcurrency';
+import { createConcurrencyLimiter, createRateWindowLimiter, releaseWhenBodyDone } from '../services/ai/demoGatewayConcurrency';
 
 describe('demo gateway concurrency limiter', () => {
     it('queues requests beyond the limit and frees slots on release', async () => {
@@ -46,5 +46,36 @@ describe('demo gateway concurrency limiter', () => {
 
         releaseWhenBodyDone(new Response(null, { status: 204 }), () => { released += 1; });
         expect(released).toBe(2);
+    });
+});
+
+
+describe('gateway rolling send window', () => {
+    it('waits for the oldest send to expire', async () => {
+        let now = 0;
+        const waits: number[] = [];
+        const limiter = createRateWindowLimiter(2, 60_000, () => now, async ms => { waits.push(ms); now += ms; });
+        await limiter.waitForTurn();
+        now = 10;
+        await limiter.waitForTurn();
+        await limiter.waitForTurn();
+        expect(waits).toEqual([60_015]);
+        expect(now).toBe(60_025);
+    });
+
+    it('cancels a pending rate wait promptly without reserving a later send', async () => {
+        vi.useFakeTimers();
+        try {
+            const limiter = createRateWindowLimiter(1, 60_000);
+            await limiter.waitForTurn();
+            const controller = new AbortController();
+            const pending = limiter.waitForTurn(controller.signal);
+            const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+            controller.abort();
+            await rejected;
+            expect(vi.getTimerCount()).toBe(0);
+            await vi.advanceTimersByTimeAsync(60_000);
+            await limiter.waitForTurn();
+        } finally { vi.useRealTimers(); }
     });
 });

@@ -719,7 +719,7 @@ describe('Pi production runtime', () => {
     it('preserves optional skips with preparation enabled',async()=>{
         const names:string[]=[];passingStages(names);
         const result=await runPiInitialAnalysis({appSessionId:'session-1',datasetId:'dataset-1',datasetVersion:'version-1',researchGoal:'Find patterns.',provider:{provider:'openai',modelId:'mock'}},
-            createStore() as never,scriptedStageStream([{}, {}, {stage:'dataset.validatePreparedData'},{}]),{codingPreparation:{enabled:true}});
+            createStore() as never,scriptedStageStream([{}, {stage:'dataset.validatePreparedData'}]),{codingPreparation:{enabled:true}});
         expect(result.status).toBe('completed');expect(names).toHaveLength(7);expect(names).not.toContain('dataset.applyTransform');
     });
     it('does not complete or advance a shared initial task past a failed mandatory stage', async () => {
@@ -757,7 +757,7 @@ describe('Pi production runtime', () => {
         };
         const result = await runPiInitialAnalysis({ appSessionId: 'session-1', datasetId: 'dataset-1', datasetVersion: 'version-1',
             researchGoal: 'Find patterns.', provider: { provider: 'openai', modelId: 'mock' } }, store as never, stream, { codingPreparation: { enabled: true } });
-        expect(names).toEqual(['dataset.profileStructure']);
+        expect(names).toEqual(['dataset.profileStructure', 'dataset.detectNoiseRows']);
         expect(result.status).toBe('failed');
         expect(store.getState().activeAgentTask.status).toBe('failed');
         expect(store.getState().initialAnalysisFailureKind).toBe('provider');
@@ -823,21 +823,27 @@ describe('Pi production runtime', () => {
             return { decision: 'pass', phase, toolName, datasetVersion: getCurrentAnalysisDatasetVersion(context.store.getState()),
                 summary: 'ok', warningCodes: [], artifactRefs: [], transformationIds: toolName === 'dataset.applyTransform' ? ['clean-1'] : [], cardIds: [] };
         });
-        let calls = 0;
-        const stream: StreamFn = (model, context, options) => {
-            if (++calls === 5) {
-                saved = localStorage.getItem('pi-initial-analysis-v1:session-1')!;
-                stable();
-                return createAssistantMessageEventStream();
+        // Batching removes the provider turn at this boundary, but the durable
+        // per-stage checkpoint must still allow recovery without replaying mutation.
+        const setItem = Storage.prototype.setItem;
+        const checkpointWrite = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+            setItem.call(this, key, value);
+            if (key === 'pi-initial-analysis-v1:session-1') {
+                const checkpoint = JSON.parse(value);
+                if (checkpoint.nextStageIndex === 4 && checkpoint.pendingStageIndex === null) {
+                    saved = value;
+                    stable();
+                }
             }
-            return stageToolStream()(model, context, options);
-        };
+        });
+        const stream = stageToolStream();
         const running = runPiInitialAnalysis({ appSessionId: 'session-1', datasetId: 'dataset-1', datasetVersion: initialVersion,
             researchGoal: 'Find patterns.', provider: { provider: 'openai', modelId: 'gpt-5.4-mini' } }, store as never, stream);
         await captured;
         // The captured stable boundary represents browser termination before the next tool starts.
         cancelPiInitialAnalysis('session-1');
         await running;
+        checkpointWrite.mockRestore();
         localStorage.setItem('pi-initial-analysis-v1:session-1', saved);
         expect(JSON.parse(saved).datasetVersion).toBe(getCurrentAnalysisDatasetVersion(store.getState()));
         names.length = 0;
@@ -935,11 +941,14 @@ describe('Pi production runtime', () => {
     it('lets Pi skip the optional cleaning stages and still completes the run', async () => {
         const names: string[] = [];
         passingStages(names);
-        const outcome = await runStages(scriptedStageStream([
-            {}, {}, { stage: 'dataset.validatePreparedData', reason: 'No noise rows and no notes.' }, {},
-        ]));
+        let calls = 0;
+        const scripted = scriptedStageStream([
+            {}, { stage: 'dataset.validatePreparedData', reason: 'No noise rows and no notes.' },
+        ]);
+        const outcome = await runStages((...args) => { calls += 1; return scripted(...args); });
 
         expect(outcome.status).toBe('completed');
+        expect(calls).toBe(2);
         expect(names).not.toContain('dataset.suggestCleaningPlan');
         expect(names).not.toContain('dataset.applyTransform');
         expect(names.at(-1)).toBe('analysis.finalizeArtifacts');
@@ -957,6 +966,19 @@ describe('Pi production runtime', () => {
         expect(names.indexOf('analysis.executeEvidence')).toBeGreaterThan(names.indexOf('dataset.validatePreparedData'));
         expect(names.indexOf('dataset.bindQueryEngine')).toBeLessThan(names.indexOf('analysis.executeEvidence'));
         expect(['completed', 'degraded']).toContain(outcome.status);
+    });
+
+    it('does not enter another required stage after cancellation inside a batched turn', async () => {
+        const names: string[] = [];
+        stageMock.mockImplementation(async ({ toolName, phase, context }) => {
+            names.push(toolName);
+            cancelPiInitialAnalysis('session-1');
+            return { decision: 'pass', phase, toolName, datasetVersion: context.request.datasetVersion,
+                summary: 'ok', warningCodes: [], artifactRefs: [], transformationIds: [], cardIds: [] };
+        });
+        const outcome = await runStages(stageToolStream());
+        expect(outcome.status).toBe('cancelled');
+        expect(names).toEqual(['dataset.profileStructure']);
     });
 
     it('stops the whole initial analysis when the user cancels', async () => {
@@ -1059,7 +1081,7 @@ describe('Pi production runtime', () => {
             'analysis.executeEvidence',
             'analysis.finalizeArtifacts',
         ]);
-        expect(calls).toBe(9);
+        expect(calls).toBe(3);
         expect(store.getState().initialAnalysisStatus).toBe('ready');
     });
 
