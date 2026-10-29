@@ -103,6 +103,12 @@ export default defineConfig(({ mode }) => {
                               return 'app-agent';
                             }
                             if (!id.includes('node_modules')) return undefined;
+                            // Pure schema/SSE dependencies are shared by Pi and the AI SDK.
+                            // Do not let manual chunk dependency hoisting place them in app-agent:
+                            // SDK top-level schemas would call back into an uninitialized app chunk.
+                            if (id.includes('/node_modules/zod/') || id.includes('/node_modules/eventsource-parser/')) {
+                              return 'vendor-ai-shared';
+                            }
                             // Keep the React runtime family in one chunk to avoid
                             // cross-chunk CommonJS initialization cycles in production.
                             if (
