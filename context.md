@@ -1,5 +1,12 @@
 ## Current Work Context
 
+### 2026-10-29 — PR30 describe compatibility repair (local source only)
+
+- Ported the original missing-lineage-column guard and bounded large-file describe timeout onto current main, retaining live semantic-view binding and abort propagation. Resolve the dataset once so metadata and query target cannot diverge; in-memory column discovery now matches queryEngine rather than assuming the first row contains every physical column.
+- Synthetic baseline: five regressions failed against unchanged main. Focused verification: 3 files / 14 tests PASS on Node 24, including real in-process DuckDB Pi diagnostic binding/semantic exclusion regression. No external provider calls. Build, generated deployment, supported Node 22 and full-suite qualification remain pending; this is not a deployed fix or a CI pass.
+- Original PR30 and its remote branch remain unchanged. No push, PR creation, merge or deployment performed.
+
+
 ### 2026-10-29 — Bounded Assistant and semantic-review recovery correction
 
 - Owner requested desktop Assistant expanded by default; mobile remains closed at the existing 768 px breakpoint. Manual toggle/width behavior is preserved.

@@ -6,13 +6,14 @@
  * intent-based templates instead of hardcoded SQL strings.
  */
 
-import type { AiAction, ColumnProfile, ToolExecutionResult } from '../../../types';
+import type { AiAction, ColumnProfile, CsvData, ToolExecutionResult } from '../../../types';
 import type { StoreApi } from '../types';
 import { getPreferredAnalysisDataset } from '../reportStructureState';
 import { resolveDatasetBindingTarget } from '../datasetBinding';
 import { executeUnifiedQuery, type UnifiedQueryOptions, type UnifiedQueryResult } from '../../duckdb/unifiedQueryExecutor';
 import { executeBoundDuckDbQuery } from '../../duckdb/queryEngine';
 import type { QueryIntent } from '../../duckdb/queryIntent';
+import { collectOrderedColumnNames } from '../../data/columnRegistry';
 import { isRuntimeAbortError } from '../runtime/runtimeAbort';
 
 const LOG_PREFIX = '[DiagnosticData]';
@@ -21,6 +22,22 @@ const QUERY_TIMEOUT_MS = 8000;
 type DiagnosticToolName = 'data.describe' | 'data.value_counts' | 'data.outliers' | 'data.missing';
 
 class DiagnosticDatasetUnavailableError extends Error {}
+
+const resolveDiagnosticDataset = (store: StoreApi): CsvData => {
+    const state = store.getState();
+    const dataset = resolveDatasetBindingTarget({
+        mode: 'analysis',
+        csvData: getPreferredAnalysisDataset(state),
+        snapshot: state.datasetSemanticSnapshot,
+        semanticDatasetVersion: state.semanticDatasetVersion,
+    })?.dataset;
+    if (!dataset) {
+        throw new DiagnosticDatasetUnavailableError(
+            'The prepared analysis dataset is not ready for DuckDB queries yet (it is still being prepared or bound).',
+        );
+    }
+    return dataset;
+};
 
 /**
  * Bind the semantic analysis view of the preferred dataset, then run the
@@ -48,19 +65,8 @@ const runBoundDiagnosticQuery = (
     intent: QueryIntent,
     options: Omit<UnifiedQueryOptions, 'binding'>,
     abortSignal?: AbortSignal,
+    dataset = resolveDiagnosticDataset(store),
 ): Promise<UnifiedQueryResult> => {
-    const state = store.getState();
-    const dataset = resolveDatasetBindingTarget({
-        mode: 'analysis',
-        csvData: getPreferredAnalysisDataset(state),
-        snapshot: state.datasetSemanticSnapshot,
-        semanticDatasetVersion: state.semanticDatasetVersion,
-    })?.dataset;
-    if (!dataset) {
-        throw new DiagnosticDatasetUnavailableError(
-            'The prepared analysis dataset is not ready for DuckDB queries yet (it is still being prepared or bound).',
-        );
-    }
     return executeBoundDuckDbQuery(dataset, prime => {
         if (!prime.tableName || !prime.loadVersion) {
             throw new DiagnosticDatasetUnavailableError('DuckDB returned an incomplete dataset binding.');
@@ -109,22 +115,28 @@ export const executeDataDescribeAction = async (
     }
 
     const args = action.args ?? {};
-    const cols = getNumericColumns(state.columnProfiles, args.columns as string[] | undefined);
-    if (cols.length === 0) {
-        return { status: 'error', toolName: 'data.describe', message: 'No numeric columns found to describe.', shouldStop: false };
-    }
-
-    const intent: QueryIntent = {
-        kind: 'describe',
-        purpose: `Summary statistics for ${cols.length} numeric column(s)`,
-        params: { columns: cols.map(c => c.name) },
-        options: { timeout: QUERY_TIMEOUT_MS },
-    };
-
     try {
+        // Resolve once: columns, timeout and the live binding must describe the same semantic view.
+        const dataset = resolveDiagnosticDataset(store);
+        const tableColumns = dataset.backing?.columnNames?.length
+            ? dataset.backing.columnNames : collectOrderedColumnNames(dataset.data);
+        const cols = getNumericColumns(state.columnProfiles, args.columns as string[] | undefined)
+            .filter(column => tableColumns.length === 0 || tableColumns.includes(column.name));
+        if (cols.length === 0) {
+            return { status: 'error', toolName: 'data.describe', message: 'No numeric columns found to describe.', shouldStop: false };
+        }
+        const rowCount = dataset.backing?.rowCount ?? dataset.data.length;
+        const rows = Number.isFinite(rowCount) ? Math.max(0, rowCount) : 0;
+        const intent: QueryIntent = {
+            kind: 'describe',
+            purpose: `Summary statistics for ${cols.length} numeric column(s)`,
+            params: { columns: cols.map(c => c.name) },
+            options: { timeout: Math.min(30_000, QUERY_TIMEOUT_MS + Math.floor(rows / 50)) },
+        };
         const queryResult = await runBoundDiagnosticQuery(store, intent, {
             columnProfiles: state.columnProfiles,
-        }, abortSignal);
+            allowedColumns: tableColumns,
+        }, abortSignal, dataset);
 
         const explanation = args.explanation || `Summary statistics for ${cols.length} numeric column(s).`;
         console.log(`${LOG_PREFIX} data.describe returned ${queryResult.returnedRows} column stats.`);

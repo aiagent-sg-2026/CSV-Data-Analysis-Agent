@@ -2,6 +2,10 @@
 
 This repository contains a browser-only React CSV analysis app. It has an editable source package and a checked-in static deployment. No Node.js server is needed when users run the deployed app; Node.js is used to build and test the source.
 
+### Describe diagnostics (source update, pending release qualification)
+
+`data.describe` intersects numeric profiles with the physical columns of the same resolved semantic dataset it binds. File-backed datasets use backing columns; in-memory datasets use the query engine's ordered column discovery, including sparse columns after the first row. The scan timeout is 8 seconds plus 1 ms per 50 rows, capped at 30 seconds. This does not change semantic row exclusions, cancellation, worker load limits or other diagnostic tools.
+
 ## Assistant and structural review
 
 Assistant starts expanded on desktop (768 px and wider), while mobile starts with the full-screen drawer closed. You can still hide, reopen, and resize Assistant manually. Resizing preserves its 320 px readable minimum; constrained desktop layouts let the main area shrink below its preferred 600 px rather than collapsing Assistant. Closing and immediately reopening a structural semantic review must not let an older preparation cancel the current review. Semantic confirmation is not Dataset Commit approval: independent validation and separate exact approval remain required. A completed source scan is not proof that repair or model execution succeeded.
