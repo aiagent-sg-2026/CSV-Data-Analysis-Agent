@@ -1,3 +1,4 @@
+import { completeStructureRepairContinuation, stopStructureRepairContinuation } from '../../structureRepairContinuation';
 import type { AgentMessage, StreamFn } from '@earendil-works/pi-agent-core';
 import type { ClarificationOption, ClarificationRequest } from '../../../../types';
 import type { StoreApi } from '../../types';
@@ -79,6 +80,7 @@ export const piCandidateApprovalRunKind=(store:StoreApi,pending:ClarificationReq
 };
 
 const stopApproval = (store: StoreApi, text: string): PiFollowUpResult => {
+    stopStructureRepairContinuation(store, `${text} Reopen structural review for an explicit retry; no automatic provider request is made.`);
     const lease=store.executionContext!.lease;
     assertRunActive(store,lease);
     store.piTask?.rejectApproval();
@@ -119,6 +121,7 @@ export const resumePiCandidateApproval = async (pending: ClarificationRequest, c
     assertRunActive(store,lease);
     if(outcome.status!=='committed'||outcome.acknowledgement!=='installed')return stopApproval(store,
         `Candidate commit status: ${outcome.status}; ${outcome.acknowledgement??outcome.reason??'unavailable'}. Verification is blocked. Review durable commit state before retrying.`);
+    completeStructureRepairContinuation(store);
     store.piTask.committed();
     if(entry.initial){
         const result=await entry.initial(store,outcome.marker!,streamOverride??entry.stream);

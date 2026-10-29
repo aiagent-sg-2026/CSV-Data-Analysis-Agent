@@ -1,3 +1,4 @@
+import { stopStructureRepairContinuation } from '../../structureRepairContinuation';
 import type { ClarificationRequest, ClarificationOption } from '../../../../types';
 import type { StoreApi } from '../../types';
 import type { SpillMeaningProposal } from '../../../data/spillMeaningProposal';
@@ -62,7 +63,7 @@ export const resumeSpillMeaningChoice = async (store: StoreApi, pending: Clarifi
         || store.piTask?.snapshot.taskId !== e.taskId || store.piTask?.snapshot.goal !== e.goal || !e.pending.options?.some(o => o.value === choice.value && o.label === choice.label)) throw new Error('meaning_choice_stale');
     entries.delete(scope); e.check();
     store.setState({ pendingClarification: null });
-    if (choice.value === 'neither') { store.setState({ isBusy: false, chatLifecycleState: 'blocked', initialAnalysisStatus: 'paused' }); return; }
+    if (choice.value === 'neither') { stopStructureRepairContinuation(store, 'Neither complete interpretation was approved. Accepted data is unchanged. Reopen structural review to inspect the source or explicitly retry repair; no automatic provider request is made.'); store.setState({ isBusy: false, chatLifecycleState: 'blocked', initialAnalysisStatus: 'paused' }); return; }
     const proposal = structuredClone(choice.value === 'B' && e.alternative ? e.alternative : e.proposal);
     if (choice.value === 'B' && 'stream' in proposal) {
         proposal.stream.meaning.summary = 'none';
