@@ -161,6 +161,7 @@ const run = async (
     let structureRepair: PiStructureRepair | undefined;
     let confirmedHeaderGuidance = '';
     let repairReservation: Awaited<ReturnType<typeof reserveRepairRun>> | undefined;
+    let repairSettlementFailed = false;
     let repairPreparationFailure: StructureRepairProgress | undefined;
     let headerAlignmentDiagnostic: InitialAnalysisRunOutcome['headerAlignmentDiagnostic'];
     let recoveryEnabled = Boolean(checkpointSource) && !store.getState().csvData?.backing?.ephemeral;
@@ -744,6 +745,7 @@ const run = async (
             catch (error) {
                 // The durable envelope remains restrictive. Never advertise a resumable
                 // semantic/approval prompt after its accounting settlement failed.
+                repairSettlementFailed = true;
                 errorMessage = sanitizeError(error); status = 'blocked';
                 discardPiCandidateApproval(store); pendingApproval = undefined; pendingMeaning = undefined;
                 store.setState({ pendingClarification: null });
@@ -761,7 +763,10 @@ const run = async (
         finalDatasetVersion: request.datasetVersion, trustedCardIds: [], warnings, runtimeRunId, traceId,
         ...(structureRepair || repairPreparationFailure ? { structureRepair: structureRepair?.progress ?? repairPreparationFailure } : {}) };
     if (pendingApproval || pendingMeaning) sealStructureRepairHandoff(store, pendingApproval || pendingMeaning);
-    else stopStructureRepairContinuation(store, `Repair stopped without an actionable review: ${errorMessage || status}. Accepted data was not approved by this continuation. Reopen structural review for an explicit retry.`);
+    else {
+        const retryable = !repairSettlementFailed && (structureRepair?.progress ?? repairPreparationFailure)?.resumable !== false;
+        stopStructureRepairContinuation(store, `Repair stopped without an actionable review: ${errorMessage || status}. Accepted data was not approved by this continuation.${retryable ? ' Reopen structural review for an explicit retry.' : ' This repair is not resumable; do not repeat Continue for the same source/session.'}`, retryable);
+    }
     // Cancellation may finalize its own session, but ordinary cancelled writes remain fenced.
     store = originalStore;
     const finalDatasetVersion = getCurrentAnalysisDatasetVersion(store.getState()) ?? request.datasetVersion;

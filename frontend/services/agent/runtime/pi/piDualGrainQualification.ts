@@ -101,13 +101,21 @@ return {schemaVersion:1,complete:true,tables,relationships:p.relationships,exclu
 export const preparePiDualGrainSmoke = async (root: StoreApi, options: {
     /** Qualification-only: start a fresh normal task without replacing accepted source/session. */
     keepAccepted?: boolean;
+    /** Fixed fictional source for reservation-failure UI qualification only. Never executes a proposal. */
+    blockedHeaderFixture?: boolean;
     streamRecords?: number;
     width?: number; layout?: 'document_rows'; coding?: PiInitialAnalysisOptions['codingPreparation']; fault?: 'value' | 'program_revision';
     proposal?: (proposal: DualGrainMeaningAlternatives) => unknown;
     confirmedProposal?: (proposal: DualGrainCandidateMeaning) => unknown;
     beforeProvider?: (turn: number) => Promise<void>;
 } = {}) => {
-    const fixture = options.streamRecords ? syntheticStreamedDualSource(options.streamRecords,options.width) : options.layout === 'document_rows' ? syntheticDocumentGrainSource(options.width) : syntheticDualGrainSource(options.width), file = new File([fixture.text], 'fictional-dual-grain.csv');
+    const fixture = options.streamRecords ? syntheticStreamedDualSource(options.streamRecords,options.width) : options.layout === 'document_rows' ? syntheticDocumentGrainSource(options.width) : syntheticDualGrainSource(options.width);
+    if (options.blockedHeaderFixture) {
+        if (options.keepAccepted || options.streamRecords || !options.beforeProvider) throw new Error('qualification_blocked_fixture_requires_provider_barrier');
+        fixture.raw = [['Entity','North','South','North','South'],['Count','Rate','Count','Rate'],['id-a','1','2','3','4','left-a','right-a'],['id-b','5','6','7','8','left-b','right-b']];
+        fixture.text = fixture.raw.map(row => row.join(',')).join('\r\n');
+    }
+    const file = new File([fixture.text], 'fictional-dual-grain.csv');
     const parsed = parseCsvTextWithDetection(options.streamRecords ? '' : fixture.text), ir = options.streamRecords ? null : buildReportIntakeIr(file.name, parsed.rawRows, parsed.detection), data = ir ? buildCsvDataFromIntakeIr(ir) : {fileName:file.name,data:[]};
     const reads={bytes:0,calls:0,maxBytes:0,fullReads:0};
     if(options.streamRecords){
@@ -137,6 +145,7 @@ export const preparePiDualGrainSmoke = async (root: StoreApi, options: {
     const call = (name: string, args: unknown): AssistantMessage['content'] => [{ type: 'toolCall', id: crypto.randomUUID(), name, arguments: args as JsonObject }];
     const stream: StreamFn = async (model, context) => {
         await options.beforeProvider?.(++calls);
+        if (options.blockedHeaderFixture) throw new Error('qualification_blocked_fixture_must_not_execute');
         const last = context.messages.filter(m => m.role === 'toolResult').at(-1), text = last?.content.filter(p => p.type === 'text').map(p => p.text).join('') ?? '';
         if (last) trace.push(`${last.toolName}: ${text}`);
         let v: { taskPlan?: { candidateId?: string }; payload?: { workspace?: { artifact?: { path: string; revision: number; sha256: string } }; candidate?: { candidateId: string } }; receipt?: { jobId: string } } = {};

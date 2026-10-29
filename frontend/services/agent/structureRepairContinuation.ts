@@ -13,14 +13,14 @@ interface Continuation {
     lease: RunLease;
     taskOwner?: object;
     complete: () => void;
-    stopped: (reason: string) => void;
+    stopped: (reason: string, retryable: boolean) => void;
     handoff?: { lease: RunLease; pending: string };
     revoked: boolean;
 }
 const continuations = new WeakMap<SessionScope, Continuation>();
 
 /** Private header evidence narrows repair proposals, never grants meaning/validation/commit. */
-export const installStructureRepairContinuation = (store: StoreApi, reviewId: string, candidate: HeaderAlignmentCandidateV1, goal: string, reviewCurrent: () => void, lease: RunLease, complete: () => void, stopped: (reason: string) => void = () => {}) => {
+export const installStructureRepairContinuation = (store: StoreApi, reviewId: string, candidate: HeaderAlignmentCandidateV1, goal: string, reviewCurrent: () => void, lease: RunLease, complete: () => void, stopped: (reason: string, retryable: boolean) => void = () => {}) => {
     const root = rootStore(store), scope = captureSessionScope(root), state = root.getState();
     const source = state.datasetBundle?.source.inspection;
     if (!source || !goal.trim()) throw new Error('repair_continuation_source_or_goal_required');
@@ -90,13 +90,15 @@ export const isStructureRepairHandoffCurrent = (store: StoreApi, lease: RunLease
     return !store.getState().activeExecution && JSON.stringify(store.getState().pendingClarification) === entry.handoff.pending;
 };
 /** A validated human refusal or failed commit ends this continuation, not the dataset. */
-export const stopStructureRepairContinuation = (store: StoreApi, reason: string) => {
+export const stopStructureRepairContinuation = (store: StoreApi, reason: string, retryable = true) => {
     const entry = continuations.get(captureSessionScope(store));
     if (!entry) return;
-    if (entry.revoked || !entry.taskOwner || !isCurrentPiTaskIdentity(store, entry.taskOwner)
-        || !store.executionContext || !ownsRun(store, store.executionContext.lease)) return;
+    if (entry.revoked || !store.executionContext || !ownsRun(store, store.executionContext.lease)) return;
+    // Preparation can fail before a task exists. Only the original owned lease may
+    // terminate that entry; this grants no execution, retry or publication authority.
+    if (entry.taskOwner ? !isCurrentPiTaskIdentity(store, entry.taskOwner) : entry.lease !== store.executionContext.lease) return;
     entry.revoked = true;
-    entry.stopped(reason);
+    entry.stopped(reason, retryable);
 };
 /** Called only after the existing exact-approval service reports committed + installed. */
 export const completeStructureRepairContinuation = (store: StoreApi) => {
