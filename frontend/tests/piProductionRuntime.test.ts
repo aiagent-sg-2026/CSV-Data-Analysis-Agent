@@ -1085,6 +1085,22 @@ describe('Pi production runtime', () => {
         expect(store.getState().initialAnalysisStatus).toBe('ready');
     });
 
+    it('retains a premature Responses stream as a failed provider run without automatic retry', async () => {
+        const stream = vi.fn(() => {
+            throw new Error('OpenAI Responses stream ended before a terminal response event');
+        });
+        const store = createStore();
+        const outcome = await runPiInitialAnalysis({
+            appSessionId: 'session-1', datasetId: 'dataset-1', datasetVersion: 'version-1',
+            researchGoal: 'Find patterns.', provider: { provider: 'openai', modelId: 'mock' },
+        }, store as never, stream);
+        expect(outcome.status).toBe('failed');
+        expect(store.getState().initialAnalysisStatus).toBe('error');
+        expect(store.getState().initialAnalysisFailureKind).toBe('provider');
+        expect(stream).toHaveBeenCalledOnce();
+        expect(stageMock).not.toHaveBeenCalled();
+    });
+
     it('records a provider failure when Pi returns an assistant stream error', async () => {
         const stream: StreamFn = model => {
             const output = createAssistantMessageEventStream();

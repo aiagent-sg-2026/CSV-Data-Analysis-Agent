@@ -1,5 +1,16 @@
 ## Current Work Context
 
+### 2026-10-29 — PR47 integration after owner merged PR46
+
+- Merged main `966a54fb` into the existing PR47 branch without rewriting history. Preserved the exact EOF classifier and runtime failure test alongside guarded batching and actual-send gateway pacing. Generated-asset conflicts were resolved by rebuilding combined sources, not selecting an old bundle.
+- Combined targeted tests: 158/158 across 10 files; Node22 typecheck/lint/build passed. Publisher/Pages tests 4/4 and manifest108/108 passed. Build `1.0.0-fae5c6030482`; normalized artifact audit: 37/38 replacements hash-only, sole substantive app bundle delta is the exact EOF classifier. No live provider, full-suite or deployment run. PR48 remains pending until PR47 merge to avoid repeated regeneration.
+
+### 2026-10-29 — Precise incomplete-provider-stream recovery classification
+
+- From merged main2ba49a8, a network-free replay proved the exact SDK error `OpenAI Responses stream ended before a terminal response event` was not recognized by the provider classifier. Match only this complete error message; similar local CSV errors and embedded quoted text remain analysis failures. No SDK protocol validation, automatic retry, runtime budgets, provider request fields, business mapping or Dataset Commit authority changed.
+- New unit cases failed3/pass5 before the patch. Focused classification/description and actual initial-runtime mock plus existing recovery UI tests now pass5files/99tests. The runtime test asserts failed/error/provider, exactly one model mock invocation and no analysis stage; this is synthetic proof, not an online provider diagnosis.
+- Actual transport cause remains unverified. Existing structure-review priority is intentional and unchanged; this classifier alone does not make an ambiguous CSV safe to analyze. Final typecheck/lint, build1.0.0-b7552f1e1384, publisher4/4 and manifest108/108 pass. Independent native source/test review passes; actual runtime test uses a thrown mock error, not a real streamed network trace. No full-suite/browser/online-provider qualification was run for this classification-only patch. No application AI/customer CSV/externalmodel use, no remote push or deployment.
+
 ### 2026-10-29 — Bounded Assistant and semantic-review recovery correction
 
 - Owner requested desktop Assistant expanded by default; mobile remains closed at the existing 768 px breakpoint. Manual toggle/width behavior is preserved.
