@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 
+// Preparation can finish after this panel closes. A new mount may reuse the
+// same host review, so only the latest UI consumer may revoke it on cleanup.
+const reviewConsumers = new WeakMap<() => unknown, symbol>();
+
 /** This panel dispatches human actions; a copied/persisted UI projection grants no authority. */
 export const StructureRepairReviewPanel: React.FC = () => {
     const review = useAppStore(s => s.structureRepairReview);
@@ -17,12 +21,19 @@ export const StructureRepairReviewPanel: React.FC = () => {
     useEffect(() => {
         let active = true;
         let id: string | undefined;
+        const consumer = Symbol('structure-review-consumer');
+        if (prepare) reviewConsumers.set(prepare, consumer);
+        const cancelOwnedReview = () => {
+            if (!prepare || !id || reviewConsumers.get(prepare) !== consumer) return;
+            cancel?.(id);
+            reviewConsumers.delete(prepare);
+        };
         setError('');
         void prepare?.().then(result => {
             id = result?.reviewId;
-            if (!active && id) cancel?.(id);
+            if (!active) cancelOwnedReview();
         }).catch(() => { if (active) setError('Bound source review unavailable. Re-upload the original or corrected source; analysis remains blocked.'); });
-        return () => { active = false; if (id) cancel?.(id); };
+        return () => { active = false; cancelOwnedReview(); };
     }, [prepare, cancel, intakeKey, sessionId, sourceSha]);
     const act = async (action: () => Promise<void>) => {
         if (pending) return;

@@ -1,5 +1,14 @@
 ## Current Work Context
 
+### 2026-10-29 — Bounded Assistant and semantic-review recovery correction
+
+- Owner requested desktop Assistant expanded by default; mobile remains closed at the existing 768 px breakpoint. Manual toggle/width behavior is preserved.
+- A synthetic real-host close/reopen regression reproduced an old preparation cancelling the review reused by a new panel. UI consumer ownership now prevents stale cleanup from cancelling the newer consumer; closing without replacement still cancels. Host source/session/projection authority and separate exact Dataset Commit approval are unchanged.
+- Removed obsolete scan copy saying the repair coordinator is unimplemented. Parsing completion explicitly does not assert repair success. No provider protocol guard, automatic paid retry, business mapping or data-model changes. The reported missing Responses terminal event was reproduced with a network-free empty stream; its real transport cause is not established.
+- Native browser qualification exposed an existing 768 px resize defect: the preferred 600 px main width overrode Assistant minimum 320 px and collapsed it to 168 px. Preserved the failing browser log, added four strict resize tests (two red before fix), and bounded the clamp by the existing 320 px minimum. The existing responsive main now retains its initial constrained allocation instead of shrinking Assistant; no breakpoint or layout redesign.
+- Final Node 22 qualification: 8 files / 78 focused tests PASS; typecheck, lint, generated build, guarded publisher 4/4, and 108/108 manifest entries PASS. Native Chromium at 390/767/768/1365 px verifies defaults, manual collapse/reopen and reload; desktop resize maintains >=320 px, constrained main >=430 px, and wide-screen drag grows the sidebar. Zero external requests and page errors. Build 1.0.0-0048fb7d1a2b; evidence ../final-*.log and ../review-evidence/. Full 5400+ suite not rerun for this bounded UI patch.
+- Internal independent read-only review passed, including incremental resize review; this was NOT an external Persona/Terra review. Customer CSV is excluded from repository, fixtures and external model calls. Underlying stream/network root cause remains unverified; no automatic retry or fabricated repair-success claim. PR only; owner merges, no deployment authorization exercised.
+
 ### 2026-10-28 — Owner-approved ordered LARGE streamed dual continuation
 
 - Started clean reviewed `3052221114019571caed09d1a112f33158e03d8e`; preserved exact approval and all existing positive tests/query-owner custody. Mandatory preflight `81af0056-484e-4255-9191-b4e095a8eaff` is authorization/evidence planning, not runtime proof. Progress/matrix written before source edits at `../PI_STREAM_DUAL_SUMMARY.md`.

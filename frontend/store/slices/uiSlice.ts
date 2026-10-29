@@ -87,10 +87,10 @@ export const __resetPendingCloudAiConsentForTests = (): void => {
 };
 
 export const createUISlice: StateCreator<AppStore, [], [], IUISlice> = (set, get) => ({
-    // Start with the Assistant closed on every device. Before a dataset exists,
-    // the empty panel competes with the only useful action: importing a CSV.
-    // The header keeps an explicit Assistant control available at all times.
-    isAsideVisible: false,
+    // Show the Assistant by default on desktop. Keep the full-screen mobile
+    // drawer closed so it does not cover the upload flow (App breakpoint: 768px).
+    // Manual hide/show and resizing remain independent of this initial value.
+    isAsideVisible: window.innerWidth >= 768,
     resultsViewMode: (() => {
         try {
             return window.sessionStorage.getItem('csv_agent_results_view') === 'explore'
@@ -133,7 +133,10 @@ export const createUISlice: StateCreator<AppStore, [], [], IUISlice> = (set, get
         e.preventDefault();
         set({ isResizing: true });
         const handleMouseMove = (moveEvent: MouseEvent) => {
-            const maxAllowedAsideWidth = window.innerWidth - MIN_MAIN_WIDTH;
+            // At constrained desktop widths, preserve the same readable minimum
+            // as the initial sidebar. The responsive main can be narrower than
+            // its preferred 600px; dragging must not collapse Assistant to 168px.
+            const maxAllowedAsideWidth = Math.max(MIN_ASIDE_WIDTH, window.innerWidth - MIN_MAIN_WIDTH);
             let newWidth = window.innerWidth - moveEvent.clientX;
             newWidth = Math.max(MIN_ASIDE_WIDTH, newWidth);
             newWidth = Math.min(MAX_ASIDE_WIDTH, newWidth, maxAllowedAsideWidth);
