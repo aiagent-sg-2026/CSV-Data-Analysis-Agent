@@ -37,6 +37,8 @@ describe('actual source scan UI actions', () => {
         await scanCsvSourceForImport(store, new File(['a,b\n1,2\nbad\n'], 'ragged.csv'));
         await screen.findByText('Full-source parsing complete — structural evidence needs repair');
         expect(screen.getByText(/File size alone is not a reason for human review/)).toBeInTheDocument();
+        expect(screen.getByText(/completing this scan does not mean repair succeeded/)).toBeInTheDocument();
+        expect(screen.queryByText(/does not yet implement the Pi repair coordinator/)).toBeNull();
         await scanCsvSourceForImport(store, new File([new Uint8Array([0xff, 0xfe, 97, 0])], 'encoding.csv'));
         await screen.findByText('Structural scan failed — not verified');
         await waitFor(() => expect(screen.getByText(/scan_unsupported_encoding/)).toBeInTheDocument());

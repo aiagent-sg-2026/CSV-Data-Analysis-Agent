@@ -69,6 +69,47 @@ describe('real semantic review UI and host actions', () => {
         expect(await screen.findByRole('button', { name: 'Choose A — confirm meaning' })).toBeInTheDocument();
         expect(screen.getByRole('dialog', { name: 'Review structural interpretations' })).toBeInTheDocument();
     });
+    it('does not let a late closed-panel preparation cancel the reopened review', async () => {
+        const { refresh, data } = await setup();
+        const realPrepare = useAppStore.getState().prepareStructureRepairReview;
+        let releaseFirst!: () => void;
+        const held = new Promise<void>(resolve => { releaseFirst = resolve; });
+        let calls = 0;
+        useAppStore.setState({ prepareStructureRepairReview: async () => {
+            const call = ++calls;
+            const review = await realPrepare();
+            if (call === 1) await held;
+            return review;
+        } });
+        const first = render(<ReportBoundaryConfirmModal />);
+        await screen.findByRole('button', { name: 'Choose A — confirm meaning' });
+        first.unmount();
+        render(<ReportBoundaryConfirmModal />);
+        await waitFor(() => expect(calls).toBe(2));
+        await act(async () => { releaseFirst(); await held; });
+        expect(screen.getByRole('button', { name: 'Choose A — confirm meaning' })).toBeEnabled();
+        expect(useAppStore.getState().structureRepairReview?.status).toBe('awaiting_semantic_confirmation');
+        expect(useAppStore.getState().csvData).toBe(data);
+        expect(refresh).not.toHaveBeenCalled();
+    });
+    it('still cancels a late preparation when the closed panel is not reopened', async () => {
+        const { refresh, data } = await setup();
+        const realPrepare = useAppStore.getState().prepareStructureRepairReview;
+        let release!: () => void;
+        const held = new Promise<void>(resolve => { release = resolve; });
+        useAppStore.setState({ prepareStructureRepairReview: async () => {
+            const review = await realPrepare();
+            await held;
+            return review;
+        } });
+        const view = render(<ReportBoundaryConfirmModal />);
+        await screen.findByRole('button', { name: 'Choose A — confirm meaning' });
+        view.unmount();
+        await act(async () => { release(); await held; });
+        expect(useAppStore.getState().structureRepairReview?.status).toBe('cancelled');
+        expect(useAppStore.getState().csvData).toBe(data);
+        expect(refresh).not.toHaveBeenCalled();
+    });
     it('keeps Neither blocked and cancels authority when the modal is closed', async () => {
         await setup(); render(<ReportBoundaryConfirmModal />);
         fireEvent.click(await screen.findByRole('button', { name: 'Neither / Correct mapping' }));
