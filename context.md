@@ -1,9 +1,9 @@
 ## Current Work Context
 
-### 2026-10-29 — PR30 describe compatibility repair (local source only)
+### 2026-10-29 — PR30 describe compatibility repair (verified local build)
 
 - Ported the original missing-lineage-column guard and bounded large-file describe timeout onto current main, retaining live semantic-view binding and abort propagation. Resolve the dataset once so metadata and query target cannot diverge; in-memory column discovery now matches queryEngine rather than assuming the first row contains every physical column.
-- Synthetic baseline: five regressions failed against unchanged main. Focused verification: 3 files / 14 tests PASS on Node 22.23.4 (also passed on Node 24), including real in-process DuckDB Pi diagnostic binding/semantic exclusion regression. Node 22 typecheck and lint baseline PASS. No external provider calls. Build, generated deployment and full-suite qualification remain pending; this is not a deployed fix or a CI pass.
+- Synthetic baseline: five regressions failed against unchanged main. Focused verification: 3 files / 14 tests PASS on Node 22.23.4 (also passed on Node 24), including real in-process DuckDB Pi diagnostic binding/semantic exclusion regression. Node 22 typecheck and lint baseline PASS. No external provider calls. Node22 build with a 4GB V8 heap, generated-root publisher tests 4/4 and all 108 SHA-256 entries PASS. Initial default 2GB heap build failed with V8 OOM; the bounded retry succeeded. All 38 renamed bundles were audited: 37 differ only in hashed imports, and the remaining app-agent diff matches the source fix. Full-suite and live-provider qualification remain unrun; this is not a deployed fix or a CI pass.
 - Original PR30 and its remote branch remain unchanged. No push, PR creation, merge or deployment performed.
 
 
