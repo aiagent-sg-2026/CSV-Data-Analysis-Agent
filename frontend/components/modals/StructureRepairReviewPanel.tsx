@@ -70,11 +70,12 @@ export const StructureRepairReviewPanel: React.FC = () => {
                     <button disabled={!waiting || pending} onClick={() => void act(() => confirm(review.reviewId, choice.candidateDigest, { review, intakeSignature: intakeKey }))} className="mt-2 rounded bg-blue-600 px-3 py-2 text-white disabled:opacity-50">Choose {choice.label} — confirm meaning</button>
                 </div>;
             })}</div>
+            {review.status === 'repair_blocked' && <p role="alert" className="text-sm text-amber-900">Repair cannot safely resume in this session. There is no pending approval to click. Keep the source and diagnostic details; no automatic retry or budget reset will be performed.</p>}
             <div className="flex flex-wrap gap-2">
                 <button disabled={!waiting || pending} onClick={() => void act(() => confirm(review.reviewId, 'neither', { review, intakeSignature: intakeKey }))} className="rounded border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50">Neither / Correct mapping</button>
                 {review.status === 'confirmed' && <button disabled={pending} onClick={() => void act(() => resume(review.reviewId))} className="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">Resume read-only mapping draft</button>}
                 {['confirmed', 'draft_uncommitted', 'repair_failed'].includes(review.status) && <button disabled={pending} onClick={() => void act(() => continueRepair(review.reviewId, { review, intakeSignature: intakeKey }))} className="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">Continue repair and validation</button>}
-                <button disabled={pending && review.status !== 'continuing'} onClick={() => cancel(review.reviewId)} className="rounded border border-slate-300 px-3 py-2 text-sm disabled:opacity-50">Cancel semantic review</button>
+                {review.status !== 'repair_blocked' && <button disabled={pending && review.status !== 'continuing'} onClick={() => cancel(review.reviewId)} className="rounded border border-slate-300 px-3 py-2 text-sm disabled:opacity-50">Cancel semantic review</button>}
             </div>
             {review.draft && <div aria-label="Read-only mapping draft" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm">
                 <h4 className="font-semibold">Draft / Uncommitted — not validated</h4>
@@ -84,6 +85,6 @@ export const StructureRepairReviewPanel: React.FC = () => {
                 </tbody></table></div>
             </div>}
         </>}
-        <p className="text-xs font-medium text-slate-700">Header confirmation and preview do not approve a dataset. Continue repair for full validation, then review a separate exact Dataset Commit in Assistant.</p>
+        <p className="text-xs font-medium text-slate-700">{review?.status === 'repair_blocked' ? 'You may close this review. Its diagnostic state is preserved; reopening does not restart repair or approve a dataset.' : 'Header confirmation and preview do not approve a dataset. Continue repair for full validation, then review a separate exact Dataset Commit in Assistant.'}</p>
     </section>;
 };

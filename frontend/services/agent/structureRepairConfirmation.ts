@@ -255,9 +255,9 @@ export const continueStructureRepairAnalysis = async (store: StoreApi, reviewId:
                 reviews.delete(scope); repairRequired.delete(scope);
                 root.setState({ structureRepairReview: null });
             }
-        }, reason => {
+        }, (reason, retryable) => {
             if (reviews.get(scope) === entry) {
-                entry.view = { ...entry.view, status: 'repair_failed', message: reason };
+                entry.view = { ...entry.view, status: retryable ? 'repair_failed' : 'repair_blocked', message: reason };
                 publish(root, entry);
             }
         });
@@ -266,7 +266,7 @@ export const continueStructureRepairAnalysis = async (store: StoreApi, reviewId:
         // Do not nest a provider-consent dialog under the structure dialog's inert/focus boundary.
         root.setState({ isReportBoundaryConfirmModalOpen: false, isAsideVisible: true });
         const outcome = await handleInitialAnalysis(state.csvData, goal, scopeRunStore(root, lease), { trigger: 'manual' });
-        if (entry.view.status === 'repair_failed' && reviews.get(scope) === entry && ownsRun(root, lease)) {
+        if (['repair_failed', 'repair_blocked'].includes(entry.view.status) && reviews.get(scope) === entry && ownsRun(root, lease)) {
             root.setState({ isAsideVisible: true });
             return; // Preserve the host's specific unsupported/validation/cancellation reason.
         }
@@ -284,7 +284,7 @@ export const continueStructureRepairAnalysis = async (store: StoreApi, reviewId:
         else root.setState({ isReportBoundaryConfirmModalOpen: false, isAsideVisible: true });
     } catch (error) {
         revokeStructureRepairContinuation(store, reviewId, lease);
-        if (ownsSessionScope(store, scope) && ownsRun(root, lease) && reviews.get(scope) === entry && !['cancelled', 'repair_failed'].includes(entry.view.status)) {
+        if (ownsSessionScope(store, scope) && ownsRun(root, lease) && reviews.get(scope) === entry && !['cancelled', 'repair_failed', 'repair_blocked'].includes(entry.view.status)) {
             entry.view = { ...entry.view, status: 'repair_failed', message: 'Repair continuation was interrupted or became stale. Re-open the current source review before continuing; accepted data was not approved by this action.' };
             publish(store, entry);
             root.setState({ isAsideVisible: true });
@@ -298,6 +298,8 @@ export const continueStructureRepairAnalysis = async (store: StoreApi, reviewId:
 export const cancelStructureRepairReview = (store: StoreApi, reviewId?: string, onlyIfReviewing = false): void => {
     const scope = captureSessionScope(store), entry = reviews.get(scope);
     if (!entry || reviewId && entry.view.reviewId !== reviewId) return;
+    // Closing UI or cancelling cannot turn uncertain, non-resumable work into a new retry.
+    if (entry.view.status === 'repair_blocked') return;
     if (onlyIfReviewing && ['continuing', 'awaiting_repair'].includes(entry.view.status)) return;
     revokeStructureRepairContinuation(store, entry.view.reviewId);
     entry.view = { ...entry.view, status: 'cancelled', selectedCandidateDigest: null, draft: undefined, message: 'Review cancelled. Dataset unchanged; re-open review to start a fresh confirmation.' };

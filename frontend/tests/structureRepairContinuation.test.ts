@@ -6,7 +6,7 @@ import { parseCsvTextWithDetection } from '../services/data/csvDialectDetector';
 import { buildReportIntakeIr } from '../services/data/reportCsvIntake';
 import { beginRun, finishRun, scopeRunStore } from '../services/session/sessionOwnership';
 import { prepareStructureRepairReview, confirmStructureRepairMeaning, continueStructureRepairAnalysis, cancelStructureRepairReview } from '../services/agent/structureRepairConfirmation';
-import { installStructureRepairContinuation, captureStructureRepairContinuation, captureStructureRepairProposalConstraint, bindStructureRepairContinuationTask, completeStructureRepairContinuation, sealStructureRepairHandoff } from '../services/agent/structureRepairContinuation';
+import { installStructureRepairContinuation, captureStructureRepairContinuation, captureStructureRepairProposalConstraint, bindStructureRepairContinuationTask, completeStructureRepairContinuation, sealStructureRepairHandoff, stopStructureRepairContinuation } from '../services/agent/structureRepairContinuation';
 const mocks = vi.hoisted(() => ({ analysis: vi.fn(), identity: vi.fn() }));
 vi.mock('../services/agent/orchestration/initialAnalysisService', () => ({ handleInitialAnalysis: mocks.analysis }));
 vi.mock('../services/agent/runtime/pi/piCodingTask', () => ({ captureOwnedPiTaskIdentity: mocks.identity, isCurrentPiTaskIdentity: () => true }));
@@ -25,6 +25,23 @@ const fixture = async () => {
 };
 beforeEach(()=>{mocks.analysis.mockReset();mocks.identity.mockReset();});
 describe('header repair handoff retains independent approval boundaries',()=>{
+    it('stops a pre-executor reservation failure without offering a false retry or invoking a second run',async()=>{
+        const {store,review}=await fixture();
+        mocks.analysis.mockImplementation(async(_data,_goal,scoped:StoreApi)=>{
+            stopStructureRepairContinuation(scoped,'initial_repair_reservation_pending_uncertain_work',false);
+            return {status:'paused',message:'initial_repair_reservation_pending_uncertain_work'};
+        });
+        await continueStructureRepairAnalysis(store,review.reviewId);
+        expect(store.getState().structureRepairReview?.status).toBe('repair_blocked');
+        for (const cleanup of [true, false, true]) {
+            cancelStructureRepairReview(store,review.reviewId,cleanup);
+            const reopened=await prepareStructureRepairReview(store);
+            expect(reopened?.reviewId).toBe(review.reviewId);
+            expect(reopened?.status).toBe('repair_blocked');
+        }
+        await expect(continueStructureRepairAnalysis(store,review.reviewId)).rejects.toThrow('repair_continuation_not_ready');
+        expect(mocks.analysis).toHaveBeenCalledTimes(1);expect(store.getState().datasetBundle?.acceptedCommit).toBeUndefined();
+    });
     it('creates one owned initial lease and hands off only to an actionable pending review',async()=>{
         const {store,review}=await fixture();const original=store.getState().datasetBundle;
         mocks.analysis.mockImplementation(async(_data,_goal,scoped:StoreApi)=>{

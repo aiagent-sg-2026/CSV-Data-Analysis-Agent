@@ -53,3 +53,20 @@ it.each(['neither','deny'] as const)('a genuine human %s ends this continuation 
     expect(store.getState().structureRepairReview?.message).toMatch(/explicit(?:ly)? retry/);
     expect(store.getState().datasetBundle?.acceptedCommit).toBeUndefined();expect(store.getState().csvData).toBe(f.data);
 },30000);
+
+it('keeps a failed durable settlement non-retryable in the same real host continuation',async()=>{
+    const storage=repairReservationStorage();controls.db=storage.db;
+    const store=setup(),f=await prepareBridgeFixture(store);let calls=0;
+    controls.stream=(...args:Parameters<typeof f.stream>)=>{calls++;storage.deny();return f.stream(...args);};
+    const review=(await prepareStructureRepairReview(store))!;
+    await confirmStructureRepairMeaning(store,review.reviewId,review.choices[0].candidateDigest);
+    await continueStructureRepairAnalysis(store,review.reviewId);
+    expect(store.getState().structureRepairReview?.status).toBe('repair_blocked');
+    expect(store.getState().pendingClarification).toBeNull();
+    expect(store.getState().datasetBundle?.acceptedCommit).toBeUndefined();
+    const saved=[...storage.values.values()][0] as {coordinatorBudget:{accounts:{pending:unknown}[]}};
+    expect(saved.coordinatorBudget.accounts[0].pending).toBeTruthy();
+    const before=calls;
+    await expect(continueStructureRepairAnalysis(store,review.reviewId)).rejects.toThrow('repair_continuation_not_ready');
+    expect(calls).toBe(before);expect(calls).toBeGreaterThan(0);
+},30000);

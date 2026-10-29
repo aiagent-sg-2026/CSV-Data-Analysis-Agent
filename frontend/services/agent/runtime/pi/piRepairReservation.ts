@@ -53,7 +53,7 @@ export const reserveRepairRun = async (store: StoreApi, goal: string) => {
         if (JSON.stringify(store.getState().datasetBundle?.source.inspection) !== signature) throw new Error('source_range_stale');
     };
     let priorRepair: RepairCounterFloor | undefined;
-    const fail = (reason: string): never => { throw new StructureRepairPreparationError(`initial_repair_${reason}`, {
+    const fail = (reason: string): never => { throw new StructureRepairPreparationError(`initial_repair_${reason}${reason === 'reservation_pending_uncertain_work' ? ': A previous repair was interrupted before its work and budget could be safely reconciled. This does not mean an AI task is still running. Retry for these same source bytes is unavailable in this session; changing the filename or goal does not recover it. Keep the original file and error details for diagnosis. Do not clear storage or reset accounting as a retry. No new repair or Dataset Commit was started.' : ''}`, {
         state: reason.includes('exhausted') ? 'exhausted' : 'unavailable', sourceSha256: source?.sha256 ?? null,
         attempts: priorRepair?.attempts ?? 0, validationFailures: priorRepair?.failures ?? 0, reason, resumable: false, commitAllowed: false,
     }); };

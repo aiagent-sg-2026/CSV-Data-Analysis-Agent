@@ -55,6 +55,12 @@ describe('initialAnalysisService production ownership', () => {
         finalizeMock.mockResolvedValue(undefined);
     });
 
+    it('preserves a non-resumable repair failure instead of claiming an approval is pending', async () => {
+        runMock.mockResolvedValue({ status:'blocked', currentDatasetVersion:'v', finalDatasetVersion:'v', trustedCardIds:[],warnings:[],runtimeRunId:'r',traceId:'t', error:{code:'pi_initial_analysis_failed',message:'initial_repair_reservation_pending_uncertain_work',retryable:false} });
+        const result=await handleInitialAnalysis(dataset,'Find patterns.',createStore() as never,{trigger:'manual'});
+        expect(result).toMatchObject({status:'paused',message:'initial_repair_reservation_pending_uncertain_work'});
+    });
+
     it('routes the first-pass analysis through Pi and maps completion', async () => {
         runMock.mockResolvedValue({
             status: 'completed',

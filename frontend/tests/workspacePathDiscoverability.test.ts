@@ -29,6 +29,12 @@ const listed = async (app: StoreApi, args: Record<string, unknown>) =>
     JSON.parse((await run(app, 'workspace.list', args))!.output!) as { path: string; files: { path: string; pathType: string }[]; pathRules?: string };
 
 describe('workspace path discoverability', () => {
+    it('explains that absent meaning confirmation is host-created only after a full semantic choice', async () => {
+        const app=makeStore();
+        await expect(run(app,'workspace.read',{path:'/intake/meaning-confirmation.json'})).rejects.toThrow(/candidate_infer_meaning.*Do not poll/);
+        expect(app.getState().workspaceFiles['/intake/meaning-confirmation.json']).toBeUndefined();
+    });
+
     it('lists the allowed roots at "/" instead of an empty listing', async () => {
         // A stored skill path exists, but the root listing exposes only readable roots.
         const app = makeStore({ '/skills/private/SKILL.md': 'skill body' });

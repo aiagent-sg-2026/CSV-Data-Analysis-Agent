@@ -226,6 +226,9 @@ export const executeWorkspaceFileAction = async (
             const revision = isWorkspaceWritablePath(normalizedPath) && !normalizedPath.startsWith('/workspace/task-artifacts/') ? workspace.revision(normalizedPath) : undefined;
             const artifact = revision ? workspace.read(normalizedPath, workspaceAction.revision) : null;
             if (workspaceAction.revision !== undefined && !artifact) throw new Error('workspace_file_unavailable');
+            if (!exactMatch && normalizedPath === '/intake/meaning-confirmation.json') {
+                throw new Error('meaning_confirmation_not_created: This host-owned file exists only after the user selects a complete source-bound meaning proposal. First submit supported complete original-source proposals through candidate_infer_meaning and follow the returned contract. Only if the host requests a separate human choice should you wait for that choice; an unambiguous compiled contract does not require this file. A header-group choice is not that approval. Do not poll, search for, create or fabricate this confirmation; absence is expected before approval. No Dataset Commit authority is granted.');
+            }
             if (!exactMatch) throw new Error(`File not found: ${normalizedPath}`);
             const range = artifact ? workspace.readRange(normalizedPath, workspaceAction.revision, workspaceAction.startOffset ?? 0, workspaceAction.limit ?? WORKSPACE_ACTION_OUTPUT_LIMIT) : null;
             const content = range?.content ?? truncateWorkspaceOutput(exactMatch.content, WORKSPACE_ACTION_OUTPUT_LIMIT);

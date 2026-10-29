@@ -21,7 +21,7 @@ const toLegacyOutcome = (
     if (outcome.status === 'cancelled'||outcome.status==='blocked') {
         return {
             status: 'paused',
-            message: outcome.status==='blocked'?'Initial analysis is paused for exact candidate review or required output verification.': 'The analysis was stopped. The last stable dataset was kept.',
+            message: outcome.status==='blocked'?(outcome.error?.message ?? 'Initial analysis is paused for exact candidate review or required output verification.'): 'The analysis was stopped. The last stable dataset was kept.',
         };
     }
     if (outcome.status === 'degraded') {
