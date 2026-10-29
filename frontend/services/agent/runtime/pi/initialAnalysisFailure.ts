@@ -13,6 +13,14 @@ export const isInitialAnalysisProviderFailure = (error: unknown): boolean => {
     if (typeof status === 'number' && [400, 401, 403, 404, 408, 429, 500, 502, 503, 504].includes(status)) {
         return true;
     }
+    // The SDK rejects an ended Responses stream without a terminal event.
+    // Route that exact protocol failure to explicit provider recovery; never
+    // accept partial output or infer a cause/automatic retry from this label.
+    const message = candidate?.message ?? error;
+    if (typeof message === 'string'
+        && message.trim() === 'OpenAI Responses stream ended before a terminal response event') {
+        return true;
+    }
     const detail = [candidate?.code, candidate?.message, error instanceof Error ? error.message : error]
         .filter(value => typeof value === 'string')
         .join(' ');
