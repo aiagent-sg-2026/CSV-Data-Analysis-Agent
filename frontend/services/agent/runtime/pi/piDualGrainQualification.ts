@@ -103,6 +103,8 @@ export const preparePiDualGrainSmoke = async (root: StoreApi, options: {
     keepAccepted?: boolean;
     /** Fixed fictional source for reservation-failure UI qualification only. Never executes a proposal. */
     blockedHeaderFixture?: boolean;
+    /** Deterministic inspection-only qualification, never a product option. */
+    inspectionQualification?: 'repeat_missing_confirmation' | 'source_ranges';
     streamRecords?: number;
     width?: number; layout?: 'document_rows'; coding?: PiInitialAnalysisOptions['codingPreparation']; fault?: 'value' | 'program_revision';
     proposal?: (proposal: DualGrainMeaningAlternatives) => unknown;
@@ -144,7 +146,8 @@ export const preparePiDualGrainSmoke = async (root: StoreApi, options: {
     const trace: string[] = [];
     const call = (name: string, args: unknown): AssistantMessage['content'] => [{ type: 'toolCall', id: crypto.randomUUID(), name, arguments: args as JsonObject }];
     const stream: StreamFn = async (model, context) => {
-        await options.beforeProvider?.(++calls);
+        calls++;
+        await options.beforeProvider?.(calls);
         if (options.blockedHeaderFixture) throw new Error('qualification_blocked_fixture_must_not_execute');
         const last = context.messages.filter(m => m.role === 'toolResult').at(-1), text = last?.content.filter(p => p.type === 'text').map(p => p.text).join('') ?? '';
         if (last) trace.push(`${last.toolName}: ${text}`);
@@ -154,7 +157,9 @@ export const preparePiDualGrainSmoke = async (root: StoreApi, options: {
         if (!last && confirmation) step = 2;
         const selected: DualGrainCandidateMeaning | undefined = confirmation ? JSON.parse(confirmation).proposal : undefined;
         let content: AssistantMessage['content'];
-        if (step === 0) { step++; content = call('workspace_read', { path: '/intake/source-scan.json' }); }
+        if (options.inspectionQualification === 'repeat_missing_confirmation') content = call('workspace_read', { path: '/intake/meaning-confirmation.json' });
+        else if (options.inspectionQualification === 'source_ranges' && calls <= 3) content = call('workspace_read', { path: '/intake/source-records.json', startRow: calls - 1, rowCount: 1 });
+        else if (step === 0) { step++; content = call('workspace_read', { path: '/intake/source-scan.json' }); }
         else if (step === 1) { step++; content = call('workspace_read', { path: '/intake/source-records.json', startRow: 0, rowCount: options.streamRecords ? 2 : fixture.raw.length }); }
         else if (step === 2) { step++; content = call('candidate_infer_meaning', selected ? options.confirmedProposal?.(selected) ?? selected : options.proposal?.(fixture.proposal) ?? fixture.proposal); }
         else if (step === 3) { step++; content = call('workspace_write', { path: '/workspace/dual-grain.js', expectedRevision: 0, content: options.streamRecords ? `return {state:{},rows:input.records.map(r=>({sourceRow:r.sourceRow,cells:Array.from({length:${options.width??90}},(_,i)=>${options.fault==='value'?"r.sourceRow===2&&i===2?'999.99':":""}(r.cells[i]??'') )}))};` : programFor(selected ?? fixture.proposal.interpretations[0].meaning, options.fault) }); }
