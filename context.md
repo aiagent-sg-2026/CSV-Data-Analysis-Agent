@@ -1,11 +1,26 @@
 ## Current Work Context
 
+### 2026-10-29 — PR48 integration after owner merged PR47
+
+- Normal merge of main `919fdd49` preserves PR46 exact EOF handling and PR47 guarded batching/actual-send pacing. Describe source/tests remain identical to reviewed PR48; both documentation histories retained. Independent source merge review passed.
+- Combined 13-file/172-test suite, Node22 typecheck/lint/build, publisher/Pages4/4, and manifest108/108 passed. Fresh combined build `1.0.0-14eea66faca7`; no full-suite/live-model/deployment run. Generated assets rebuilt from integrated source, not selected from either conflicting side.
+
 ### 2026-10-29 — PR30 describe compatibility repair (verified local build)
 
 - Ported the original missing-lineage-column guard and bounded large-file describe timeout onto current main, retaining live semantic-view binding and abort propagation. Resolve the dataset once so metadata and query target cannot diverge; in-memory column discovery now matches queryEngine rather than assuming the first row contains every physical column.
 - Synthetic baseline: five regressions failed against unchanged main. Focused verification: 3 files / 14 tests PASS on Node 22.23.4 (also passed on Node 24), including real in-process DuckDB Pi diagnostic binding/semantic exclusion regression. Node 22 typecheck and lint baseline PASS. No external provider calls. Node22 build with a 4GB V8 heap, generated-root publisher tests 4/4 and all 108 SHA-256 entries PASS. Initial default 2GB heap build failed with V8 OOM; the bounded retry succeeded. All 38 renamed bundles were audited: 37 differ only in hashed imports, and the remaining app-agent diff matches the source fix. Full-suite and live-provider qualification remain unrun; this is not a deployed fix or a CI pass.
 - Original PR30 and its remote branch remain unchanged. No push, PR creation, merge or deployment performed.
 
+### 2026-10-29 — PR47 integration after owner merged PR46
+
+- Merged main `966a54fb` into the existing PR47 branch without rewriting history. Preserved the exact EOF classifier and runtime failure test alongside guarded batching and actual-send gateway pacing. Generated-asset conflicts were resolved by rebuilding combined sources, not selecting an old bundle.
+- Combined targeted tests: 158/158 across 10 files; Node22 typecheck/lint/build passed. Publisher/Pages tests 4/4 and manifest108/108 passed. Build `1.0.0-fae5c6030482`; normalized artifact audit: 37/38 replacements hash-only, sole substantive app bundle delta is the exact EOF classifier. No live provider, full-suite or deployment run. PR48 remains pending until PR47 merge to avoid repeated regeneration.
+
+### 2026-10-29 — Precise incomplete-provider-stream recovery classification
+
+- From merged main2ba49a8, a network-free replay proved the exact SDK error `OpenAI Responses stream ended before a terminal response event` was not recognized by the provider classifier. Match only this complete error message; similar local CSV errors and embedded quoted text remain analysis failures. No SDK protocol validation, automatic retry, runtime budgets, provider request fields, business mapping or Dataset Commit authority changed.
+- New unit cases failed3/pass5 before the patch. Focused classification/description and actual initial-runtime mock plus existing recovery UI tests now pass5files/99tests. The runtime test asserts failed/error/provider, exactly one model mock invocation and no analysis stage; this is synthetic proof, not an online provider diagnosis.
+- Actual transport cause remains unverified. Existing structure-review priority is intentional and unchanged; this classifier alone does not make an ambiguous CSV safe to analyze. Final typecheck/lint, build1.0.0-b7552f1e1384, publisher4/4 and manifest108/108 pass. Independent native source/test review passes; actual runtime test uses a thrown mock error, not a real streamed network trace. No full-suite/browser/online-provider qualification was run for this classification-only patch. No application AI/customer CSV/externalmodel use, no remote push or deployment.
 
 ### 2026-10-29 — Bounded Assistant and semantic-review recovery correction
 
@@ -1768,3 +1783,15 @@ Final delivery checks: 135 documentation links resolve; 13 source/test hashes an
 - Matching real Chromium155.0.8059.79 /SwiftShader browser passes deny, stale program, ordinary scale-2 SGD interrupted-proposal recovery, high-decimal exact SUM/equality, and actual **27,326,421-byte File → QuickJS/OPFS → detached paginated draft → React Review/Approve → 27,000 accepted DuckDB rows → ten fixed-oracle queries → reload/History/local restore/source reattach**. All approved cases run ten queries; zero page errors/external attempts, 1,106 worker starts. Native ceiling SUM is exactly `-180143985094819.80`; CRLF/UTF-8 multiline values survive ingestion. Repeated response does not create a second accepted commit.
 - Large accepted CSV27,353,424 bytes, JS preview20 rows; initial original requested reads109,305,687 bytes /1,669 calls /max65,536 /zero full reads = four passes +three-byte probe. Review/draft/commit use authenticated storage, not another original pass. Large browser scenario106,614ms including UI/query/recovery; sampled renderer V8 high-water51,496,732 bytes /532 samples at200ms, excluding workers/WASM/Blob/OPFS/RSS. Later reselected recovery Files are not included in the initial handle counter. Node failure qualification uses real QuickJS/files but transaction/activation doubles; native forced-power-loss/rollback-fault and total aggregate peak-memory qualification remain separate gaps.
 - Final source/Node tests/browser driver were frozen before final checks; only documentation/evidence changed afterwards. Final Review screenshot inspected. Owned final preview PID478474 /port4197 was verified and retired; final runner/profile completed cleanup. Earlier failed logs and an inactive pre-continuation temporary profile are preserved. Summary and evidence reside in `../PI_SPILL_COMMIT_SUMMARY.md` and `../spill-commit-logs/`. Supported exact-spill package is ready for independent review, not full v2/coordinator/model/dual-grain/100 MiB readiness. Reviewed local commit follows.
+
+
+## 2026-10-29 — PR29 current-main compatibility repair (local)
+
+- Ported required-stage batching to main's lease-owned runtime without removing per-stage approval, cleaning, budget, receipt, or recovery checks.
+- Moved rolling-window accounting after concurrency/session acquisition, immediately before the actual send; added abort-aware waits and bounded explicit IP429 recovery. Preserved the 45-second request deadline and all gateway wire sanitization.
+- Original PR29 is stale/conflicted and has no current CI checks; original branch remains unchanged. Local Node22 focused gateway/runtime validation: 82 tests passed, including queued-send timestamps, cancellation inside a batched turn, durable post-mutation recovery, and 45-second retry timeout; typecheck and lint baseline passed. Node24 is outside the declared engine range and fails native Request/jsdom AbortSignal compatibility.
+- No live provider calls, push, PR, merge, deployment, or generated-site rebuild performed in this local repair. Build/publish validation awaits the shared heavy-test window and publication awaits owner authorization/access.
+
+- Additional PR29 validation: 61 shared-runtime, byte-compaction, header-gate and qualified-coding tests passed on Node22. Synthetic QA sequencing now follows batched initial stages; virtual response timing keeps the 40-turn compaction test independent of rate-limit waits. Independent review confirmed exact-approval, zero-commit, byte-cap and call/result-pair assertions remain enforced.
+
+- Final PR29 local validation: Node22 typecheck/lint passed; built and regenerated 108 checksum-verified files; publisher tests 4/4 passed. Durable receipt tests were strengthened to require exact validatePreparedData decision=pass and stage order: forcing warn failed both assertions, restoration passed all 61 shared tests. Independent review confirmed restored coverage. The 82 focused gateway/runtime tests also passed (143 targeted tests total). Full repository suite, live-provider quality/cost and deployment remain unverified. Publication requires owner approval; original PR branches remain unchanged.

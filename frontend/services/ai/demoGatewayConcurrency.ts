@@ -1,10 +1,38 @@
-import { throwIfGatewayAborted } from './demoGatewayAbort';
+import { throwIfGatewayAborted, waitForGatewayRetry } from './demoGatewayAbort';
 
 /**
  * Each demo session allows 2 concurrent requests. Queue requests client-side
  * so bursts wait instead of failing with DEMO_SESSION_CONCURRENCY_LIMIT.
  */
 export const DEMO_SESSION_MAX_CONCURRENT_REQUESTS = 2;
+
+/** Per-browser protection, not a shared-IP guarantee across tabs or devices. */
+export const DEMO_IP_MAX_REQUESTS_PER_MINUTE = 28;
+export const DEMO_IP_WINDOW_MS = 60_000;
+
+export const createRateWindowLimiter = (
+    maxRequests: number,
+    windowMs: number,
+    now: () => number = Date.now,
+    sleep: (ms: number, signal?: AbortSignal) => Promise<void> = (ms, signal) =>
+        waitForGatewayRetry(ms, signal ?? new AbortController().signal),
+) => {
+    const sentAt: number[] = [];
+    return {
+        waitForTurn: async (signal?: AbortSignal): Promise<void> => {
+            for (;;) {
+                throwIfGatewayAborted(signal);
+                const current = now();
+                while (sentAt.length && current - sentAt[0] >= windowMs) sentAt.shift();
+                if (sentAt.length < maxRequests) {
+                    sentAt.push(current);
+                    return;
+                }
+                await sleep(sentAt[0] + windowMs - current + 25, signal);
+            }
+        },
+    };
+};
 
 export interface ConcurrencyLimiter {
     /** Resolves with a one-shot release function once a slot is free. */

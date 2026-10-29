@@ -105,17 +105,23 @@ describe('Default gateway Pi request byte budget', () => {
     });
     afterEach(() => {
         resetDemoGatewaySessionForTests();
+        vi.useRealTimers();
         vi.unstubAllGlobals();
         vi.unstubAllEnvs();
     });
 
     it('compacts a growing tool transcript before any serialized request exceeds the budget', async () => {
+        // Model 3 seconds per mock response without real sleeps. Forty zero-time
+        // responses would deliberately hit the separately tested 28/minute limiter.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        resetDemoGatewayRequestLimiterForTests();
         const TOOL_TURNS = 40;
         const modelBodies: Array<{ bytes: number; body: WireBody }> = [];
         const summaryBodies: Array<{ bytes: number; body: WireBody }> = [];
         let turn = 0;
         vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
             if (String(input).endsWith('/demo/session')) return session();
+            vi.setSystemTime(Date.now() + 3_000);
             const raw = await (input as Request).text();
             const body = JSON.parse(raw) as WireBody;
             expect(body).not.toHaveProperty('max_output_tokens');

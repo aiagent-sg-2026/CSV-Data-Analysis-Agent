@@ -63,6 +63,9 @@ vi.mock('../services/sandbox/javascriptGuestClient',async()=>{
 });
 
 const memory=new Map<string,string>();
+// Preserve exact stage decisions even when a terminal batch needs no later model turn.
+const checkpointWrites: PiInitialCheckpointV2[] = [];
+const recordedStageReceipts = (sessionId: string) => checkpointWrites.filter(checkpoint => checkpoint.sessionId === sessionId).at(-1)?.stageReceipts ?? [];
 const tool=(name:string,args:unknown):AssistantMessage['content']=>[{type:'toolCall',id:crypto.randomUUID(),name,arguments:args as JsonObject}];
 const scripted=(next:(context:Parameters<StreamFn>[1])=>AssistantMessage['content']):StreamFn=>(model,context)=>{
     const content=next(context),message:AssistantMessage={role:'assistant',content,api:model.api,provider:model.provider,model:model.id,
@@ -88,6 +91,7 @@ const fixture=async()=>{
 const bareStore=():StoreApi=>{
     let state={sessionId:'unseeded',settings:{},analysisCards:[],columnProfiles:[],chatHistory:[],agentEvents:[],agentToolLogs:[],runtimeEvents:[],
         progressMessages:[],telemetryEvents:[],dataQualityIssues:[],workspaceFiles:{},queryHistory:[],
+        recordAgentEvent(event: ReturnType<StoreApi['getState']>['agentEvents'][number]) { state.agentEvents.push(event); },
         logAgentToolUsage(){},addProgress(){},clearActiveTurnCancellation(){},setStreamingMessage(){},ensureDatasetSemanticSnapshot:async()=>null,
     } as unknown as ReturnType<StoreApi['getState']>;
     return {getState:()=>state,setState:p=>{state={...state,...(typeof p==='function'?p(state):p)};}};
@@ -95,7 +99,7 @@ const bareStore=():StoreApi=>{
 const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(r=>resolve=r);return {promise,resolve};};
 
 describe('initial shared coding phase',()=>{
-    beforeEach(()=>{memory.clear();io.records.clear();io.commits=0;io.queryCalls=0;io.beforeQuery=undefined;io.beforeGuest=undefined;vi.stubGlobal('localStorage',{getItem:(k:string)=>memory.get(k)??null,setItem:(k:string,v:string)=>memory.set(k,v),removeItem:(k:string)=>memory.delete(k)});});
+    beforeEach(()=>{checkpointWrites.length=0;memory.clear();io.records.clear();io.commits=0;io.queryCalls=0;io.beforeQuery=undefined;io.beforeGuest=undefined;vi.stubGlobal('localStorage',{getItem:(k:string)=>memory.get(k)??null,setItem:(k:string,v:string)=>{memory.set(k,v);if(k.startsWith('pi-initial-analysis-v1:')){const checkpoint=JSON.parse(v);if(checkpoint.schemaVersion===2)checkpointWrites.push(checkpoint);}},removeItem:(k:string)=>memory.delete(k)});});
     it('repairs original ERP source through Pi/QuickJS and independent validation, then exact approval and current queries',async()=>{
         const root=bareStore();try{
             const f=await preparePiStructureRepairSmoke(root);
@@ -390,8 +394,8 @@ describe('initial shared coding phase',()=>{
             expect(gate).toContain('candidate_request_approval');
             expect(listing?.files?.map(file=>file.path)).toEqual(expect.arrayContaining(['/dataset/cleaned.csv']));
             expect(listing).toMatchObject({truncated:false});expect(listing?.totalFiles).toBeGreaterThan(0);expect(taskPlan).toBeDefined();
-            expect(JSON.parse(skipped)).toMatchObject({stage:'dataset.validatePreparedData',decision:'pass'});
-            expect(stages.slice(0,4)).toEqual(['dataset.profileStructure','dataset.detectNoiseRows','dataset.suggestCleaningPlan','dataset.validatePreparedData']);
+            expect(recordedStageReceipts(f.sessionId).find(receipt=>receipt.toolName==='dataset.validatePreparedData')).toMatchObject({stageIndex:4,toolName:'dataset.validatePreparedData',decision:'pass'});
+            expect(recordedStageReceipts(f.sessionId).slice(0,4).map(receipt=>receipt.toolName)).toEqual(['dataset.profileStructure','dataset.detectNoiseRows','dataset.suggestCleaningPlan','dataset.validatePreparedData']);
             expect(f.result.status,f.result.error?.message).toBe('completed');expect(io.commits).toBe(0);expect(io.queryCalls).toBe(1);
         }finally{beginSessionTransition(root);}
     });
@@ -421,7 +425,7 @@ describe('initial shared coding phase',()=>{
             expect(gate).toMatch(/^initial_cleaning_requires_exact_candidate_approval: /);
             expect(gate).toContain('call run_next_analysis_stage with {"stage":"dataset.validatePreparedData"}');
             expect(gate).toContain('Rejected candidate_infer_meaning proposals do not close the skip');
-            expect(JSON.parse(skipped)).toMatchObject({stage:'dataset.validatePreparedData',decision:'pass'});
+            expect(recordedStageReceipts(f.sessionId).find(receipt=>receipt.toolName==='dataset.validatePreparedData')).toMatchObject({stageIndex:4,toolName:'dataset.validatePreparedData',decision:'pass'});
             expect(f.result.status,f.result.error?.message).toBe('completed');expect(io.commits).toBe(0);expect(io.queryCalls).toBe(1);
             expect(root.getState().pendingClarification).toBeNull();
         }finally{beginSessionTransition(root);}

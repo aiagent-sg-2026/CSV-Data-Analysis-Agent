@@ -10,6 +10,10 @@ This repository contains a browser-only React CSV analysis app. It has an editab
 
 Assistant starts expanded on desktop (768 px and wider), while mobile starts with the full-screen drawer closed. You can still hide, reopen, and resize Assistant manually. Resizing preserves its 320 px readable minimum; constrained desktop layouts let the main area shrink below its preferred 600 px rather than collapsing Assistant. Closing and immediately reopening a structural semantic review must not let an older preparation cancel the current review. Semantic confirmation is not Dataset Commit approval: independent validation and separate exact approval remain required. A completed source scan is not proof that repair or model execution succeeded.
 
+## Incomplete provider responses
+
+A Responses stream that ends without a terminal event remains a failed run. Its exact SDK error is classified as a provider failure for the existing explicit recovery UI, not a successful partial result or an automatic retry. Structural/business-meaning blocks still take priority; resolving them and any separate Dataset Commit approval remain necessary. This classification does not identify or fix the underlying network cause.
+
 ## Repository layout
 
 | Path | Responsibility |
@@ -413,3 +417,10 @@ Accepted rows are retained automatically outside temporary session storage. Afte
 Supported meaning is one table, original first-row header, one-to-one column mapping, source-record grain, identity/trim and strict decimal scale 0–6 with host-resolved units; optional last-record numeric summary is reconciled exactly. This does not prove business meaning, natural-key uniqueness or unit homogeneity. DECIMAL storage, scalar/membership/range filters and SUM preserve base-10 values (filter literals must be plain decimals with at most six fractional digits). Multi-period SUM/MIN/MAX and COUNT DISTINCT now share typed decimal row totals: compatible scales are added exactly, partial NULL periods add nothing, and all-NULL rows remain missing. Native decimal overflow fails rather than approximating. Mixing validated exact decimals with unproven non-decimal columns fails explicitly (`exact_decimal_period_mixed_types_unsupported`); missing/different resolved units require meaning clarification (`exact_decimal_period_units_require_meaning`), not guessed conversion. Presence-only COUNT needs no addition or unit conversion. Ordinary nonexact CSV coercion is unchanged. AVG and other floating statistical operations are not exact-decimal arithmetic guarantees. Bounds include 100 MiB original/200 MiB retained source handles per session, 256 KiB scratch chunks/10,000 chunks/256 MiB per generation, 256 MiB accepted CSV and 256 KiB accepted manifest, plus existing cumulative execution/read/step/task budgets. These are ceilings, not a 100 MiB qualification; automatic retention has no new global generation-count quota and remains subject to browser storage quota.
 
 Qualification uses synthetic >25 MiB Files, real QuickJS/OPFS/React approval/DuckDB/IndexedDB and ten fixed-oracle queries, not live AI or arbitrary business datasets. General large-source coordinator/model meaning compilation, compressed/dual-grain ERP and full-product/100 MiB qualification remain open. The checked-in root deployment is unchanged; this package is active only in a newly built `frontend/dist`, not the old root bundle.
+
+
+### Bounded initial-analysis request budget
+
+Required initial-analysis stages run together up to the next optional cleaning decision, failure, or completion. Each stage still checks its lease, approval/cleaning gates, budget and durable checkpoint; optional cleaning remains model-controlled. Mock regression tests verify three coordinator turns for the nine-stage path and two when cleaning is skipped, not reduced total provider usage or unchanged model quality.
+
+The Default gateway limits actual response-request sends in this browser instance to 28 per rolling minute and retries explicit demo IP-limit rejections at most twice. Rate/retry waits remain cancellable and within the existing 45-second whole-request deadline, so a saturated window can time out rather than wait indefinitely. Separate tabs/devices sharing an IP are not coordinated by this browser-local limiter.

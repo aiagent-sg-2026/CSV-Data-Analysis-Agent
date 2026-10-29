@@ -18,6 +18,22 @@ describe('default gateway browser fetch', () => {
         vi.unstubAllEnvs();
     });
 
+    it('retries only explicit demo IP limits and stops after two waits', async () => {
+        let calls = 0;
+        vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+            if (isSessionCall(input)) return sessionResponse('dmo_token_a');
+            calls += 1;
+            return new Response(JSON.stringify({ error: { code: 'DEMO_IP_RATE_LIMIT' } }),
+                { status: 429, headers: { 'retry-after': '0' } });
+        }));
+        const response = await fetchDefaultGateway('https://example.invalid/demo/v1/responses', {
+            method: 'POST', body: JSON.stringify({ input: 'test' }),
+        });
+        expect(response.status).toBe(429);
+        expect(calls).toBe(3);
+        await response.text();
+    });
+
     it('removes banned fields, injects the session token and uses the session model', async () => {
         const upstream = vi.fn(async (input: unknown, init?: RequestInit) => {
             if (isSessionCall(input)) return sessionResponse('dmo_token_a');

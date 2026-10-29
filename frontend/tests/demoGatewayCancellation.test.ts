@@ -34,6 +34,69 @@ describe('gateway cancellation boundaries', () => {
         vi.unstubAllEnvs();
     });
 
+    it('counts actual sends after slow slots, not expired reservations from queue entry', async () => {
+        let calls = 0;
+        const held: ReadableStreamDefaultController<Uint8Array>[] = [];
+        vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+            if (String(input).endsWith('/demo/session')) return sessionResponse();
+            calls += 1;
+            if (calls <= 2) return new Response(new ReadableStream<Uint8Array>({ start(controller) { held.push(controller); } }));
+            return new Response(null, { status: 204 });
+        }));
+        const first = observe(Promise.all(Array.from({ length: 28 }, () => post().then(response => response.text()))));
+        await flush();
+        expect(calls).toBe(2);
+        await vi.advanceTimersByTimeAsync(40_000);
+        held.forEach(controller => controller.close());
+        await flush();
+        await first.done;
+        expect(first.outcome.error).toBeUndefined();
+        expect(calls).toBe(28);
+        await vi.advanceTimersByTimeAsync(20_025);
+        const second = observe(Promise.all(Array.from({ length: 28 }, () => post().then(response => response.text()))));
+        await flush();
+        // Only the first two t=0 sends expired. The 26 sends at t=40s remain charged.
+        expect(calls).toBe(30);
+        await vi.advanceTimersByTimeAsync(40_000);
+        await second.done;
+        expect(second.outcome.error).toBeUndefined();
+        expect(calls).toBe(56);
+    });
+
+    it('cancels IP retry waits without sending another request', async () => {
+        let calls = 0;
+        vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+            if (String(input).endsWith('/demo/session')) return sessionResponse();
+            calls += 1;
+            return new Response(JSON.stringify({ error: { code: 'DEMO_IP_RATE_LIMIT' } }),
+                { status: 429, headers: { 'retry-after': '60' } });
+        }));
+        const controller = new AbortController();
+        const pending = observe(post(controller.signal));
+        await flush();
+        expect(calls).toBe(1);
+        controller.abort();
+        await pending.done;
+        expect(pending.outcome.error).toMatchObject({ name: 'AbortError' });
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(calls).toBe(1);
+    });
+
+    it('retains the 45 second whole-request deadline during IP retry waits', async () => {
+        let calls = 0;
+        vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+            if (String(input).endsWith('/demo/session')) return sessionResponse();
+            calls += 1;
+            return new Response(JSON.stringify({ error: { code: 'DEMO_IP_RATE_LIMIT' } }),
+                { status: 429, headers: { 'retry-after': '60' } });
+        }));
+        const pending = observe(post());
+        await vi.advanceTimersByTimeAsync(45_000);
+        await pending.done;
+        expect(pending.outcome.error).toMatchObject({ name: 'TimeoutError' });
+        expect(calls).toBe(1);
+    });
+
     it('cancels one session waiter without cancelling another valid waiter', async () => {
         const handshake = deferred<Response>();
         let sharedSignal: AbortSignal | undefined;
