@@ -63,7 +63,8 @@ export interface IDataSlice {
     prepareStructureRepairReview: () => Promise<import('../../types/structureRepair').StructureRepairReview | null>;
     confirmStructureRepairMeaning: (reviewId: string, choice: string, rendered?: import('../../services/agent/structureRepairConfirmation').RenderedStructureRepairReview) => Promise<void>;
     resumeStructureRepairDraft: (reviewId: string) => Promise<void>;
-    cancelStructureRepairReview: (reviewId?: string) => void;
+    continueStructureRepairAnalysis: (reviewId: string, rendered?: import('../../services/agent/structureRepairConfirmation').RenderedStructureRepairReview) => Promise<void>;
+    cancelStructureRepairReview: (reviewId?: string, onlyIfReviewing?: boolean) => void;
     saveReportStructureBoundaryOverride: (boundary: ReportBoundary) => Promise<void>;
     setColumnAnnotation: (annotation: UserColumnAnnotation) => void;
     removeColumnAnnotation: (columnName: string) => void;
@@ -1041,7 +1042,12 @@ export const createDataSlice: StateCreator<AppStore, [], [], IDataSlice> = (set,
             const { resumeStructureRepairDraft } = await import('../../services/agent/structureRepairConfirmation');
             await resumeStructureRepairDraft(owner, reviewId);
         },
-        cancelStructureRepairReview: (reviewId) => cancelStructureRepairReview(storeApi, reviewId),
+        continueStructureRepairAnalysis: async (reviewId, rendered) => {
+            const owner = scopeCurrentExecution(storeApi);
+            const { continueStructureRepairAnalysis } = await import('../../services/agent/structureRepairConfirmation');
+            await continueStructureRepairAnalysis(owner, reviewId, rendered);
+        },
+        cancelStructureRepairReview: (reviewId, onlyIfReviewing) => cancelStructureRepairReview(storeApi, reviewId, onlyIfReviewing),
         saveReportStructureBoundaryOverride: async (boundary) => {
             const ownedStore = scopeCurrentExecution(storeApi);
             const { getState: get, setState: set } = ownedStore;

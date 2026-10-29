@@ -1,4 +1,6 @@
+import { installStructureRepairContinuation, revokeStructureRepairContinuation, isStructureRepairHandoffCurrent } from './structureRepairContinuation';
 import type { StoreApi } from './types';
+import { handleInitialAnalysis } from './orchestration/initialAnalysisService';
 import type { StructureRepairReview } from '../../types/structureRepair';
 import type { ReportIntakeIr } from '../../types/intake';
 import { captureRecoverySource } from '../data/immutableCsvSource';
@@ -6,7 +8,7 @@ import { parseCsvTextWithDetection } from '../data/csvDialectDetector';
 import { sha256Bytes } from '../data/sourceDigest';
 import { solveHeaderAlignment } from './headerAlignment';
 import { assertCsvScanPublicationAllowed, requireCurrentCsvSourceScan } from '../data/csvSourceScan';
-import { assertSessionResourceActive, captureSessionScope, ownsSessionScope, registerSessionResource, type SessionScope } from '../session/sessionOwnership';
+import { assertSessionResourceActive, captureSessionScope, ownsSessionScope, registerSessionResource, beginRun, finishRun, scopeRunStore, rootStore, ownsRun, type SessionScope } from '../session/sessionOwnership';
 
 type Entry = { view: StructureRepairReview; signature: string };
 const reviews = new WeakMap<SessionScope, Entry>();
@@ -200,9 +202,104 @@ export const resumeStructureRepairDraft = async (store: StoreApi, reviewId: stri
     return publish(store, entry);
 };
 
-export const cancelStructureRepairReview = (store: StoreApi, reviewId?: string): void => {
+/** Explicit handoff to the existing governed runtime; the preview is never an input table. */
+export const continueStructureRepairAnalysis = async (store: StoreApi, reviewId: string, rendered?: RenderedStructureRepairReview): Promise<void> => {
+    const scope = captureSessionScope(store), entry = reviews.get(scope), state = store.getState();
+    if (!entry || entry.view.reviewId !== reviewId || !['confirmed', 'draft_uncommitted', 'repair_failed'].includes(entry.view.status))
+        throw new Error('repair_continuation_not_ready');
+    if (state.isBusy || state.activeExecution) throw new Error('repair_continuation_run_busy');
+    if (JSON.stringify(state.structureRepairReview) !== JSON.stringify(entry.view)
+        || rendered && (JSON.stringify(rendered.review) !== JSON.stringify(entry.view) || rendered.intakeSignature !== entry.signature))
+        throw new Error('repair_projection_changed');
+    const goal = state.confirmedAnalysisGoal;
+    if (!goal?.trim() || !state.csvData) throw new Error('repair_continuation_analysis_goal_required');
+    const expectedProjection = JSON.stringify(entry.view);
+    const expectedSelected = entry.view.selectedCandidateDigest;
+    const checkDispatch = () => {
+        const now = store.getState();
+        if (JSON.stringify(now.structureRepairReview) !== expectedProjection
+            || rendered && (JSON.stringify(rendered.review) !== expectedProjection || rendered.intakeSignature !== entry.signature))
+            throw new Error('repair_projection_changed');
+        if (now.datasetBundle !== state.datasetBundle || now.csvData !== state.csvData
+            || now.rawCsvData !== state.rawCsvData || now.canonicalCsvData !== state.canonicalCsvData
+            || now.rawIntakeIr !== state.rawIntakeIr || now.confirmedAnalysisGoal !== goal
+            || now.isBusy || now.activeExecution || entry.view.selectedCandidateDigest !== expectedSelected)
+            throw new Error('repair_continuation_source_or_goal_changed');
+    };
+    entry.view.status = 'resuming';
+    let bound: Awaited<ReturnType<typeof recheck>>;
+    try {
+        bound = await recheck(store, scope, entry);
+        if (entry.view.status !== 'resuming') throw new Error('repair_review_cancelled');
+        checkDispatch();
+    } catch (error) {
+        if (ownsSessionScope(store, scope) && reviews.get(scope) === entry && entry.view.status === 'resuming') {
+            entry.view = { ...entry.view, status: 'stale', message: 'Source, goal or displayed interpretation changed. Close and reopen this review to inspect the current source before continuing.' };
+            publish(store, entry);
+        }
+        throw error;
+    }
+    const selected = entry.view.selectedCandidateDigest;
+    const candidate = bound.choices.find(c => c.candidateDigest === selected)?.candidate;
+    if (!candidate) throw new Error('repair_choice_invalid');
+    const reviewCurrent = () => {
+        current(store, scope, bound.inputSignature, bound.sha);
+        if (reviews.get(scope) !== entry || entry.view.selectedCandidateDigest !== selected
+            || ['cancelled', 'stale', 'neither'].includes(entry.view.status)) throw new Error('repair_continuation_stale');
+    };
+    const root = rootStore(store);
+    const lease = beginRun(root, 'initial_analysis', `pi-header-repair-${crypto.randomUUID()}`);
+    try {
+        const check = installStructureRepairContinuation(root, reviewId, candidate, goal, reviewCurrent, lease, () => {
+            if (reviews.get(scope) === entry) {
+                reviews.delete(scope); repairRequired.delete(scope);
+                root.setState({ structureRepairReview: null });
+            }
+        }, reason => {
+            if (reviews.get(scope) === entry) {
+                entry.view = { ...entry.view, status: 'repair_failed', message: reason };
+                publish(root, entry);
+            }
+        });
+        entry.view = { ...entry.view, status: 'continuing', message: 'Continuing governed repair from the original source. Header choice only constrains proposals; full meaning, independent validation and separate exact Dataset Commit approval remain required.' };
+        publish(root, entry);
+        // Do not nest a provider-consent dialog under the structure dialog's inert/focus boundary.
+        root.setState({ isReportBoundaryConfirmModalOpen: false, isAsideVisible: true });
+        const outcome = await handleInitialAnalysis(state.csvData, goal, scopeRunStore(root, lease), { trigger: 'manual' });
+        if (entry.view.status === 'repair_failed' && reviews.get(scope) === entry && ownsRun(root, lease)) {
+            root.setState({ isAsideVisible: true });
+            return; // Preserve the host's specific unsupported/validation/cancellation reason.
+        }
+        check();
+        const pending = root.getState().pendingClarification;
+        const waiting = outcome.status === 'paused' && isStructureRepairHandoffCurrent(root, lease)
+            && Boolean(pending?.resumeContext?.piSpillMeaningChoice || pending?.resumeContext?.piCandidateApproval);
+        if (!waiting && !ownsRun(root, lease)) throw new Error('repair_continuation_run_superseded');
+        entry.view = { ...entry.view, status: waiting ? 'awaiting_repair' : 'repair_failed',
+            message: waiting
+                ? 'Continue in Assistant: review the complete business meaning or separately approve the exact validated Dataset Commit. Header confirmation alone never publishes data.'
+                : `Repair did not produce an actionable semantic or Dataset Commit review. ${outcome.message ?? 'Inspect the analysis error or unsupported-source explanation.'} Retry is explicit; no automatic provider call or Dataset Commit approval is granted.` };
+        publish(root, entry);
+        if (!waiting) { revokeStructureRepairContinuation(root, reviewId, lease); root.setState({ isAsideVisible: true }); }
+        else root.setState({ isReportBoundaryConfirmModalOpen: false, isAsideVisible: true });
+    } catch (error) {
+        revokeStructureRepairContinuation(store, reviewId, lease);
+        if (ownsSessionScope(store, scope) && ownsRun(root, lease) && reviews.get(scope) === entry && !['cancelled', 'repair_failed'].includes(entry.view.status)) {
+            entry.view = { ...entry.view, status: 'repair_failed', message: 'Repair continuation was interrupted or became stale. Re-open the current source review before continuing; accepted data was not approved by this action.' };
+            publish(store, entry);
+            root.setState({ isAsideVisible: true });
+        }
+        throw error;
+    } finally {
+        finishRun(root, lease);
+    }
+};
+
+export const cancelStructureRepairReview = (store: StoreApi, reviewId?: string, onlyIfReviewing = false): void => {
     const scope = captureSessionScope(store), entry = reviews.get(scope);
     if (!entry || reviewId && entry.view.reviewId !== reviewId) return;
+    if (onlyIfReviewing && ['continuing', 'awaiting_repair'].includes(entry.view.status)) return;
+    revokeStructureRepairContinuation(store, entry.view.reviewId);
     entry.view = { ...entry.view, status: 'cancelled', selectedCandidateDigest: null, draft: undefined, message: 'Review cancelled. Dataset unchanged; re-open review to start a fresh confirmation.' };
     publish(store, entry);
 };

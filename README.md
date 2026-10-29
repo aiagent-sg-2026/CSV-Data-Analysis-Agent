@@ -1,5 +1,13 @@
 # CSV Data Analysis Agent
 
+## Source-bound header review continuation
+
+After choosing a repeated header group, **Continue repair and validation** enters the existing governed Pi repair runtime instead of ending at the three-row read-only preview. The header choice constrains exact source coordinates only; non-expanded fields, grain, units and summary roles still require a complete source-bound meaning review. The existing requirement for two genuinely different, independently valid dual proposals is unchanged. Unsupported mappings stop visibly rather than fabricating an alternative, flattening the source or granting approval.
+
+The structure dialog closes before an independent provider-consent dialog can open. A private session/source/goal/task binding, retained budgets, cancellation and stale-result fences remain in force. Full meaning selection is followed by actual sandbox execution, complete independent candidate validation and a **separate exact Dataset Commit approval**. Only a committed/installed result clears the header continuation and resumes analysis. Neither, cancellation and failed validation cannot publish data. Failed or uncertain commits retain the existing fail-closed recovery handling rather than claiming success or starting analysis. Recovery is explicit; there is no automatic paid retry.
+
+Local qualification uses fictional CSVs and deterministic provider replay, not a live AI provider. `frontend/tests/headerRepairBridgeIntegration.test.ts` exercises the real Pi/private-task/QuickJS path. With a local Vite server on port 4199, run `node frontend/scripts/header-repair-bridge-browser-smoke.mjs`; the portable harness blocks all external requests and refuses non-loopback app URLs. Set `BRIDGE_EVIDENCE_DIR` and optionally `CHROMIUM_PATH` for artifacts/browser selection. Native Chromium tests cover header A/B, independently validated two-table exact approval and ready DuckDB binding, plus rejected values, Neither, cancellation and same-source replacement. This proves the bounded continuation, not general arbitrary-layout repair, business correctness of a customer file, full report quality or a network fix for an interrupted Responses stream.
+
 This repository contains a browser-only React CSV analysis app. It has an editable source package and a checked-in static deployment. No Node.js server is needed when users run the deployed app; Node.js is used to build and test the source.
 
 ### Describe diagnostics (source update, pending release qualification)

@@ -1,0 +1,55 @@
+// @vitest-environment node
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+import variant from '@jitl/quickjs-wasmfile-release-sync';
+import {newQuickJSWASMModuleFromVariant} from 'quickjs-emscripten-core';
+import {executeQuickJsGuest} from '../services/sandbox/quickJsGuest';
+import {resolveGuestLimits} from '../services/sandbox/javascriptGuestProtocol';
+import {prepareBridgeFixture} from './helpers/headerRepairBridgeFixture';
+import {prepareStructureRepairReview,confirmStructureRepairMeaning,continueStructureRepairAnalysis} from '../services/agent/structureRepairConfirmation';
+import {handleClarificationResponse} from '../services/agent/orchestration/chatOrchestrator';
+import {beginSessionTransition} from '../services/session/sessionOwnership';
+import type {StoreApi} from '../services/agent/types';
+import {repairReservationStorage} from './helpers/repairReservationStorage';
+const controls=vi.hoisted(()=>({stream:null as unknown,guest:null as unknown,db:null as unknown}));
+vi.mock('../services/storageService',async original=>({...await original<typeof import('../services/storageService')>(),getStorageDatabase:async()=>controls.db}));
+vi.mock('../services/persistence/currentSessionPersistence',()=>({persistCurrentAppSessionSnapshot:vi.fn(async()=>true)}));
+vi.mock('../services/agent/memory/memoryManager',()=>({finalizeAndSaveRun:vi.fn(async()=>{})}));
+vi.mock('../services/agent/runtime/pi/piProvider',async original=>({...await original<typeof import('../services/agent/runtime/pi/piProvider')>(),createPiProviderStream:()=>controls.stream}));
+vi.mock('../services/agent/runtime/pi/piExecutorPreparation',async original=>{const real=await original<typeof import('../services/agent/runtime/pi/piExecutorPreparation')>();return {...real,preparePiExecutor:(store:StoreApi,options:Parameters<typeof real.preparePiExecutor>[1])=>real.preparePiExecutor(store,{...options,guest:controls.guest as never})};});
+const wasm=newQuickJSWASMModuleFromVariant(variant),roots:StoreApi[]=[];
+beforeEach(()=>{
+    for(const name of ['localStorage','sessionStorage']){const v=new Map<string,string>();vi.stubGlobal(name,{getItem:(k:string)=>v.get(k)??null,setItem:(k:string,x:string)=>v.set(k,x),removeItem:(k:string)=>v.delete(k)});}
+    controls.db=repairReservationStorage().db;
+    controls.guest={run:(code:string,inputJson:string,o:{limits?:Parameters<typeof resolveGuestLimits>[0];onStarted?:()=>void})=>executeQuickJsGuest({generation:1,code,inputJson,limits:resolveGuestLimits(o?.limits)},()=>wasm,o?.onStarted),cancel(){},dispose(){}};
+});
+afterEach(()=>{roots.splice(0).forEach(beginSessionTransition);vi.unstubAllGlobals();});
+const setup=()=>{let state={sessionId:crypto.randomUUID(),settings:{},workspaceFiles:{},analysisCards:[],columnProfiles:[],chatHistory:[],agentEvents:[],agentToolLogs:[],runtimeEvents:[],telemetryEvents:[],progressMessages:[],queryHistory:[],logAgentToolUsage(){},addProgress(){},clearActiveTurnCancellation(){},ensureDatasetSemanticSnapshot:async()=>null} as unknown as ReturnType<StoreApi['getState']>;
+    const store:StoreApi={getState:()=>state,setState:p=>{state={...state,...(typeof p==='function'?p(state):p)};}};roots.push(store);return store;};
+it.each(['success','headerB','value'] as const)('actual governed handoff, private task resume and QuickJS: %s',async fault=>{
+    const store=setup(),f=await prepareBridgeFixture(store,fault==='value'?fault:undefined,fault==='headerB'?'B':'A');controls.stream=f.stream;
+    const review=(await prepareStructureRepairReview(store))!;await confirmStructureRepairMeaning(store,review.reviewId,review.choices[fault==='headerB'?1:0].candidateDigest);
+    await continueStructureRepairAnalysis(store,review.reviewId);
+    expect(store.getState().structureRepairReview?.status,JSON.stringify(store.getState().progressMessages)+f.trace.join('\n')).toBe('awaiting_repair');
+    expect(store.getState().pendingClarification?.resumeContext?.piSpillMeaningChoice).toBeTruthy();
+    expect(f.trace.join('\n')).toContain('confirmed-header-alignment.json');
+    expect(store.getState().taskInspection?.programs).toHaveLength(0);expect(store.getState().datasetBundle?.acceptedCommit).toBeUndefined();
+    await handleClarificationResponse(store.getState().pendingClarification!.options![0],store);
+    if(fault!=='value'){
+        expect(store.getState().taskInspection?.candidate?.validation?.decision,f.trace.join('\n')+JSON.stringify(store.getState().progressMessages)).toBe('validated');
+        expect(store.getState().pendingClarification?.resumeContext?.piCandidateApproval,f.trace.join('\n')).toBeTruthy();
+        expect(store.getState().datasetBundle?.acceptedCommit).toBeUndefined();expect(store.getState().csvData).toBe(f.data);
+    }else{
+        expect(store.getState().pendingClarification?.resumeContext?.piCandidateApproval).toBeUndefined();
+        expect(store.getState().taskInspection?.candidate?.validation?.decision).not.toBe('validated');
+        expect(store.getState().datasetBundle?.acceptedCommit).toBeUndefined();
+    }
+},30000);
+it.each(['neither','deny'] as const)('a genuine human %s ends this continuation with an explicit retry, never acceptance',async choice=>{
+    const store=setup(),f=await prepareBridgeFixture(store);controls.stream=f.stream;
+    const review=(await prepareStructureRepairReview(store))!;await confirmStructureRepairMeaning(store,review.reviewId,review.choices[0].candidateDigest);await continueStructureRepairAnalysis(store,review.reviewId);
+    if(choice==='deny')await handleClarificationResponse(store.getState().pendingClarification!.options![0],store);
+    const pending=store.getState().pendingClarification!;await handleClarificationResponse(pending.options!.find(o=>o.value===choice)!,store);
+    expect(store.getState().structureRepairReview?.status).toBe('repair_failed');
+    expect(store.getState().structureRepairReview?.message).toMatch(/explicit(?:ly)? retry/);
+    expect(store.getState().datasetBundle?.acceptedCommit).toBeUndefined();expect(store.getState().csvData).toBe(f.data);
+},30000);

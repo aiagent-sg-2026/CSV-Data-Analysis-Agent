@@ -24,6 +24,24 @@ type Adapter = ReturnType<typeof createCodeExecutionAdapter>;
 type Guest = Parameters<typeof createCodeExecutionAdapter>[3];
 type RecordState = { guest?: Guest; spillFactory?: Parameters<typeof createCodeExecutionAdapter>[4]; task: AgentTaskContract; workspace: TaskWorkspace; skills:SkillSnapshot; mcp:import('../../connectors/httpMcpContract').McpTaskPort; skillPrograms:Map<string,{pin:PinnedSkill;reference:import('../../execution/codeExecutionContract').CodeArtifactRef}>; coding: boolean; workStarted: boolean; scopeRepairAttempts:number; failureKey: string; repetitions: number; repairCommit?: TaskRepairCommit; retire?: () => void; inspection?: TaskInspectionProjection };
 const tasks = new WeakMap<StoreApi['getState'], RecordState>();
+const taskOwners = new WeakMap<PiCodingTask, RecordState>();
+const taskOwnerTokens = new WeakMap<RecordState, object>();
+export const isCurrentPiTaskIdentity = (store: StoreApi, token: object): boolean => {
+    const record = tasks.get(rootStore(store).getState);
+    return Boolean(record && taskOwnerTokens.get(record) === token);
+};
+/** Opaque host identity, retained only across a validated task continuation. */
+export const captureOwnedPiTaskIdentity = (store: StoreApi): object => {
+    const lease = store.executionContext?.lease;
+    if (!lease) throw new Error('task_owner_unavailable');
+    assertRunActive(store, lease);
+    const record = store.piTask && taskOwners.get(store.piTask);
+    if (!record || tasks.get(rootStore(store).getState) !== record) throw new Error('task_owner_unavailable');
+    let token = taskOwnerTokens.get(record);
+    if (!token) { token = Object.freeze({}); taskOwnerTokens.set(record, token); }
+    return token;
+};
+
 const digest = (value: unknown) => sha256Bytes(new TextEncoder().encode(JSON.stringify(value)));
 const codingTool = (name: string) => name.startsWith('code.') || name.startsWith('candidate.') || ['workspace.write', 'workspace.append', 'workspace.replace'].includes(name);
 
@@ -459,6 +477,7 @@ export const preparePiTask = async (store: StoreApi, message: string, continuati
         lease.controller.abort(new Error(blockedReason));
     }, Math.max(1, record.task.budget.limits.activeMs - record.task.budget.used.activeMs));
     const unregisterDeadline = registerSessionResource(lease.scope, () => clearTimeout(deadline));
+    taskOwners.set(task, record);
     store.piTask = task;
     task.attach(store); publish();
     return task;

@@ -1,3 +1,4 @@
+import { captureStructureRepairProposalConstraint } from '../agent/structureRepairContinuation';
 import type {StoreApi} from '../agent/types';
 import {assertRunActive,awaitOwned} from '../session/sessionOwnership';
 import {captureCodeTables,codeDigest} from '../agent/execution/codeTableInputs';
@@ -32,9 +33,11 @@ export const inferCandidateMeaning=async(store:StoreApi,proposal:unknown)=>{
     if(!context||!task||!port||!store.codeExecution)throw new Error('meaning_task_unavailable');
     const lease=context.lease,version=task.snapshot.revision,binding=structuredClone(task.snapshot.inputBindings);
     const p=structuredClone(proposal);
+    const headerConstraint = captureStructureRepairProposalConstraint(store, p);
     const source=store.getState().datasetBundle?.source.inspection;
     const check=()=>{
         assertRunActive(store,lease);
+        headerConstraint?.();
         const now=store.getState().datasetBundle;
         if(task.snapshot.revision!==version||JSON.stringify(task.snapshot.inputBindings)!==JSON.stringify(binding)
             ||binding.some(b=>!now?.tables.some(t=>t.tableId===b.tableId&&t.datasetVersion===b.datasetVersion)||now.relationshipSetId!==b.relationshipSetId)
@@ -43,7 +46,7 @@ export const inferCandidateMeaning=async(store:StoreApi,proposal:unknown)=>{
         if(!Array.isArray(jobs)||jobs.length||port.validationRequirements().configured)throw new Error('meaning_contract_locked');
     };
     const bind = (compiled: HostCandidateValidationContract, draftOnly = false, meaningCheck = () => {}) => {
-        inferredBindings.set(compiled, { namespaceId: port.namespaceId, signature: JSON.stringify(compiled), draftOnly, check: meaningCheck });
+        inferredBindings.set(compiled, { namespaceId: port.namespaceId, signature: JSON.stringify(compiled), draftOnly, check: () => { headerConstraint?.(); meaningCheck(); } });
         return port.bindInferredMeaning(compiled, context);
     };
     check();

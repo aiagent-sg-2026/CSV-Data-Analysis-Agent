@@ -15,6 +15,7 @@ export const StructureRepairReviewPanel: React.FC = () => {
     const prepare = useAppStore(s => s.prepareStructureRepairReview);
     const confirm = useAppStore(s => s.confirmStructureRepairMeaning);
     const resume = useAppStore(s => s.resumeStructureRepairDraft);
+    const continueRepair = useAppStore(s => s.continueStructureRepairAnalysis);
     const cancel = useAppStore(s => s.cancelStructureRepairReview);
     const [error, setError] = useState('');
     const [pending, setPending] = useState(false);
@@ -25,7 +26,7 @@ export const StructureRepairReviewPanel: React.FC = () => {
         if (prepare) reviewConsumers.set(prepare, consumer);
         const cancelOwnedReview = () => {
             if (!prepare || !id || reviewConsumers.get(prepare) !== consumer) return;
-            cancel?.(id);
+            cancel?.(id, true);
             reviewConsumers.delete(prepare);
         };
         setError('');
@@ -47,6 +48,7 @@ export const StructureRepairReviewPanel: React.FC = () => {
     const waiting = current && review?.status === 'awaiting_semantic_confirmation';
     return <section aria-label="Structural semantic confirmation" className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
         <h3 className="text-sm font-semibold text-blue-950">Confirm business meaning — not Dataset Commit approval</h3>
+        <p className="text-sm text-slate-700">This choice confirms only which repeated header group owns the expanded metric columns. Other fields, row grain, units and summary roles still require a separate complete meaning review.</p>
         <p className="text-sm text-slate-700">{current ? review?.message : 'Source/session changed. Re-open review to inspect the current source.'}</p>
         {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
         {current && review && <>
@@ -62,7 +64,7 @@ export const StructureRepairReviewPanel: React.FC = () => {
                     <p>Expanded data columns {c.mainStartColumn + 1}–{c.mainEndColumn}; {c.groupCount} groups × {c.groupWidth} categories. Header source rows {c.headerSourceRows.map(r => r + 1).join(', ')}.</p>
                     <details><summary className="cursor-pointer">Inspect mapping and source sample values ({choice.label})</summary>
                         <div className="overflow-auto max-h-56"><table className="text-xs w-full"><thead><tr><th>Data column</th><th>Header evidence (row:column)</th><th>Source samples (not validated)</th></tr></thead><tbody>
-                            {c.mappings.map(m => <tr key={m.targetColumn}><td>{m.targetColumn + 1}</td><td>{m.headerPath.map(ref => `${intake?.rawRows[ref.rowIndex]?.[ref.columnIndex] ?? ''} [${ref.rowIndex + 1}:${ref.columnIndex + 1}]`).join(' → ')}</td><td>{intake?.rawRows.slice(c.bodySourceRows.start, Math.min(c.bodySourceRows.endExclusive, c.bodySourceRows.start + 3)).map(row => row[m.targetColumn]).join(' | ')}</td></tr>)}
+                            {c.mappings.map(m => <tr key={m.targetColumn}><td>{m.targetColumn + 1}{(m.targetColumn < c.mainStartColumn || m.targetColumn >= c.mainEndColumn) && <span className="block text-slate-500">Structural suggestion — not confirmed here</span>}</td><td>{m.headerPath.map(ref => `${intake?.rawRows[ref.rowIndex]?.[ref.columnIndex] ?? ''} [${ref.rowIndex + 1}:${ref.columnIndex + 1}]`).join(' → ')}</td><td>{intake?.rawRows.slice(c.bodySourceRows.start, Math.min(c.bodySourceRows.endExclusive, c.bodySourceRows.start + 3)).map(row => row[m.targetColumn]).join(' | ')}</td></tr>)}
                         </tbody></table></div>
                     </details>
                     <button disabled={!waiting || pending} onClick={() => void act(() => confirm(review.reviewId, choice.candidateDigest, { review, intakeSignature: intakeKey }))} className="mt-2 rounded bg-blue-600 px-3 py-2 text-white disabled:opacity-50">Choose {choice.label} — confirm meaning</button>
@@ -71,7 +73,8 @@ export const StructureRepairReviewPanel: React.FC = () => {
             <div className="flex flex-wrap gap-2">
                 <button disabled={!waiting || pending} onClick={() => void act(() => confirm(review.reviewId, 'neither', { review, intakeSignature: intakeKey }))} className="rounded border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50">Neither / Correct mapping</button>
                 {review.status === 'confirmed' && <button disabled={pending} onClick={() => void act(() => resume(review.reviewId))} className="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">Resume read-only mapping draft</button>}
-                <button disabled={pending} onClick={() => cancel(review.reviewId)} className="rounded border border-slate-300 px-3 py-2 text-sm disabled:opacity-50">Cancel semantic review</button>
+                {['confirmed', 'draft_uncommitted', 'repair_failed'].includes(review.status) && <button disabled={pending} onClick={() => void act(() => continueRepair(review.reviewId, { review, intakeSignature: intakeKey }))} className="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">Continue repair and validation</button>}
+                <button disabled={pending && review.status !== 'continuing'} onClick={() => cancel(review.reviewId)} className="rounded border border-slate-300 px-3 py-2 text-sm disabled:opacity-50">Cancel semantic review</button>
             </div>
             {review.draft && <div aria-label="Read-only mapping draft" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm">
                 <h4 className="font-semibold">Draft / Uncommitted — not validated</h4>
@@ -81,6 +84,6 @@ export const StructureRepairReviewPanel: React.FC = () => {
                 </tbody></table></div>
             </div>}
         </>}
-        <p className="text-xs font-medium text-slate-700">Read-only inspection only. Independent validation and separate exact commit approval are required. Accepted data and DuckDB are unchanged.</p>
+        <p className="text-xs font-medium text-slate-700">Header confirmation and preview do not approve a dataset. Continue repair for full validation, then review a separate exact Dataset Commit in Assistant.</p>
     </section>;
 };

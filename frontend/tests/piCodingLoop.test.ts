@@ -6,7 +6,7 @@ import { createAssistantMessageEventStream, type AssistantMessage, type JsonObje
 import type { StreamFn } from '@earendil-works/pi-agent-core';
 import { executeQuickJsGuest } from '../services/sandbox/quickJsGuest';
 import { resolveGuestLimits } from '../services/sandbox/javascriptGuestProtocol';
-import { preparePiTask } from '../services/agent/runtime/pi/piCodingTask';
+import { captureOwnedPiTaskIdentity, isCurrentPiTaskIdentity, preparePiTask } from '../services/agent/runtime/pi/piCodingTask';
 import { runPiFollowUpTurn } from '../services/agent/runtime/pi/piFollowUpRuntimeService';
 import { createPiAppTools } from '../services/agent/runtime/pi/piAppTools';
 import { beginRun, scopeRunStore, finishRun, beginSessionTransition, cancelOwnedRun } from '../services/session/sessionOwnership';
@@ -728,4 +728,21 @@ describe('coding ownership and budgets', () => {
         expect(resumed.snapshot.budget.pausedForUser).toBe(false); expect(resumed.snapshot.taskId).toBe(s.task.snapshot.taskId);
         resumed.close('blocked'); finishRun(s.root, lease);
     });
+});
+
+it('opaque task ownership survives only a validated private continuation, not a public snapshot wrapper', async () => {
+    const s=await fixture();
+    const token=captureOwnedPiTaskIdentity(s.store);expect(Object.isFrozen(token)).toBe(true);
+    s.store.piTask={...s.task};
+    expect(()=>captureOwnedPiTaskIdentity(s.store)).toThrow('task_owner_unavailable');
+    s.store.piTask=s.task;
+    const pending=s.task.suspend({question:'Choose the exact meaning',options:[]});s.task.close('blocked');finishRun(s.root,s.lease);
+    const resumedLease=beginRun(s.root,'follow_up','identity-resume'),resumedStore=scopeRunStore(s.root,resumedLease);
+    const resumed=await preparePiTask(resumedStore,s.message,pending.resumeContext!.piTaskContinuation,realGuest);
+    expect(captureOwnedPiTaskIdentity(resumedStore)).toBe(token);expect(isCurrentPiTaskIdentity(s.root,token)).toBe(true);
+    resumed.close('blocked');finishRun(s.root,resumedLease);
+    const nextLease=beginRun(s.root,'follow_up','identity-new'),nextStore=scopeRunStore(s.root,nextLease);
+    const next=await preparePiTask(nextStore,s.message,undefined,realGuest);
+    expect(captureOwnedPiTaskIdentity(nextStore)).not.toBe(token);expect(isCurrentPiTaskIdentity(s.root,token)).toBe(false);
+    next.close('blocked');finishRun(s.root,nextLease);
 });

@@ -1,3 +1,4 @@
+import { captureStructureRepairContinuation, bindStructureRepairContinuationTask, sealStructureRepairHandoff, stopStructureRepairContinuation } from '../../structureRepairContinuation';
 import { preparePiExecutor, type PiExecutorPreparation, type InitialExecutorStage } from './piExecutorPreparation';
 import { beginRun, assertRunActive, awaitOwned, ownsRun, finishRun, scopeRunStore, rootStore } from '../../../session/sessionOwnership';
 import { presentGatewayError } from '../../../../utils/gatewayErrorMessage';
@@ -158,6 +159,7 @@ const run = async (
     let approvalSealed=false;
     let headerGateBlocked = false;
     let structureRepair: PiStructureRepair | undefined;
+    let confirmedHeaderGuidance = '';
     let repairReservation: Awaited<ReturnType<typeof reserveRepairRun>> | undefined;
     let repairPreparationFailure: StructureRepairProgress | undefined;
     let headerAlignmentDiagnostic: InitialAnalysisRunOutcome['headerAlignmentDiagnostic'];
@@ -551,7 +553,13 @@ const run = async (
                 if (!unchanged) throw new Error('initial_repair_source_changed_during_diagnostics');
                 // Solver-backed alternatives are real semantic questions, not a blanket structural stop.
                 const source = store.getState().datasetBundle?.source.inspection;
-                const boundedProposalRepair = Boolean(store.getState().datasetBundle?.tables?.length && source
+                const headerContinuation = captureStructureRepairContinuation(store);
+                if (headerContinuation) {
+                    confirmedHeaderGuidance = 'Read /intake/confirmed-header-alignment.json before proposing meaning. The human confirmed only the repeated metric header-group coordinates, not complete business meaning or Dataset Commit. Every proposed interpretation must preserve those exact source coordinates. Other fields, grain, units and summary roles still require full meaning review. Keep the existing two independently valid, genuinely different complete dual proposals contract; never invent or duplicate an alternative. If the supported shape cannot express the source faithfully, explain the unsupported boundary and stop without publication.';
+                    store.setState(state => ({ workspaceFiles: { ...state.workspaceFiles,
+                        '/intake/confirmed-header-alignment.json': JSON.stringify(headerContinuation.evidence) } }));
+                }
+                const boundedProposalRepair = Boolean(headerContinuation || store.getState().datasetBundle?.tables?.length && source
                     && source.byteSize <= 65536 && source.recordCount <= 2000 && options.codingPreparation?.enabled);
                 if (headerAlignmentDiagnostic.status === 'semantic_review_required' && !boundedProposalRepair) {
                     try { await awaitOwned(import('../../structureRepairConfirmation').then(m => m.prepareStructureRepairReview(store)), store, lease); }
@@ -567,6 +575,7 @@ const run = async (
             recoveryBudget:options.codingPreparation.continuation?undefined:mergeRepairTaskBudget(structureRepair?.recoveryBudget,
                 mergeRepairTaskBudget(repairReservation?.floor.task, checkpoint?.coding?.budget)),
             recoveryFailure: repairReservation?.floor.taskFailure});
+        bindStructureRepairContinuationTask(store);
         structureRepair?.current();
         const preparedRepairProgress = structureRepair?.progress;
         if (preparedRepairProgress?.state === 'exhausted') throw new Error('initial_repair_exhausted');
@@ -630,7 +639,7 @@ const run = async (
         }
         if (!streamOverride) await ensureCloudAiConsent(store.getState().settings.provider);
         await persistCheckpoint(null);
-        await awaitOwned(agent.prompt(structureRepair?.prompt ?? 'Start the next governed stage. Continue until all stages are complete.'), store, lease);
+        await awaitOwned(agent.prompt([structureRepair?.prompt ?? 'Start the next governed stage. Continue until all stages are complete.', confirmedHeaderGuidance].filter(Boolean).join('\n\n')), store, lease);
         if (controller.signal.aborted) throw controller.signal.reason;
         structureRepair?.current();
         if (agent.state.errorMessage) {
@@ -751,6 +760,8 @@ const run = async (
     if (!ownsRun(store, lease)) return { status: 'cancelled', currentDatasetVersion: request.datasetVersion,
         finalDatasetVersion: request.datasetVersion, trustedCardIds: [], warnings, runtimeRunId, traceId,
         ...(structureRepair || repairPreparationFailure ? { structureRepair: structureRepair?.progress ?? repairPreparationFailure } : {}) };
+    if (pendingApproval || pendingMeaning) sealStructureRepairHandoff(store, pendingApproval || pendingMeaning);
+    else stopStructureRepairContinuation(store, `Repair stopped without an actionable review: ${errorMessage || status}. Accepted data was not approved by this continuation. Reopen structural review for an explicit retry.`);
     // Cancellation may finalize its own session, but ordinary cancelled writes remain fenced.
     store = originalStore;
     const finalDatasetVersion = getCurrentAnalysisDatasetVersion(store.getState()) ?? request.datasetVersion;

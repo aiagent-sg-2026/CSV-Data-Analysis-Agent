@@ -3,7 +3,7 @@ import type { HeaderAlignmentCandidateV1, HeaderAlignmentCell } from './headerAl
 /** UI projection only. Authority is ephemeral host state, never restored from this object. */
 export interface StructureRepairReview {
     reviewId: string;
-    status: 'awaiting_semantic_confirmation' | 'confirmed' | 'resuming' | 'draft_uncommitted' | 'neither' | 'cancelled' | 'stale';
+    status: 'awaiting_semantic_confirmation' | 'confirmed' | 'resuming' | 'draft_uncommitted' | 'neither' | 'cancelled' | 'stale' | 'continuing' | 'awaiting_repair' | 'repair_failed';
     sessionId: string;
     sessionEpoch: number;
     sourceSha256: string;
