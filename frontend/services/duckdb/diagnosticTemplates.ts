@@ -140,7 +140,9 @@ const describeTemplate: DiagnosticTemplate = {
         const requested = Array.isArray(params.columns) ? params.columns as string[] : [];
         const numericCols = context.columnProfiles
             .filter(isNumericCol)
-            .filter(c => requested.length === 0 || requested.includes(c.name));
+            .filter(c => requested.length === 0 || requested.includes(c.name))
+            // Lineage profiles may not correspond to a physical column in this binding.
+            .filter(c => context.allowedColumns.length === 0 || context.allowedColumns.includes(c.name));
         if (numericCols.length === 0) {
             return { sql: 'SELECT 1 WHERE FALSE', countSql: 'SELECT 0 AS total', selectedColumns: [], appliedOrderBy: [], appliedLimit: 0 };
         }
