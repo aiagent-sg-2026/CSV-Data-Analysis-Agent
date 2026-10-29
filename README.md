@@ -1,5 +1,11 @@
 # CSV Data Analysis Agent
 
+## Production startup qualification
+
+The checked-in production bundle must be booted in a real browser, not only checksum-verified or tested through Vite development mode. Shared Zod and SSE-parser modules have an explicit `vendor-ai-shared` chunk so AI SDK top-level schemas cannot import uninitialized definitions from the application lifecycle chunk.
+
+After `npm run publish:root`, serve the repository root on loopback port 4201 and run `node frontend/scripts/production-startup-browser-smoke.mjs`. It asserts cold/warm upload UI, disappearance of the startup overlay, an operable file picker, and no page errors or external requests. The separate `production-startup-upgrade-smoke.mjs` accepts `CURRENT_SITE_ROOT`, `PREVIOUS_SITE_ROOT` and `STARTUP_EVIDENCE_DIR`, serves both static snapshots locally, reproduces the known previous TDZ, and checks old-worker navigation plus natural new-worker activation without clearing storage. It is a regression fixture for this specific broken baseline, not a general release upgrader. No real CSV or online AI is used.
+
 ## Source-bound header review continuation
 
 After choosing a repeated header group, **Continue repair and validation** enters the existing governed Pi repair runtime instead of ending at the three-row read-only preview. The header choice constrains exact source coordinates only; non-expanded fields, grain, units and summary roles still require a complete source-bound meaning review. The existing requirement for two genuinely different, independently valid dual proposals is unchanged. Unsupported mappings stop visibly rather than fabricating an alternative, flattening the source or granting approval.

@@ -1,6 +1,13 @@
 ## Current Work Context
 
 
+### 2026-10-29 — Production startup TDZ hotfix (local, not released)
+
+- User reported the PR49 production splash stuck with `Cannot access 'ZodUnknown' before initialization`. Reproduced against the exact static shipped files in Chromium: AI SDK top-level schema creation imported `unknown()` from `app-agent`, which depended back on the SDK. Vite development replay and matching resource checksums had missed this production initialization defect; the earlier publication verification was insufficient.
+- Only production-source change: explicitly place pure Zod/eventsource-parser dependencies in `vendor-ai-shared`. The new SDK imports shared definitions, and that shared chunk imports no application chunk. No approval, data-model, provider or security behavior was changed.
+- Build `1.0.0-6d23a185d032`: real static cold/warm boot, startup overlay hidden and normal file-picker click passed. Old broken worker → new static navigation → naturally activated new worker also passed, version checked by worker message and localStorage sentinel retained. No cache clearing or forced real-user update; no real CSV/online AI. New page errors and external requests zero.
+- Node22 typecheck/lint, stale-chunk regression 5/5, publisher/Pages 4/4, production build and 109 checksums passed. Independent native source/import review passed. Prior 273 bridge tests were not re-run for this isolated bundling change; no full-suite or report-quality claim. Red production reproduction and final cold/warm/SW evidence remain in the isolated task workspace. Remote push/PR/deploy require separate authorization.
+
 ### 2026-10-29 — Source-bound semantic review bridge (local, not released)
 
 - Explicit owner approvals cover the existing Pi handoff and host-owned run lease, with local synthetic/mock validation only. No live application AI, remote push/PR, merge or deployment in this task.
