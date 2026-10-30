@@ -497,7 +497,8 @@ const run = async (
                 agent.abort();
                 return { action: 'end' };
             }
-            return nextStageIndex >= STAGES.length
+            return Boolean(executorPreparation?.task.blockedReason)
+                || nextStageIndex >= STAGES.length
                 || structureRepair?.progress.state === 'exhausted'
                 || Boolean(pendingApproval || pendingMeaning || validatedMultiTableDraft)
                 || results.at(-1)?.decision === 'fail'
